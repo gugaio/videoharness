@@ -41,8 +41,8 @@ Somente Investigate e interativo.
 - Shell dark-first e responsivo em React/Vite.
 - Hero, URL, problem description e quatro cards de modulos.
 - Health discreto conectado a `/v1/health`.
-- CTA permanece desabilitado e explicitamente identificado enquanto a Fase 1
-  ainda nao implementa criacao de investigacao.
+- CTA envia URL e problem description para a API e navega imediatamente para o
+  caso criado.
 - Background abstrato foi feito em CSS, sem depender de asset externo.
 
 ## Investigation screen
@@ -53,6 +53,15 @@ Somente Investigate e interativo.
 - Atividade atual animada discretamente.
 - Evidence details por progressive disclosure.
 - Conclusao do Lead ganha hierarquia sem apagar especialistas.
+
+### Estado implementado
+
+- Rota `/investigations/:investigationId`.
+- Header do caso com URL, problema e estado persistido.
+- Indicador de conexao SSE.
+- Timeline restaurada a partir dos eventos append-only.
+- Dedupe de eventos por ID durante reconexao.
+- Estados de opening, erro e timeline vazia.
 
 Proibido:
 

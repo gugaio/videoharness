@@ -1,6 +1,6 @@
 # API - Video Harness Space
 
-Status: health e criacao de investigacao implementados; consultas e SSE planejados.
+Status: health, criacao, consulta e SSE de investigacao implementados.
 
 Prefixo inicial: `/v1`.
 
@@ -22,8 +22,8 @@ flowchart TD
 |---|---|---|---|
 | Implementado | GET | `/v1/health` | Saude da API e PostgreSQL |
 | Implementado | POST | `/v1/investigations` | Criar investigacao e enfileirar pipeline |
-| Planejado | GET | `/v1/investigations/:id` | Estado atual e metadados do caso |
-| Planejado | GET | `/v1/investigations/:id/events` | Historico e stream SSE da timeline |
+| Implementado | GET | `/v1/investigations/:id` | Estado atual e metadados do caso |
+| Implementado | GET | `/v1/investigations/:id/events` | Historico e stream SSE da timeline |
 | Planejado | GET | `/v1/investigations/:id/report` | Report final do caso |
 | Planejado | GET | `/v1/reports/shared/:token` | Report compartilhado por token |
 
@@ -77,7 +77,7 @@ Accept: text/event-stream
 Last-Event-ID: 42
 ```
 
-Eventos planejados:
+Eventos previstos no contrato:
 
 - `investigation.snapshot`;
 - `investigation.state_changed`;
@@ -90,6 +90,26 @@ Eventos planejados:
 
 Todo evento de produto e persistido antes de ser enviado. `ping` e transporte e
 nao precisa ser persistido.
+
+A conexao envia primeiro todos os eventos com `id > Last-Event-ID` e continua
+consultando o PostgreSQL. Eventos de produto usam:
+
+```text
+id: 42
+event: investigation.event
+data: { ...InvestigationEvent }
+```
+
+O payload contem `id`, `investigationId`, `type`, `actor`, `message`, `payload` e
+`createdAt`. A API envia `ping` a cada 15 segundos quando nao ha atividade.
+
+## Consultar investigacao
+
+```http
+GET /v1/investigations/:id
+```
+
+Retorna `{ "investigation": Investigation }` ou `404 INVESTIGATION_NOT_FOUND`.
 
 ## Erros
 

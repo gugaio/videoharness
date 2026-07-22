@@ -24,18 +24,20 @@ Formulario -> API -> Postgres job -> Worker -> events -> SSE -> report placehold
 - [x] Criacao idempotente de investigation, job e evento na mesma transacao.
 - Worker com claim, lease e heartbeat.
 - State machine minima.
-- SSE com historico e `Last-Event-ID`.
-- Homepage e tela de investigacao funcionais.
+- [x] Consulta do caso persistido.
+- [x] SSE com historico e `Last-Event-ID`.
+- [x] Homepage e primeira tela de investigacao funcionais.
 - Report placeholder explicitamente identificado como fixture tecnica.
 
 ## Proxima fatia
 
-Implementar consulta e timeline inicial com:
+Implementar lifecycle placeholder do worker com:
 
-1. `GET /v1/investigations/:id`;
-2. `GET /v1/investigations/:id/events` com historico;
-3. base SSE com `Last-Event-ID`;
-4. pagina React do caso.
+1. claim transacional com `FOR UPDATE SKIP LOCKED`;
+2. lease e heartbeat;
+3. transicoes reais da state machine;
+4. eventos persistidos em cada etapa;
+5. report placeholder ao concluir.
 
 ## Definition of Done
 

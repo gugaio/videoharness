@@ -112,6 +112,9 @@ investigacao usa um workspace isolado.
 - Reconexao via `Last-Event-ID`.
 - Eventos descrevem fatos e progresso, nao raciocinio oculto.
 - O primeiro evento e persistido na mesma transacao da investigacao e do job.
+- Na Fase 1, a API consulta novos eventos no PostgreSQL a cada 750ms por conexao
+  SSE. Essa solucao e suficiente para um unico VPS e evita infraestrutura extra.
+- O cursor e o ID persistido do evento; `Last-Event-ID` impede replay duplicado.
 
 ## Storage
 
@@ -153,4 +156,3 @@ prompts/
 - `phases/phase-3.md` - investigacao assistida por IA.
 - `phases/phase-4.md` - experiencia premium.
 - `phases/phase-5.md` - hardening e validacao.
-

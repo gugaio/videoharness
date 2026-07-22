@@ -23,3 +23,17 @@ export const StartInvestigationResponseSchema = z.object({
   investigation: InvestigationSchema,
   replayed: z.boolean(),
 });
+
+export const InvestigationDetailResponseSchema = z.object({
+  investigation: InvestigationSchema,
+});
+
+export const InvestigationEventSchema = z.object({
+  id: z.string().regex(/^\d+$/),
+  investigationId: z.string().uuid(),
+  type: z.string().min(1),
+  actor: z.string().min(1),
+  message: z.string().min(1),
+  payload: z.record(z.string(), z.unknown()),
+  createdAt: z.string().datetime(),
+});

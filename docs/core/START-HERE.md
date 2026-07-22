@@ -26,8 +26,9 @@ Indice de onboarding para humanos e agentes.
 
 - Fase ativa: **Fase 1 - Thin Slice Persistente**.
 - Fase 0 concluida com API, worker, UI, PostgreSQL, migration e CI executaveis.
-- `GET /v1/health` e o primeiro endpoint implementado.
-- Proximo passo: criar investigation, job e primeiro evento na mesma transacao.
+- Criacao, consulta e timeline SSE de investigacoes estao implementadas.
+- Homepage cria o caso e navega para a primeira tela real da investigacao.
+- Proximo passo: worker reclamar jobs e publicar lifecycle placeholder real.
 
 ## Referencias locais
 

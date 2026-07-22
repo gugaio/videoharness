@@ -8,7 +8,7 @@ Ultima atualizacao: **2026-07-21**
 - Estado: **em andamento**.
 - Repositorio: novo e independente.
 - Runtime: API, worker, UI e PostgreSQL executaveis.
-- Objetivo imediato: persistir a primeira investigacao, job e evento.
+- Objetivo imediato: executar jobs e publicar lifecycle pelo worker.
 
 ## Fases
 
@@ -34,6 +34,8 @@ Ultima atualizacao: **2026-07-21**
 - PostgreSQL 17 e migration das cinco entidades do MVP.
 - Health endpoint com verificacao real do banco.
 - Criacao transacional e idempotente de investigation, job e evento inicial.
+- Consulta persistida e timeline SSE com replay por `Last-Event-ID`.
+- Homepage conectada e primeira pagina real do caso.
 - Homepage React/Vite dark-first e responsiva.
 - Dockerfiles, Compose e CI inicial.
 
@@ -43,16 +45,60 @@ Ultima atualizacao: **2026-07-21**
 - [x] Implementar repository PostgreSQL de intake.
 - [x] Criar investigation, job e evento inicial em uma transacao.
 - [ ] Implementar claim, lease e heartbeat no worker.
-- [ ] Implementar historico e stream SSE.
-- [ ] Conectar o formulario da homepage ao fluxo real.
-- [ ] Exibir timeline e report placeholder.
+- [x] Implementar historico e stream SSE.
+- [x] Conectar o formulario da homepage ao fluxo real.
+- [x] Exibir timeline persistida.
+- [ ] Exibir report placeholder.
 
 ## Proximo passo recomendado
 
-Implementar `GET /v1/investigations/:id`, historico de eventos e a base SSE com
-`Last-Event-ID`, preparando a primeira pagina real de investigacao.
+Implementar claim, lease, heartbeat e lifecycle placeholder no worker, publicando
+eventos persistidos ate um report placeholder.
 
 ## Registro de atualizacoes
+
+### 2026-07-21 - Consulta, SSE e primeira tela de investigacao
+
+Fase impactada: 1.
+
+Entrega:
+
+- Criado query port e adapter PostgreSQL para casos e eventos.
+- Implementados `GET /v1/investigations/:id` e SSE append-only em
+  `GET /v1/investigations/:id/events`.
+- SSE restaura historico, usa IDs persistidos, respeita `Last-Event-ID`, envia
+  keepalive e reconecta sem duplicar eventos na UI.
+- Homepage passou a criar investigacoes reais e navegar imediatamente para o caso.
+- Criada primeira tela de investigacao com estado, relato, conexao e timeline viva.
+
+Arquivos-chave:
+
+- `src/investigation/adapters/postgres-investigation-query.ts`
+- `src/investigation/application/investigation-queries.ts`
+- `src/api/routes/investigations.ts`
+- `ui/src/pages/HomePage.tsx`
+- `ui/src/pages/InvestigationPage.tsx`
+- `ui/src/lib/api.ts`
+
+Checklist de validacao:
+
+- [x] `npm run check`;
+- [x] `npm test` - 10 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build`;
+- [x] GET do caso validado via proxy Vite;
+- [x] SSE restaurou evento persistido real;
+- [x] `Last-Event-ID: 1` nao reenviou o evento 1;
+- [x] criacao via proxy navegavel validada contra PostgreSQL real.
+
+Pendencias:
+
+- O worker ainda nao avanca o caso alem de `queued`.
+- O report placeholder ainda nao existe.
+
+Proximo passo recomendado:
+
+- Implementar lifecycle recuperavel do worker.
 
 ### 2026-07-21 - Fundacao executavel do produto
 

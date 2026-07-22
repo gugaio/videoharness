@@ -4,12 +4,16 @@ import { createDatabaseHealth, createDatabasePool } from "../database/client.js"
 import { logger } from "../infra/logger.js";
 import { PostgresInvestigationIntake } from "../investigation/adapters/postgres-investigation-intake.js";
 import { createStartInvestigation } from "../investigation/application/start-investigation.js";
+import { PostgresInvestigationQuery } from "../investigation/adapters/postgres-investigation-query.js";
+import { createInvestigationQueries } from "../investigation/application/investigation-queries.js";
 
 const config = loadConfig();
 const pool = createDatabasePool(config.databaseUrl);
+const investigationQuery = new PostgresInvestigationQuery(pool);
 const server = buildApiServer({
   database: createDatabaseHealth(pool),
   startInvestigation: createStartInvestigation(new PostgresInvestigationIntake(pool)),
+  investigationQueries: createInvestigationQueries(investigationQuery),
   version: process.env.npm_package_version ?? "0.1.0",
 });
 

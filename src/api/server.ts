@@ -2,12 +2,14 @@ import Fastify, { type FastifyInstance } from "fastify";
 import type { HealthResponse } from "../contracts/health.js";
 import type { DatabaseHealth } from "../database/client.js";
 import type { StartInvestigation } from "../investigation/application/start-investigation.js";
+import type { InvestigationQueries } from "../investigation/application/investigation-queries.js";
 import { ApiError } from "./errors.js";
 import { registerInvestigationRoutes } from "./routes/investigations.js";
 
 export type ApiServerDependencies = {
   database: DatabaseHealth;
   startInvestigation: StartInvestigation;
+  investigationQueries: InvestigationQueries;
   version?: string;
 };
 
@@ -57,7 +59,10 @@ export function buildApiServer(dependencies: ApiServerDependencies): FastifyInst
     };
   });
 
-  registerInvestigationRoutes(server, dependencies.startInvestigation);
+  registerInvestigationRoutes(server, {
+    startInvestigation: dependencies.startInvestigation,
+    queries: dependencies.investigationQueries,
+  });
 
   return server;
 }
