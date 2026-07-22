@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            ui/package-lock.json
+      - name: Install backend dependencies
+        run: npm ci
+      - name: Install UI dependencies
+        run: npm ci --prefix ui
+      - name: Check backend
+        run: npm run check
+      - name: Test backend
+        run: npm test
+      - name: Build backend
+        run: npm run build
+      - name: Check UI
+        run: npm --prefix ui run check
+      - name: Build UI
+        run: npm --prefix ui run build

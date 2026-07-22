@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  font-family: Inter, "SF Pro Display", "Segoe UI", sans-serif;
+  background: #080a10;
+  color: #f4f5f7;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  background: #080a10;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+
+.text-pretty {
+  text-wrap: pretty;
+}
+
+.network-grid {
+  background-image:
+    linear-gradient(rgba(139, 161, 220, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(139, 161, 220, 0.08) 1px, transparent 1px);
+  background-size: 58px 58px;
+  mask-image: radial-gradient(ellipse at center, black 0%, transparent 72%);
+  transform: perspective(500px) rotateX(57deg) scale(1.55);
+  transform-origin: center bottom;
+}
+
+::selection {
+  background: rgba(219, 227, 255, 0.22);
+}
