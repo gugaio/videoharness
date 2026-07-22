@@ -123,6 +123,10 @@ Retorna `{ "report": InvestigationReport }`. Antes da conclusao retorna
 `generatedBy=deterministic-manifest-v2` e um `EvidenceBundle` v2 com source,
 manifests, media samples, observations e limitations. Reports anteriores com
 `generatedBy=deterministic-manifest-v1` e `EvidenceBundle` v1 continuam aceitos.
+Para masters HLS, o bundle inclui `hls.variants`, `hls.renditions` e
+`hls.selection`. `manifests` pode conter os logical keys `manifest/root`,
+`manifest/variant/0` e `manifest/rendition/audio/0`. A selecao atual usa maior
+bandwidth e no maximo uma rendition de audio vinculada; nenhum segmento e baixado.
 
 Falhas de coleta podem encerrar a investigation com codigos como:
 

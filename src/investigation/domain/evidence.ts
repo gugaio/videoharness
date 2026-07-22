@@ -41,6 +41,40 @@ export type ManifestEvidence = ManifestCounts & {
   finalUrl: string;
   kind: ManifestKind;
   sizeBytes: number;
+  targetDuration?: number;
+  mediaSequence?: number;
+  discontinuitySequence?: number;
+  discontinuityCount?: number;
+  hasEndList?: boolean;
+};
+
+export type HlsVariantEvidence = {
+  index: number;
+  uri: string;
+  url?: string;
+  bandwidth?: number;
+  averageBandwidth?: number;
+  resolution?: string;
+  frameRate?: number;
+  codecs?: string;
+  audioGroupId?: string;
+  subtitlesGroupId?: string;
+  closedCaptions?: string;
+};
+
+export type HlsRenditionEvidence = {
+  index: number;
+  type: string;
+  groupId?: string;
+  name?: string;
+  language?: string;
+  default?: boolean;
+  autoselect?: boolean;
+  forced?: boolean;
+  channels?: string;
+  characteristics?: string;
+  uri?: string;
+  url?: string;
 };
 
 export type EvidenceBundleV2 = {
@@ -54,6 +88,17 @@ export type EvidenceBundleV2 = {
     kind: "init-segment" | "media-segment";
     sizeBytes: number;
   }>;
+  hls?: {
+    variants: HlsVariantEvidence[];
+    renditions: HlsRenditionEvidence[];
+    selection?: {
+      rule: "highest-bandwidth";
+      variantIndex: number;
+      variantLogicalKey?: string;
+      audioRenditionIndex?: number;
+      audioRenditionLogicalKey?: string;
+    };
+  };
   observations: EvidenceObservation[];
   limitations: string[];
 };

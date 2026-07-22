@@ -57,6 +57,20 @@ describe("investigation report contracts", () => {
           variantCount: 1,
         }],
         mediaSamples: [],
+        hls: {
+          variants: [{
+            index: 0,
+            uri: "variant.m3u8",
+            url: "https://example.test/variant.m3u8",
+            bandwidth: 1_000,
+          }],
+          renditions: [],
+          selection: {
+            rule: "highest-bandwidth",
+            variantIndex: 0,
+            variantLogicalKey: "manifest/variant/0",
+          },
+        },
       },
     }).success).toBe(true);
   });

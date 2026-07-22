@@ -12,11 +12,12 @@ describe("inspectManifest", () => {
       "high.m3u8",
     ].join("\n"));
 
-    expect(result).toEqual({ protocol: "hls", kind: "master", variantCount: 2 });
+    expect(result).toMatchObject({ protocol: "hls", kind: "master", variantCount: 2 });
+    expect(result.hls?.variants.map((variant) => variant.uri)).toEqual(["low.m3u8", "high.m3u8"]);
   });
 
   it("detects HLS media and DASH MPD manifests", () => {
-    expect(inspectManifest("#EXTM3U\n#EXTINF:4,\na.ts\n#EXTINF:4,\nb.ts")).toEqual({
+    expect(inspectManifest("#EXTM3U\n#EXTINF:4,\na.ts\n#EXTINF:4,\nb.ts")).toMatchObject({
       protocol: "hls",
       kind: "media",
       segmentCount: 2,

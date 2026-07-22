@@ -34,8 +34,10 @@ Indice de onboarding para humanos e agentes.
 - Artifacts agora possuem identidade logica por investigation, sao registrados em
   lote e podem ser substituidos com seguranca em retries; novos reports usam o
   `EvidenceBundle` v2 orientado a multiplos manifests e media samples.
-- Proximo passo: aprofundar o parsing do manifest e selecionar variants sem baixar
-  segmentos ainda.
+- Masters HLS agora expoem variants/renditions, selecionam uma variant por maior
+  bandwidth e preservam seu media manifest e uma rendition de audio vinculada.
+- Proximo passo: baixar uma amostra pequena de segmentos da variant selecionada e
+  executar FFprobe estruturado.
 
 ## Referencias locais
 

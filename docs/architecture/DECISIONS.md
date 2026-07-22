@@ -119,3 +119,26 @@ Consequencia:
 - Collectors podem continuar pequenos, mas o application core ja aceita promover
   varios artifacts atomicamente.
 - Compatibilidade de leitura evita invalidar investigations locais existentes.
+
+## 2026-07-22 - Amostragem HLS limitada e auditavel
+
+Decisao:
+
+- Masters HLS sao parseadas integralmente, mas a coleta derivada fica limitada a
+  uma variant e uma rendition de audio vinculada.
+- A variant de maior `BANDWIDTH` e selecionada; empates preservam a ordem original.
+- Audio prefere `DEFAULT=YES`, depois `AUTOSELECT=YES` e ordem da master.
+- Toda URI derivada passa novamente pela fronteira SSRF e pelos limites de manifest.
+
+Motivo:
+
+- Obter um media manifest real prepara a amostragem e o FFprobe sem baixar uma
+  ladder inteira antes de validar valor.
+- Uma regra deterministica e persistida no evidence bundle torna a escolha
+  reproduzivel e explicavel.
+
+Consequencia:
+
+- O primeiro report nao representa toda a ladder; essa limitacao fica explicita.
+- Outras variants podem ser coletadas futuramente quando o relato ou uma evidencia
+  justificar comparacao ABR.

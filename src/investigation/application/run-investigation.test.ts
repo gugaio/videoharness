@@ -26,13 +26,17 @@ function createRepository(): InvestigationJobRepository {
 }
 
 const collector = {
-  collectManifest: vi.fn(async () => ({
-    requestedUrl: claimedJob.investigation.sourceUrl,
-    finalUrl: claimedJob.investigation.sourceUrl,
-    statusCode: 200,
-    contentType: "application/vnd.apple.mpegurl",
-    bytes: new TextEncoder().encode("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nvideo.m3u8"),
-    inspection: { protocol: "hls" as const, kind: "master" as const, variantCount: 1 },
+  collectManifestEvidence: vi.fn(async () => ({
+    manifests: [{
+      logicalKey: "manifest/root",
+      role: "root" as const,
+      requestedUrl: claimedJob.investigation.sourceUrl,
+      finalUrl: claimedJob.investigation.sourceUrl,
+      statusCode: 200,
+      contentType: "application/vnd.apple.mpegurl",
+      bytes: new TextEncoder().encode("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nvideo.m3u8"),
+      inspection: { protocol: "hls" as const, kind: "master" as const, variantCount: 1 },
+    }],
   })),
 };
 
@@ -113,7 +117,7 @@ describe("investigation worker", () => {
   it("does not retry a destination blocked by the network policy", async () => {
     const repository = createRepository();
     const blockedCollector = {
-      collectManifest: vi.fn(async () => Promise.reject(new StreamCollectionError(
+      collectManifestEvidence: vi.fn(async () => Promise.reject(new StreamCollectionError(
         "STREAM_DESTINATION_BLOCKED",
         "The stream destination is not a public network address",
         false,
@@ -136,6 +140,111 @@ describe("investigation worker", () => {
       false,
     );
     expect(artifactStore.put).not.toHaveBeenCalled();
+  });
+
+  it("promotes root and derived manifests in one evidence batch", async () => {
+    const repository = createRepository();
+    const rootBytes = new TextEncoder().encode("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=2000\nvariant.m3u8");
+    const variantBytes = new TextEncoder().encode("#EXTM3U\n#EXTINF:4,\nsegment.ts");
+    const multiCollector = {
+      collectManifestEvidence: vi.fn(async () => ({
+        manifests: [
+          {
+            logicalKey: "manifest/root",
+            role: "root" as const,
+            requestedUrl: claimedJob.investigation.sourceUrl,
+            finalUrl: claimedJob.investigation.sourceUrl,
+            statusCode: 200,
+            bytes: rootBytes,
+            inspection: {
+              protocol: "hls" as const,
+              kind: "master" as const,
+              variantCount: 1,
+              hls: {
+                kind: "master" as const,
+                variants: [{
+                  index: 0,
+                  uri: "variant.m3u8",
+                  url: "https://example.test/live/variant.m3u8",
+                  bandwidth: 2_000,
+                }],
+                renditions: [],
+                segmentCount: 0,
+                discontinuityCount: 0,
+                hasEndList: false,
+              },
+            },
+          },
+          {
+            logicalKey: "manifest/variant/0",
+            role: "variant" as const,
+            requestedUrl: "https://example.test/live/variant.m3u8",
+            finalUrl: "https://example.test/live/variant.m3u8",
+            statusCode: 200,
+            bytes: variantBytes,
+            inspection: {
+              protocol: "hls" as const,
+              kind: "media" as const,
+              segmentCount: 1,
+              hls: {
+                kind: "media" as const,
+                variants: [],
+                renditions: [],
+                segmentCount: 1,
+                discontinuityCount: 0,
+                hasEndList: false,
+              },
+            },
+          },
+        ],
+        hlsSelection: {
+          rule: "highest-bandwidth" as const,
+          variant: {
+            index: 0,
+            uri: "variant.m3u8",
+            url: "https://example.test/live/variant.m3u8",
+            bandwidth: 2_000,
+          },
+        },
+      })),
+    };
+    const uniqueArtifactStore = {
+      put: vi.fn(async (input: { artifactId: string; content: Uint8Array }) => ({
+        storageKey: `artifacts/case/${input.artifactId}.m3u8`,
+        sizeBytes: input.content.byteLength,
+      })),
+      remove: vi.fn(async () => undefined),
+    };
+    const worker = createInvestigationWorker({
+      repository,
+      collector: multiCollector,
+      artifactStore: uniqueArtifactStore,
+      workerId: "worker-test",
+      leaseMs: 30_000,
+    });
+
+    await expect(worker.runNext()).resolves.toBe(true);
+
+    expect(uniqueArtifactStore.put).toHaveBeenCalledTimes(2);
+    expect(repository.recordEvidenceBatch).toHaveBeenCalledWith(
+      claimedJob.id,
+      "worker-test",
+      30_000,
+      expect.arrayContaining([
+        expect.objectContaining({ logicalKey: "manifest/root" }),
+        expect.objectContaining({ logicalKey: "manifest/variant/0" }),
+      ]),
+      expect.objectContaining({
+        schemaVersion: 2,
+        manifests: expect.arrayContaining([
+          expect.objectContaining({ logicalKey: "manifest/variant/0", segmentCount: 1 }),
+        ]),
+        hls: expect.objectContaining({
+          selection: expect.objectContaining({ variantIndex: 0, variantLogicalKey: "manifest/variant/0" }),
+        }),
+      }),
+      expect.objectContaining({ type: "investigation.evidence_found" }),
+    );
   });
 
   it("removes a stored file when artifact metadata cannot be committed", async () => {

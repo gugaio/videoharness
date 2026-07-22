@@ -1,6 +1,6 @@
 # Project Status - Video Harness Space
 
-Ultima atualizacao: **2026-07-21**
+Ultima atualizacao: **2026-07-22**
 
 ## Resumo
 
@@ -8,7 +8,7 @@ Ultima atualizacao: **2026-07-21**
 - Estado: **em andamento**.
 - Repositorio: novo e independente.
 - Runtime: API, worker, UI e PostgreSQL executaveis.
-- Objetivo imediato: aprofundar parsing e selecao limitada de manifests derivados.
+- Objetivo imediato: amostrar segmentos HLS e extrair evidencia com FFprobe.
 
 ## Fases
 
@@ -50,6 +50,9 @@ Ultima atualizacao: **2026-07-21**
   investigation e limpeza segura entre retries.
 - Evidence Bundle v2 preparado para multiplos manifests e media samples, mantendo
   leitura dos reports v1 existentes.
+- Parser HLS profundo com variants, renditions e estrutura de media playlist.
+- Coleta limitada de uma variant e uma rendition de audio, com revalidacao SSRF em
+  cada URI derivada e persistencia atomica dos manifests relacionados.
 
 ## Checklist da Fase 1
 
@@ -69,15 +72,69 @@ Ultima atualizacao: **2026-07-21**
 - [x] Proteger acesso de rede contra SSRF e redirects maliciosos.
 - [x] Detectar HLS/DASH com timeout e limites.
 - [x] Persistir o primeiro manifest como artifact.
-- [ ] Extrair estrutura profunda de variants/renditions/representations.
-- [ ] Coletar manifests derivados com amostragem limitada.
+- [x] Extrair estrutura profunda de variants/renditions HLS.
+- [x] Coletar manifests HLS derivados com amostragem limitada.
+- [ ] Extrair representations DASH.
+- [ ] Coletar e analisar uma amostra limitada de segmentos HLS.
 
 ## Proximo passo recomendado
 
-Importar/adaptar os parsers estritamente necessarios do VHS para extrair estrutura
-HLS/DASH e selecionar uma amostra pequena de manifests derivados.
+Extrair os primeiros segmentos da variant HLS selecionada, impor limites agregados
+e executar FFprobe estruturado sobre a amostra local.
 
 ## Registro de atualizacoes
+
+### 2026-07-22 - Parsing profundo e manifests derivados HLS
+
+Fase impactada: 2.
+
+Entrega:
+
+- Importada e adaptada a parte pura do parser HLS do VHS, com origem registrada no
+  README do modulo e sem dependencia de runtime.
+- Masters agora extraem variants, renditions, codecs declarados, grupos, bandwidth,
+  resolution, frame rate e URLs resolvidas.
+- Media playlists extraem segment count, target/media/discontinuity sequences,
+  discontinuity count e `ENDLIST` sem baixar chunks.
+- Amostragem seleciona maior bandwidth com desempate estavel; audio vinculado
+  prefere `DEFAULT`, `AUTOSELECT` e ordem da master.
+- Root, variant e audio sao buscados pelo `SafeHttpClient` e promovidos num unico
+  lote idempotente com logical keys estaveis.
+- Evidence Bundle e report registram topologia, escolha, artifacts e limitacoes.
+- O builder de evidence/report foi separado do lifecycle do worker quando o fluxo
+  passou a lidar com varios manifests.
+
+Arquivos-chave:
+
+- `src/stream-tools/hls-manifest.ts`
+- `src/investigation/adapters/manifest-evidence-collector.ts`
+- `src/investigation/application/build-manifest-evidence.ts`
+- `src/investigation/application/run-investigation.ts`
+- `src/investigation/domain/evidence.ts`
+
+Checklist de validacao:
+
+- [x] testes focados de parser, collector, SSRF derivado e worker;
+- [x] `npm run check`;
+- [x] `npm test` - 60 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build`;
+- [x] Compose reconstruido com API, worker, web e PostgreSQL saudaveis;
+- [x] smoke Apple HLS: 5 variants descobertas, variant 3 selecionada por
+  `BANDWIDTH=1927833`, media playlist com 181 segmentos descritos;
+- [x] exatamente 2 artifacts preservados (`manifest/root` com 511 bytes e
+  `manifest/variant/0` com 6701 bytes), sem download de chunks.
+
+Pendencias:
+
+- Nenhum init/media segment e baixado ainda.
+- DASH permanece apenas com deteccao e contagem superficial.
+
+Proximo passo recomendado:
+
+- Amostrar poucos segmentos da variant selecionada e executar FFprobe local com
+  timeout e argumentos estruturados.
 
 ### 2026-07-21 - Artifacts em lote e Evidence Bundle v2
 

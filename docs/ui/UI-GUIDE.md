@@ -96,6 +96,9 @@ O report deve funcionar como pagina compartilhavel e como documento de engenhari
 - Reports da Fase 2 sao identificados como `Deterministic manifest report` e
   `Observed evidence`, mantendo confidence `limited` enquanto segmentos e media
   ainda nao foram analisados.
+- Masters HLS exibem um finding adicional com a variant representativa selecionada
+  e o numero real de manifests preservados; a regra de selecao nao e apresentada
+  como root cause.
 
 ## Responsividade
 

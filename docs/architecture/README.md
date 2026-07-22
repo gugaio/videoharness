@@ -167,8 +167,21 @@ prompts/
 - A conexao usa diretamente o IP validado, preservando `Host` e SNI, para evitar
   uma segunda resolucao vulneravel a DNS rebinding.
 - Cada redirect e manual, limitado e passa novamente pela validacao completa.
+- Cada URI de variant/rendition HLS e tratada como uma nova entrada nao confiavel:
+  DNS, IP, redirects, timeout e bytes sao revalidados do zero.
 - Timeout cobre resolucao, headers e body; resposta tem limite estrito de bytes.
 - Falhas deterministicas de policy/formato nao sao repetidas pelo worker.
+
+## Amostragem HLS do MVP
+
+- A master inteira e parseada sem baixar segmentos.
+- Uma variant e selecionada por maior `BANDWIDTH`; empates preservam a ordem da
+  master.
+- No maximo uma rendition de audio do grupo vinculado e coletada, preferindo
+  `DEFAULT=YES`, depois `AUTOSELECT=YES` e por fim a ordem da master.
+- O lote e limitado a root + uma variant + uma rendition de audio.
+- Subtitles, outras variants e segmentos permanecem somente como descritores ate
+  uma hipotese justificar coleta adicional.
 
 ## Fases
 

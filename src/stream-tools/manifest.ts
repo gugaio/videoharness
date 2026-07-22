@@ -1,4 +1,5 @@
 import { StreamCollectionError } from "./errors.js";
+import { parseHlsManifest, type HlsManifestInspection } from "./hls-manifest.js";
 
 export type ManifestProtocol = "hls" | "dash";
 export type ManifestKind = "master" | "media" | "mpd";
@@ -9,18 +10,19 @@ export type ManifestInspection = {
   variantCount?: number;
   segmentCount?: number;
   representationCount?: number;
+  hls?: HlsManifestInspection;
 };
 
-export function inspectManifest(text: string): ManifestInspection {
+export function inspectManifest(text: string, finalUrl?: string): ManifestInspection {
   const normalized = text.replace(/^\uFEFF/, "").trimStart();
   if (normalized.startsWith("#EXTM3U")) {
-    const variantCount = countLines(normalized, "#EXT-X-STREAM-INF:");
-    const segmentCount = countLines(normalized, "#EXTINF:");
+    const hls = parseHlsManifest(normalized, finalUrl);
     return {
       protocol: "hls",
-      kind: variantCount > 0 ? "master" : "media",
-      ...(variantCount > 0 ? { variantCount } : {}),
-      ...(segmentCount > 0 ? { segmentCount } : {}),
+      kind: hls.kind,
+      ...(hls.variants.length > 0 ? { variantCount: hls.variants.length } : {}),
+      ...(hls.segmentCount > 0 ? { segmentCount: hls.segmentCount } : {}),
+      hls,
     };
   }
 
@@ -37,10 +39,6 @@ export function inspectManifest(text: string): ManifestInspection {
     "The response is not a recognized HLS or DASH manifest",
     false,
   );
-}
-
-function countLines(text: string, prefix: string): number {
-  return text.split(/\r?\n/).filter((line) => line.trimStart().startsWith(prefix)).length;
 }
 
 function countMatches(text: string, pattern: RegExp): number {

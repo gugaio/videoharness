@@ -18,14 +18,17 @@ Substituir o pipeline placeholder por coleta e analise real de streams.
 - [x] Persistencia do root manifest em artifact local.
 - [x] Registro atomico de artifacts em lote e substituicao idempotente em retries.
 - [x] Protecao SSRF, redirects, timeout e limite de manifest.
+- [x] Parsing profundo de variants e renditions HLS.
+- [x] Selecao limitada de uma variant e uma rendition de audio vinculada.
+- [x] Coleta protegida e persistencia dos manifests HLS derivados.
 
 ## Proxima fatia recomendada
 
-1. Importar/adaptar somente os parsers de manifest necessarios do VHS.
-2. Extrair variants/renditions HLS e representations DASH com limites.
-3. Selecionar uma amostra pequena orientada pelo problema relatado.
-4. Preservar manifests derivados como artifacts relacionados.
-5. Adicionar fixtures conhecidas sem depender da rede nos testes.
+1. Extrair URLs de init/media segments da variant HLS selecionada.
+2. Baixar uma amostra pequena com limite total de bytes e quantidade.
+3. Executar FFprobe com binario/argumentos estruturados e timeout.
+4. Produzir evidence de codecs, tracks, duracao e timestamps.
+5. Aprofundar representations DASH somente depois da fatia HLS ponta a ponta.
 
 ## Definition of Done
 

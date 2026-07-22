@@ -1,15 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { StreamCollectionError } from "../../stream-tools/errors.js";
-import type { EvidenceBundleV2, ManifestEvidence } from "../domain/evidence.js";
+import type { EvidenceBundleV2 } from "../domain/evidence.js";
 import {
   JobLeaseLostError,
   type ClaimedInvestigationJob,
   type InvestigationTransition,
 } from "../domain/investigation-job.js";
-import type { InvestigationReportContent } from "../domain/investigation-report.js";
 import type { ArtifactStore } from "../ports/artifact-store.js";
 import type { InvestigationJobRepository } from "../ports/investigation-job.js";
 import type { StreamEvidenceCollector } from "../ports/stream-evidence-collector.js";
+import {
+  buildManifestEvidence,
+  buildManifestReport,
+  type PromotedManifest,
+} from "./build-manifest-evidence.js";
 
 export type InvestigationWorker = {
   runNext(): Promise<boolean>;
@@ -51,40 +55,49 @@ export function createInvestigationWorker(input: {
 
       try {
         await persistTransition(input.repository, job, input.workerId, input.leaseMs, validatingTransition(job));
-        const collected = await input.collector.collectManifest(job.investigation.sourceUrl);
+        const collected = await input.collector.collectManifestEvidence(job.investigation.sourceUrl);
         if (leaseLost) throw new JobLeaseLostError();
 
-        const artifactId = randomUUID();
-        const stored = await input.artifactStore.put({
-          investigationId: job.investigation.id,
-          artifactId,
-          extension: collected.inspection.protocol === "hls" ? "m3u8" : "mpd",
-          content: collected.bytes,
-        });
-        uncommittedStorageKeys.add(stored.storageKey);
-        const evidence = createEvidenceBundle(artifactId, stored.sizeBytes, collected);
+        const promoted: PromotedManifest[] = [];
+        for (const manifest of collected.manifests) {
+          const artifactId = randomUUID();
+          const stored = await input.artifactStore.put({
+            investigationId: job.investigation.id,
+            artifactId,
+            extension: manifest.inspection.protocol === "hls" ? "m3u8" : "mpd",
+            content: manifest.bytes,
+          });
+          uncommittedStorageKeys.add(stored.storageKey);
+          promoted.push({
+            artifactId,
+            storageKey: stored.storageKey,
+            sizeBytes: stored.sizeBytes,
+            collected: manifest,
+          });
+        }
+        const evidence = buildManifestEvidence(promoted, collected);
         const rootManifest = evidence.manifests[0]!;
         const recorded = await input.repository.recordEvidenceBatch(
           job.id,
           input.workerId,
           input.leaseMs,
-          [{
-            id: artifactId,
-            logicalKey: rootManifest.logicalKey,
-            kind: "manifest",
-            storageKey: stored.storageKey,
-            ...(collected.contentType ? { contentType: collected.contentType } : {}),
-            sizeBytes: stored.sizeBytes,
-          }],
+          promoted.map((manifest) => ({
+            id: manifest.artifactId,
+            logicalKey: manifest.collected.logicalKey,
+            kind: "manifest" as const,
+            storageKey: manifest.storageKey,
+            ...(manifest.collected.contentType ? { contentType: manifest.collected.contentType } : {}),
+            sizeBytes: manifest.sizeBytes,
+          })),
           evidence,
           {
             type: "investigation.evidence_found",
             actor: "Media Agent",
-            message: `${evidence.source.protocol.toUpperCase()} ${rootManifest.kind} manifest collected and preserved as evidence.`,
+            message: `${evidence.manifests.length} ${evidence.source.protocol.toUpperCase()} manifest${evidence.manifests.length === 1 ? "" : "s"} collected and preserved as evidence.`,
             payload: {
               state: "collecting",
-              artifactId,
-              logicalKey: rootManifest.logicalKey,
+              artifactIds: promoted.map((manifest) => manifest.artifactId),
+              logicalKeys: evidence.manifests.map((manifest) => manifest.logicalKey),
               protocol: evidence.source.protocol,
               manifestKind: rootManifest.kind,
               sizeBytes: rootManifest.sizeBytes,
@@ -104,7 +117,7 @@ export function createInvestigationWorker(input: {
           job.id,
           input.workerId,
           randomUUID(),
-          createManifestReport(job, evidence),
+          buildManifestReport(job, evidence),
           {
             type: "investigation.report_ready",
             actor: "Investigator",
@@ -159,7 +172,7 @@ function analysisTransition(evidence: EvidenceBundleV2): InvestigationTransition
     event: {
       type: "investigation.observation",
       actor: "Playback Agent",
-      message: `Manifest structure identified deterministically with ${count} primary entries.`,
+      message: `Manifest structure identified deterministically with ${count} primary entries and ${evidence.manifests.length} preserved manifest${evidence.manifests.length === 1 ? "" : "s"}.`,
       payload: {
         state: "analyzing",
         protocol: evidence.source.protocol,
@@ -179,85 +192,6 @@ function synthesisTransition(): InvestigationTransition {
       message: "Preparing a report from the collected manifest evidence.",
       payload: { state: "synthesizing" },
     },
-  };
-}
-
-function createEvidenceBundle(
-  artifactId: string,
-  sizeBytes: number,
-  collected: Awaited<ReturnType<StreamEvidenceCollector["collectManifest"]>>,
-): EvidenceBundleV2 {
-  return {
-    schemaVersion: 2,
-    collectedAt: new Date().toISOString(),
-    source: {
-      requestedUrl: collected.requestedUrl,
-      finalUrl: collected.finalUrl,
-      protocol: collected.inspection.protocol,
-      httpStatus: collected.statusCode,
-      ...(collected.contentType ? { contentType: collected.contentType } : {}),
-    },
-    manifests: [{
-      artifactId,
-      logicalKey: "manifest/root",
-      role: "root",
-      requestedUrl: collected.requestedUrl,
-      finalUrl: collected.finalUrl,
-      kind: collected.inspection.kind,
-      sizeBytes,
-      ...(collected.inspection.variantCount !== undefined
-        ? { variantCount: collected.inspection.variantCount }
-        : {}),
-      ...(collected.inspection.segmentCount !== undefined
-        ? { segmentCount: collected.inspection.segmentCount }
-        : {}),
-      ...(collected.inspection.representationCount !== undefined
-        ? { representationCount: collected.inspection.representationCount }
-        : {}),
-    }],
-    mediaSamples: [],
-    observations: [{
-      code: "MANIFEST_DETECTED",
-      severity: "info",
-      message: `${collected.inspection.protocol.toUpperCase()} ${collected.inspection.kind} manifest detected.`,
-    }],
-    limitations: [
-      "Only the root manifest was collected in this investigation phase.",
-      "Segments, codecs, timestamps and playback behavior were not analyzed yet.",
-    ],
-  };
-}
-
-function createManifestReport(
-  job: ClaimedInvestigationJob,
-  evidence: EvidenceBundleV2,
-): InvestigationReportContent {
-  const rootManifest: ManifestEvidence = evidence.manifests[0]!;
-  return {
-    placeholder: false,
-    title: `${evidence.source.protocol.toUpperCase()} manifest collected`,
-    summary: `The root ${rootManifest.kind} manifest was fetched through the protected network boundary and preserved as evidence.`,
-    ...(job.investigation.problemDescription
-      ? { problemReported: job.investigation.problemDescription }
-      : {}),
-    findings: [
-      {
-        title: "Manifest detected",
-        status: "observed",
-        explanation: `${evidence.source.protocol.toUpperCase()} ${rootManifest.kind}, ${rootManifest.sizeBytes} bytes.`,
-      },
-      {
-        title: "Current analysis boundary",
-        status: "limitation",
-        explanation: evidence.limitations.join(" "),
-      },
-    ],
-    confidence: {
-      level: "limited",
-      explanation: "The manifest format is directly observed, but root-cause confidence requires segment and media evidence.",
-    },
-    evidence,
-    generatedBy: "deterministic-manifest-v2",
   };
 }
 
