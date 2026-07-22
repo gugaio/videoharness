@@ -53,7 +53,12 @@ export function createInvestigationWorker(input: {
       const heartbeatTimer = setInterval(() => void heartbeat(), heartbeatMs);
 
       try {
-        await persistTransition(input.repository, job, input.workerId, input.leaseMs, validatingTransition(job));
+        await input.repository.transition(
+          job.id,
+          input.workerId,
+          input.leaseMs,
+          buildValidatingTransition(job),
+        );
         const collection = await input.collector.collect(job.investigation.sourceUrl);
         if (leaseLost) throw new JobLeaseLostError();
 
@@ -108,8 +113,18 @@ export function createInvestigationWorker(input: {
         await Promise.all(recorded.supersededStorageKeys.map((storageKey) =>
           input.artifactStore.remove(storageKey).catch(() => undefined)));
 
-        await persistTransition(input.repository, job, input.workerId, input.leaseMs, analysisTransition(evidence));
-        await persistTransition(input.repository, job, input.workerId, input.leaseMs, synthesisTransition());
+        await input.repository.transition(
+          job.id,
+          input.workerId,
+          input.leaseMs,
+          buildAnalyzingTransition(evidence),
+        );
+        await input.repository.transition(
+          job.id,
+          input.workerId,
+          input.leaseMs,
+          buildSynthesizingTransition(),
+        );
         clearInterval(heartbeatTimer);
         await activeHeartbeat;
         if (leaseLost) throw new JobLeaseLostError();
@@ -139,17 +154,7 @@ export function createInvestigationWorker(input: {
   };
 }
 
-async function persistTransition(
-  repository: InvestigationJobRepository,
-  job: ClaimedInvestigationJob,
-  workerId: string,
-  leaseMs: number,
-  transition: InvestigationTransition,
-): Promise<void> {
-  await repository.transition(job.id, workerId, leaseMs, transition);
-}
-
-function validatingTransition(job: ClaimedInvestigationJob): InvestigationTransition {
+function buildValidatingTransition(job: ClaimedInvestigationJob): InvestigationTransition {
   return {
     state: "validating",
     event: {
@@ -161,7 +166,7 @@ function validatingTransition(job: ClaimedInvestigationJob): InvestigationTransi
   };
 }
 
-function analysisTransition(evidence: EvidenceBundleV2): InvestigationTransition {
+function buildAnalyzingTransition(evidence: EvidenceBundleV2): InvestigationTransition {
   const rootManifest = evidence.manifests[0]!;
   const count = rootManifest.variantCount
     ?? rootManifest.representationCount
@@ -183,7 +188,7 @@ function analysisTransition(evidence: EvidenceBundleV2): InvestigationTransition
   };
 }
 
-function synthesisTransition(): InvestigationTransition {
+function buildSynthesizingTransition(): InvestigationTransition {
   return {
     state: "synthesizing",
     event: {
