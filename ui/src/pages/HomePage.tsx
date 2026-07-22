@@ -85,7 +85,7 @@ export function HomePage(): JSX.Element {
               <br className="hidden sm:block" /> stream in seconds.
             </h1>
             <p className="mx-auto mt-6 max-w-2xl text-pretty text-base leading-7 text-harness-muted sm:text-lg">
-              Paste a URL and let AI specialists analyze playback, network, media and compatibility issues.
+              Paste a URL and let AI agents analyze playback, network, media and compatibility issues.
             </p>
           </div>
 
