@@ -50,6 +50,8 @@ services:
       VIDEO_HARNESS_DATABASE_URL: postgresql://video_harness:${VIDEO_HARNESS_POSTGRES_PASSWORD:-video_harness_local}@postgres:5432/video_harness
       VIDEO_HARNESS_WORKER_ID: worker-compose
       VIDEO_HARNESS_WORKER_LEASE_MS: 30000
+      VIDEO_HARNESS_STREAM_TIMEOUT_MS: 10000
+      VIDEO_HARNESS_MANIFEST_MAX_BYTES: 1048576
       VIDEO_HARNESS_DATA_DIR: /data
     command: ["node", "dist/worker/index.js"]
     depends_on:

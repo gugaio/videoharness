@@ -24,12 +24,15 @@ Indice de onboarding para humanos e agentes.
 
 ## Estado atual
 
-- Fase 1 concluida: intake, worker recuperavel, timeline SSE e report fixture
-  funcionam de ponta a ponta sobre PostgreSQL.
+- Fase 1 concluida: intake, worker recuperavel, timeline SSE e report funcionam de
+  ponta a ponta sobre PostgreSQL.
 - O worker usa claim transacional, lease, heartbeat e retry limitado.
 - Homepage cria o caso e a tela restaura eventos e apresenta a conclusao.
-- Proxima fase: **Fase 2 - Evidencia Deterministica**.
-- Proximo passo: definir o evidence bundle e a fronteira segura de acesso a URLs.
+- Fase ativa: **Fase 2 - Evidencia Deterministica**.
+- A primeira fatia real coleta manifests HLS/DASH por uma fronteira protegida
+  contra SSRF, persiste artifact + evidence bundle e gera report deterministico.
+- Proximo passo: aprofundar o parsing do manifest e selecionar variants sem baixar
+  segmentos ainda.
 
 ## Referencias locais
 

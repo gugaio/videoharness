@@ -28,11 +28,7 @@ export const InvestigationEventSchema = z.object({
   createdAt: z.string(),
 });
 
-const InvestigationReportSchema = z.object({
-  id: z.string().uuid(),
-  investigationId: z.string().uuid(),
-  schemaVersion: z.number().int().positive(),
-  content: z.object({
+const PhaseOneReportContentSchema = z.object({
     placeholder: z.literal(true),
     title: z.string(),
     summary: z.string(),
@@ -47,7 +43,55 @@ const InvestigationReportSchema = z.object({
       explanation: z.string(),
     }),
     generatedBy: z.literal("phase-1-lifecycle-fixture"),
+});
+
+const ManifestReportContentSchema = z.object({
+  placeholder: z.literal(false),
+  title: z.string(),
+  summary: z.string(),
+  problemReported: z.string().optional(),
+  findings: z.array(z.object({
+    title: z.string(),
+    status: z.enum(["observed", "limitation"]),
+    explanation: z.string(),
+  })),
+  confidence: z.object({
+    level: z.literal("limited"),
+    explanation: z.string(),
   }),
+  evidence: z.object({
+    schemaVersion: z.literal(1),
+    collectedAt: z.string(),
+    source: z.object({
+      requestedUrl: z.string().url(),
+      finalUrl: z.string().url(),
+      protocol: z.enum(["hls", "dash"]),
+      httpStatus: z.number().int(),
+      contentType: z.string().optional(),
+    }),
+    manifest: z.object({
+      artifactId: z.string().uuid(),
+      kind: z.enum(["master", "media", "mpd"]),
+      sizeBytes: z.number().int().nonnegative(),
+      variantCount: z.number().int().nonnegative().optional(),
+      segmentCount: z.number().int().nonnegative().optional(),
+      representationCount: z.number().int().nonnegative().optional(),
+    }),
+    observations: z.array(z.object({
+      code: z.string(),
+      severity: z.enum(["info", "warning", "error"]),
+      message: z.string(),
+    })),
+    limitations: z.array(z.string()),
+  }),
+  generatedBy: z.literal("deterministic-manifest-v1"),
+});
+
+const InvestigationReportSchema = z.object({
+  id: z.string().uuid(),
+  investigationId: z.string().uuid(),
+  schemaVersion: z.number().int().positive(),
+  content: z.discriminatedUnion("placeholder", [PhaseOneReportContentSchema, ManifestReportContentSchema]),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

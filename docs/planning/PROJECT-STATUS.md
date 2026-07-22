@@ -5,10 +5,10 @@ Ultima atualizacao: **2026-07-21**
 ## Resumo
 
 - Fase ativa: **Fase 2 - Evidencia Deterministica**.
-- Estado: **pronta para iniciar**.
+- Estado: **em andamento**.
 - Repositorio: novo e independente.
 - Runtime: API, worker, UI e PostgreSQL executaveis.
-- Objetivo imediato: definir evidence bundle e acesso seguro a streams.
+- Objetivo imediato: aprofundar parsing e selecao limitada de manifests derivados.
 
 ## Fases
 
@@ -16,7 +16,7 @@ Ultima atualizacao: **2026-07-21**
 |---|---|---|
 | 0 | Concluida | Fundacao documental, decisoes e plano executavel |
 | 1 | Concluida | Thin slice completo com API, worker, Postgres, SSE e UI |
-| 2 | Pronta para iniciar | Evidencia deterministica real de streaming |
+| 2 | Em andamento | Evidencia deterministica real de streaming |
 | 3 | Planejada | Investigacao assistida por IA e report estruturado |
 | 4 | Planejada | UX premium e experiencia end-to-end |
 | 5 | Planejada | Hardening, deploy e validacao com usuarios |
@@ -42,6 +42,10 @@ Ultima atualizacao: **2026-07-21**
 - State machine persistida de `queued` ate `completed` ou `failed`.
 - Recuperacao de jobs abandonados e encerramento de tentativas esgotadas.
 - Report fixture persistido, consultavel e apresentado na tela do caso.
+- Cliente HTTP com protecao SSRF, IP fixado, redirects revalidados, timeout e
+  limite de bytes.
+- Deteccao inicial HLS/DASH e evidence bundle versionado.
+- Root manifest persistido como artifact e report deterministico apresentado na UI.
 
 ## Checklist da Fase 1
 
@@ -56,18 +60,74 @@ Ultima atualizacao: **2026-07-21**
 
 ## Pendencias da fase ativa
 
-- [ ] Definir schema versionado do evidence bundle.
-- [ ] Criar port deterministico de coleta.
-- [ ] Proteger acesso de rede contra SSRF e redirects maliciosos.
-- [ ] Detectar HLS/DASH com timeout e limites.
-- [ ] Persistir o primeiro manifest como artifact.
+- [x] Definir schema versionado do evidence bundle.
+- [x] Criar port deterministico de coleta.
+- [x] Proteger acesso de rede contra SSRF e redirects maliciosos.
+- [x] Detectar HLS/DASH com timeout e limites.
+- [x] Persistir o primeiro manifest como artifact.
+- [ ] Extrair estrutura profunda de variants/renditions/representations.
+- [ ] Coletar manifests derivados com amostragem limitada.
 
 ## Proximo passo recomendado
 
-Definir o evidence bundle versionado e implementar a primeira fronteira segura de
-acesso a manifests HLS/DASH, com protecao SSRF, timeout e limites.
+Importar/adaptar os parsers estritamente necessarios do VHS para extrair estrutura
+HLS/DASH e selecionar uma amostra pequena de manifests derivados.
 
 ## Registro de atualizacoes
+
+### 2026-07-21 - Primeira evidencia real e fronteira SSRF
+
+Fase impactada: 2.
+
+Entrega:
+
+- Implementado cliente HTTP(S) com validacao de protocolo/credenciais, resolucao
+  DNS completa e bloqueio de enderecos privados, locais e reservados.
+- Requests conectam ao IP previamente validado, evitando segunda resolucao e DNS
+  rebinding; redirects passam novamente pela policy.
+- Adicionados timeout total, limite de redirects, limite de bytes e classificacao
+  de falhas retryable/non-retryable.
+- Criada deteccao deterministica inicial de HLS master/media e DASH MPD.
+- Criados `StreamEvidenceCollector`, `ArtifactStore` e `EvidenceBundle` v1.
+- Root manifest e gravado atomicamente no filesystem e registrado em PostgreSQL;
+  arquivo nao registrado e removido em caso de rollback.
+- Worker agora publica evidencia real e produz report
+  `deterministic-manifest-v1`, preservando limitations e confidence limitada.
+- UI diferencia fixture historica de report com evidencia observada.
+- VHS foi inspecionado no commit `d2abfbd51046f1aed9737122b7e0e20f048efd91`,
+  mas nenhum codigo foi copiado nesta fatia por faltar a fronteira SSRF necessaria.
+
+Arquivos-chave:
+
+- `src/stream-tools/safe-http-client.ts`
+- `src/stream-tools/manifest.ts`
+- `src/investigation/domain/evidence.ts`
+- `src/investigation/ports/stream-evidence-collector.ts`
+- `src/investigation/adapters/filesystem-artifact-store.ts`
+- `src/investigation/application/run-investigation.ts`
+
+Checklist de validacao:
+
+- [x] `npm run check`;
+- [x] `npm test` - 48 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build`;
+- [x] stream HLS publico concluiu com 6 eventos, 1 artifact e 1 report;
+- [x] master HLS real detectado com 5 variants e 511 bytes preservados;
+- [x] tentativa contra `127.0.0.1` falhou uma unica vez com
+  `STREAM_DESTINATION_BLOCKED` e zero artifacts;
+- [x] API e worker encerraram graciosamente.
+
+Pendencias:
+
+- A deteccao ainda nao extrai atributos de variants/renditions/representations.
+- Nenhum segmento ou manifest derivado e baixado nesta fatia.
+- FFprobe, codecs, timestamps e playback continuam fora do report atual.
+
+Proximo passo recomendado:
+
+- Aprofundar o parser e selecionar manifests derivados com limites explicitos.
 
 ### 2026-07-21 - Worker recuperavel e conclusao da Fase 1
 

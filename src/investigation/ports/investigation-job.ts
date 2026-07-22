@@ -4,6 +4,7 @@ import type {
   InvestigationTransition,
 } from "../domain/investigation-job.js";
 import type { InvestigationReportContent } from "../domain/investigation-report.js";
+import type { EvidenceBundle } from "../domain/evidence.js";
 
 export type JobFailureDisposition = "retrying" | "failed" | "lease_lost";
 
@@ -16,6 +17,19 @@ export interface InvestigationJobRepository {
     leaseMs: number,
     transition: InvestigationTransition,
   ): Promise<void>;
+  recordEvidence(
+    jobId: string,
+    workerId: string,
+    leaseMs: number,
+    artifact: {
+      id: string;
+      storageKey: string;
+      contentType?: string;
+      sizeBytes: number;
+      evidence: EvidenceBundle;
+    },
+    event: InvestigationLifecycleEvent,
+  ): Promise<void>;
   complete(
     jobId: string,
     workerId: string,
@@ -23,5 +37,11 @@ export interface InvestigationJobRepository {
     report: InvestigationReportContent,
     event: InvestigationLifecycleEvent,
   ): Promise<void>;
-  fail(jobId: string, workerId: string, errorCode: string, errorMessage: string): Promise<JobFailureDisposition>;
+  fail(
+    jobId: string,
+    workerId: string,
+    errorCode: string,
+    errorMessage: string,
+    retryable: boolean,
+  ): Promise<JobFailureDisposition>;
 }

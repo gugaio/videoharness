@@ -96,9 +96,11 @@ export function InvestigationPage(): JSX.Element {
             {report.data && (
               <section className="mt-10 rounded-3xl border border-amber-200/15 bg-amber-200/[0.04] p-6 sm:p-8">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-xs uppercase tracking-[0.2em] text-amber-100/55">Technical fixture report</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-amber-100/55">
+                    {report.data.content.placeholder ? "Technical fixture report" : "Deterministic manifest report"}
+                  </p>
                   <span className="rounded-full border border-amber-200/15 px-3 py-1 text-[10px] uppercase tracking-wider text-amber-100/55">
-                    Phase 1 placeholder
+                    {report.data.content.placeholder ? "Phase 1 placeholder" : "Observed evidence"}
                   </span>
                 </div>
                 <h2 className="mt-4 text-2xl font-medium">{report.data.content.title}</h2>
@@ -111,7 +113,9 @@ export function InvestigationPage(): JSX.Element {
                     </article>
                   ))}
                   <article className="rounded-2xl border border-white/10 bg-black/15 p-5">
-                    <p className="text-sm font-medium">Confidence not assessed</p>
+                    <p className="text-sm font-medium">
+                      {report.data.content.placeholder ? "Confidence not assessed" : "Confidence is limited"}
+                    </p>
                     <p className="mt-2 text-sm leading-6 text-harness-muted">{report.data.content.confidence.explanation}</p>
                   </article>
                 </div>

@@ -118,10 +118,19 @@ GET /v1/investigations/:id/report
 ```
 
 Retorna `{ "report": InvestigationReport }`. Antes da conclusao retorna
-`404 REPORT_NOT_READY`. Na Fase 1, `report.content.placeholder=true` e
-`generatedBy=phase-1-lifecycle-fixture` deixam explicito que nenhuma evidencia de
-streaming foi coletada. A Fase 2 substitui essa fixture por resultados
-deterministicos.
+`404 REPORT_NOT_READY`. Reports antigos da Fase 1 possuem
+`placeholder=true`. A coleta de manifest da Fase 2 produz `placeholder=false`,
+`generatedBy=deterministic-manifest-v1` e um `EvidenceBundle` versionado com
+source, manifest, observations e limitations.
+
+Falhas de coleta podem encerrar a investigation com codigos como:
+
+- `STREAM_DESTINATION_BLOCKED`;
+- `STREAM_REQUEST_TIMEOUT`;
+- `STREAM_RESPONSE_TOO_LARGE`;
+- `STREAM_TOO_MANY_REDIRECTS`;
+- `STREAM_HTTP_ERROR`;
+- `UNSUPPORTED_MANIFEST`.
 
 ## Erros
 

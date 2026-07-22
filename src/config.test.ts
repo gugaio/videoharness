@@ -10,6 +10,8 @@ describe("loadConfig", () => {
     expect(config.databaseUrl).toContain("video_harness");
     expect(config.workerPollMs).toBe(2_000);
     expect(config.workerLeaseMs).toBe(30_000);
+    expect(config.streamTimeoutMs).toBe(10_000);
+    expect(config.manifestMaxBytes).toBe(1_048_576);
   });
 
   it("rejects an invalid port", () => {

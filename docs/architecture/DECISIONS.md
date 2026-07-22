@@ -75,3 +75,24 @@ Decisao:
 - IA explica, correlaciona, formula hipoteses e recomenda proximos passos.
 - Chain of thought nunca e armazenado ou exibido.
 
+## 2026-07-21 - Acesso a streams com destino fixado
+
+Decisao:
+
+- O worker resolve e valida todos os enderecos antes da conexao.
+- A request conecta diretamente ao IP validado, mantendo `Host` e SNI.
+- Redirects sao manuais e revalidados.
+- Qualquer resposta DNS contendo endereco nao publico bloqueia o destino inteiro.
+
+Motivo:
+
+- Validar DNS e depois deixar outro cliente resolver novamente manteria uma janela
+  para DNS rebinding e SSRF.
+- O fluxo principal aceita URLs arbitrarias, portanto a fronteira segura precisa
+  existir antes de qualquer ferramenta de streaming.
+
+Consequencia:
+
+- A policy e deliberadamente conservadora e pode rejeitar hosts com DNS misto.
+- Proxies corporativos e streams privados exigirao uma policy explicita futura;
+  nao sao suportados no MVP publico.

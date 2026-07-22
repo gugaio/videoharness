@@ -156,11 +156,49 @@ export class PostgresInvestigationJobRepository implements InvestigationJobRepos
     }
   }
 
+  async recordEvidence(
+    jobId: string,
+    workerId: string,
+    leaseMs: number,
+    artifact: Parameters<InvestigationJobRepository["recordEvidence"]>[3],
+    event: Parameters<InvestigationJobRepository["recordEvidence"]>[4],
+  ): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const investigationId = await renewAndGetInvestigationId(client, jobId, workerId, leaseMs);
+      await client.query(
+        `INSERT INTO artifacts (id, investigation_id, kind, storage_key, content_type, size_bytes, metadata)
+         VALUES ($1, $2, 'manifest', $3, $4, $5, $6::jsonb)`,
+        [
+          artifact.id,
+          investigationId,
+          artifact.storageKey,
+          artifact.contentType ?? null,
+          artifact.sizeBytes,
+          JSON.stringify({ evidence: artifact.evidence }),
+        ],
+      );
+      await client.query(
+        `UPDATE investigations SET state = 'collecting', updated_at = now() WHERE id = $1`,
+        [investigationId],
+      );
+      await insertEvent(client, investigationId, event);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async fail(
     jobId: string,
     workerId: string,
     errorCode: string,
     errorMessage: string,
+    retryable: boolean,
   ): Promise<JobFailureDisposition> {
     const client = await this.pool.connect();
     try {
@@ -178,7 +216,7 @@ export class PostgresInvestigationJobRepository implements InvestigationJobRepos
         return "lease_lost";
       }
 
-      const finalFailure = job.attempts >= job.max_attempts;
+      const finalFailure = !retryable || job.attempts >= job.max_attempts;
       await client.query(
         `UPDATE jobs
             SET status = $2, locked_by = NULL, locked_until = NULL,

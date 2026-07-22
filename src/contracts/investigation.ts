@@ -38,7 +38,33 @@ export const InvestigationEventSchema = z.object({
   createdAt: z.string().datetime(),
 });
 
-export const InvestigationReportContentSchema = z.object({
+const EvidenceBundleSchema = z.object({
+  schemaVersion: z.literal(1),
+  collectedAt: z.string().datetime(),
+  source: z.object({
+    requestedUrl: z.string().url(),
+    finalUrl: z.string().url(),
+    protocol: z.enum(["hls", "dash"]),
+    httpStatus: z.number().int(),
+    contentType: z.string().optional(),
+  }),
+  manifest: z.object({
+    artifactId: z.string().uuid(),
+    kind: z.enum(["master", "media", "mpd"]),
+    sizeBytes: z.number().int().nonnegative(),
+    variantCount: z.number().int().nonnegative().optional(),
+    segmentCount: z.number().int().nonnegative().optional(),
+    representationCount: z.number().int().nonnegative().optional(),
+  }),
+  observations: z.array(z.object({
+    code: z.string(),
+    severity: z.enum(["info", "warning", "error"]),
+    message: z.string(),
+  })),
+  limitations: z.array(z.string()),
+});
+
+const PhaseOneReportContentSchema = z.object({
   placeholder: z.literal(true),
   title: z.string().min(1),
   summary: z.string().min(1),
@@ -54,6 +80,29 @@ export const InvestigationReportContentSchema = z.object({
   }),
   generatedBy: z.literal("phase-1-lifecycle-fixture"),
 });
+
+const ManifestReportContentSchema = z.object({
+  placeholder: z.literal(false),
+  title: z.string().min(1),
+  summary: z.string().min(1),
+  problemReported: z.string().optional(),
+  findings: z.array(z.object({
+    title: z.string().min(1),
+    status: z.enum(["observed", "limitation"]),
+    explanation: z.string().min(1),
+  })),
+  confidence: z.object({
+    level: z.literal("limited"),
+    explanation: z.string().min(1),
+  }),
+  evidence: EvidenceBundleSchema,
+  generatedBy: z.literal("deterministic-manifest-v1"),
+});
+
+export const InvestigationReportContentSchema = z.discriminatedUnion("placeholder", [
+  PhaseOneReportContentSchema,
+  ManifestReportContentSchema,
+]);
 
 export const InvestigationReportSchema = z.object({
   id: z.string().uuid(),

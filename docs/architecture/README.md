@@ -153,6 +153,17 @@ ui/
 prompts/
 ```
 
+## Fronteira de rede para streams
+
+- URLs aceitam somente HTTP(S) e nao podem conter credenciais embutidas.
+- Todos os resultados DNS precisam ser publicos; resposta mista publica/privada e
+  bloqueada.
+- A conexao usa diretamente o IP validado, preservando `Host` e SNI, para evitar
+  uma segunda resolucao vulneravel a DNS rebinding.
+- Cada redirect e manual, limitado e passa novamente pela validacao completa.
+- Timeout cobre resolucao, headers e body; resposta tem limite estrito de bytes.
+- Falhas deterministicas de policy/formato nao sao repetidas pelo worker.
+
 ## Fases
 
 - `phases/phase-0.md` - fundacao do produto.
