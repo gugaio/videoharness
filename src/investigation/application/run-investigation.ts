@@ -8,11 +8,10 @@ import {
 } from "../domain/investigation-job.js";
 import type { ArtifactStore } from "../ports/artifact-store.js";
 import type { InvestigationJobRepository } from "../ports/investigation-job.js";
-import type { StreamEvidenceCollector } from "../ports/stream-evidence-collector.js";
+import type { ManifestCollector } from "../ports/manifest-collector.js";
 import {
   buildManifestEvidence,
   buildManifestReport,
-  type PromotedManifest,
 } from "./build-manifest-evidence.js";
 
 export type InvestigationWorker = {
@@ -21,7 +20,7 @@ export type InvestigationWorker = {
 
 export function createInvestigationWorker(input: {
   repository: InvestigationJobRepository;
-  collector: StreamEvidenceCollector;
+  collector: ManifestCollector;
   artifactStore: ArtifactStore;
   workerId: string;
   leaseMs: number;
@@ -55,40 +54,41 @@ export function createInvestigationWorker(input: {
 
       try {
         await persistTransition(input.repository, job, input.workerId, input.leaseMs, validatingTransition(job));
-        const collected = await input.collector.collectManifestEvidence(job.investigation.sourceUrl);
+        const collection = await input.collector.collect(job.investigation.sourceUrl);
         if (leaseLost) throw new JobLeaseLostError();
 
-        const promoted: PromotedManifest[] = [];
-        for (const manifest of collected.manifests) {
+        for (const manifest of collection.manifests) {
           const artifactId = randomUUID();
           const stored = await input.artifactStore.put({
             investigationId: job.investigation.id,
             artifactId,
             extension: manifest.inspection.protocol === "hls" ? "m3u8" : "mpd",
-            content: manifest.bytes,
+            content: manifest.content.bytes,
           });
           uncommittedStorageKeys.add(stored.storageKey);
-          promoted.push({
-            artifactId,
+          manifest.artifact = {
+            id: artifactId,
             storageKey: stored.storageKey,
             sizeBytes: stored.sizeBytes,
-            collected: manifest,
-          });
+          };
         }
-        const evidence = buildManifestEvidence(promoted, collected);
+        const evidence = buildManifestEvidence(collection);
         const rootManifest = evidence.manifests[0]!;
         const recorded = await input.repository.recordEvidenceBatch(
           job.id,
           input.workerId,
           input.leaseMs,
-          promoted.map((manifest) => ({
-            id: manifest.artifactId,
-            logicalKey: manifest.collected.logicalKey,
-            kind: "manifest" as const,
-            storageKey: manifest.storageKey,
-            ...(manifest.collected.contentType ? { contentType: manifest.collected.contentType } : {}),
-            sizeBytes: manifest.sizeBytes,
-          })),
+          collection.manifests.map((manifest) => {
+            if (!manifest.artifact) throw new Error(`Manifest ${manifest.logicalKey} has no artifact`);
+            return {
+              id: manifest.artifact.id,
+              logicalKey: manifest.logicalKey,
+              kind: "manifest" as const,
+              storageKey: manifest.artifact.storageKey,
+              ...(manifest.source.contentType ? { contentType: manifest.source.contentType } : {}),
+              sizeBytes: manifest.artifact.sizeBytes,
+            };
+          }),
           evidence,
           {
             type: "investigation.evidence_found",
@@ -96,7 +96,7 @@ export function createInvestigationWorker(input: {
             message: `${evidence.manifests.length} ${evidence.source.protocol.toUpperCase()} manifest${evidence.manifests.length === 1 ? "" : "s"} collected and preserved as evidence.`,
             payload: {
               state: "collecting",
-              artifactIds: promoted.map((manifest) => manifest.artifactId),
+              artifactIds: evidence.manifests.map((manifest) => manifest.artifactId),
               logicalKeys: evidence.manifests.map((manifest) => manifest.logicalKey),
               protocol: evidence.source.protocol,
               manifestKind: rootManifest.kind,

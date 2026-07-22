@@ -26,15 +26,19 @@ function createRepository(): InvestigationJobRepository {
 }
 
 const collector = {
-  collectManifestEvidence: vi.fn(async () => ({
+  collect: vi.fn(async () => ({
     manifests: [{
       logicalKey: "manifest/root",
       role: "root" as const,
-      requestedUrl: claimedJob.investigation.sourceUrl,
-      finalUrl: claimedJob.investigation.sourceUrl,
-      statusCode: 200,
-      contentType: "application/vnd.apple.mpegurl",
-      bytes: new TextEncoder().encode("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nvideo.m3u8"),
+      source: {
+        requestedUrl: claimedJob.investigation.sourceUrl,
+        finalUrl: claimedJob.investigation.sourceUrl,
+        statusCode: 200,
+        contentType: "application/vnd.apple.mpegurl",
+      },
+      content: {
+        bytes: new TextEncoder().encode("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nvideo.m3u8"),
+      },
       inspection: { protocol: "hls" as const, kind: "master" as const, variantCount: 1 },
     }],
   })),
@@ -117,7 +121,7 @@ describe("investigation worker", () => {
   it("does not retry a destination blocked by the network policy", async () => {
     const repository = createRepository();
     const blockedCollector = {
-      collectManifestEvidence: vi.fn(async () => Promise.reject(new StreamCollectionError(
+      collect: vi.fn(async () => Promise.reject(new StreamCollectionError(
         "STREAM_DESTINATION_BLOCKED",
         "The stream destination is not a public network address",
         false,
@@ -147,15 +151,17 @@ describe("investigation worker", () => {
     const rootBytes = new TextEncoder().encode("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=2000\nvariant.m3u8");
     const variantBytes = new TextEncoder().encode("#EXTM3U\n#EXTINF:4,\nsegment.ts");
     const multiCollector = {
-      collectManifestEvidence: vi.fn(async () => ({
+      collect: vi.fn(async () => ({
         manifests: [
           {
             logicalKey: "manifest/root",
             role: "root" as const,
-            requestedUrl: claimedJob.investigation.sourceUrl,
-            finalUrl: claimedJob.investigation.sourceUrl,
-            statusCode: 200,
-            bytes: rootBytes,
+            source: {
+              requestedUrl: claimedJob.investigation.sourceUrl,
+              finalUrl: claimedJob.investigation.sourceUrl,
+              statusCode: 200,
+            },
+            content: { bytes: rootBytes },
             inspection: {
               protocol: "hls" as const,
               kind: "master" as const,
@@ -178,10 +184,12 @@ describe("investigation worker", () => {
           {
             logicalKey: "manifest/variant/0",
             role: "variant" as const,
-            requestedUrl: "https://example.test/live/variant.m3u8",
-            finalUrl: "https://example.test/live/variant.m3u8",
-            statusCode: 200,
-            bytes: variantBytes,
+            source: {
+              requestedUrl: "https://example.test/live/variant.m3u8",
+              finalUrl: "https://example.test/live/variant.m3u8",
+              statusCode: 200,
+            },
+            content: { bytes: variantBytes },
             inspection: {
               protocol: "hls" as const,
               kind: "media" as const,

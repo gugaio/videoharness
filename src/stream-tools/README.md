@@ -29,3 +29,8 @@ redirects automaticamente e nao oferecia a protecao SSRF exigida pelo produto.
 
 O Video Harness mantem essa copia autonomamente durante o MVP. Nao existe
 dependencia de runtime nem sincronizacao automatica com o VHS.
+
+O adapter HTTP entrega o modelo canonico `Manifest`. Parsing adiciona
+`ManifestInspection`, storage adiciona `artifact` ao mesmo objeto e o report cria
+uma projecao `ManifestEvidence` sem bytes. Nao criar novos tipos apenas para cada
+etapa intermediaria desse ciclo.

@@ -142,3 +142,33 @@ Consequencia:
 - O primeiro report nao representa toda a ladder; essa limitacao fica explicita.
 - Outras variants podem ser coletadas futuramente quando o relato ou uma evidencia
   justificar comparacao ABR.
+
+## 2026-07-22 - Modelo canonico enriquecido no pipeline
+
+Decisao:
+
+- Cada conceito possui preferencialmente um modelo interno canonico.
+- Processos sequenciais enriquecem o mesmo objeto em vez de criar tipos nomeados
+  por etapa.
+- Projecoes de API/evidence continuam separadas quando removem bytes ou outros
+  dados exclusivos do runtime.
+
+Aplicacao inicial:
+
+- `Manifest` contem source, content, inspection e artifact opcional.
+- `ManifestCollector` devolve uma `ManifestCollection`.
+- O worker adiciona `artifact` depois do filesystem.
+- `ManifestEvidence` e a projecao persistida sem `content.bytes`.
+
+Motivo:
+
+- `CollectedManifest`, `PromotedManifest` e `ManifestEvidence` pareciam conceitos
+  distintos, embora os dois primeiros fossem apenas estados do mesmo manifesto.
+- O vocabulario adicional dificultava entender o fluxo e seria repetido em
+  segments e probes.
+
+Consequencia:
+
+- O pipeline fica mais direto e o ponto de enriquecimento permanece explicito.
+- Novos tipos por etapa exigem uma justificativa concreta de fronteira ou
+  invariante, nao apenas conveniencia nominal.

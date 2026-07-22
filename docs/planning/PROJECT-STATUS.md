@@ -98,16 +98,19 @@ Entrega:
   discontinuity count e `ENDLIST` sem baixar chunks.
 - Amostragem seleciona maior bandwidth com desempate estavel; audio vinculado
   prefere `DEFAULT`, `AUTOSELECT` e ordem da master.
-- Root, variant e audio sao buscados pelo `SafeHttpClient` e promovidos num unico
-  lote idempotente com logical keys estaveis.
+- Root, variant e audio sao buscados pelo `SafeHttpClient`; os mesmos objetos
+  `Manifest` recebem suas referencias de artifact antes do lote idempotente.
 - Evidence Bundle e report registram topologia, escolha, artifacts e limitacoes.
 - O builder de evidence/report foi separado do lifecycle do worker quando o fluxo
   passou a lidar com varios manifests.
+- Removidos os modelos intermediarios `CollectedManifest` e `PromotedManifest`;
+  `ManifestEvidence` permanece apenas como projecao serializavel sem bytes.
 
 Arquivos-chave:
 
 - `src/stream-tools/hls-manifest.ts`
-- `src/investigation/adapters/manifest-evidence-collector.ts`
+- `src/investigation/ports/manifest-collector.ts`
+- `src/investigation/adapters/http-manifest-collector.ts`
 - `src/investigation/application/build-manifest-evidence.ts`
 - `src/investigation/application/run-investigation.ts`
 - `src/investigation/domain/evidence.ts`
@@ -196,7 +199,7 @@ Entrega:
 - Adicionados timeout total, limite de redirects, limite de bytes e classificacao
   de falhas retryable/non-retryable.
 - Criada deteccao deterministica inicial de HLS master/media e DASH MPD.
-- Criados `StreamEvidenceCollector`, `ArtifactStore` e `EvidenceBundle` v1.
+- Criados `ManifestCollector`, `ArtifactStore` e `EvidenceBundle` v1.
 - Root manifest e gravado atomicamente no filesystem e registrado em PostgreSQL;
   arquivo nao registrado e removido em caso de rollback.
 - Worker agora publica evidencia real e produz report
@@ -210,7 +213,7 @@ Arquivos-chave:
 - `src/stream-tools/safe-http-client.ts`
 - `src/stream-tools/manifest.ts`
 - `src/investigation/domain/evidence.ts`
-- `src/investigation/ports/stream-evidence-collector.ts`
+- `src/investigation/ports/manifest-collector.ts`
 - `src/investigation/adapters/filesystem-artifact-store.ts`
 - `src/investigation/application/run-investigation.ts`
 

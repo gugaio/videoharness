@@ -35,6 +35,41 @@ npm --prefix ui run build
 - Testes junto ao modulo quando isso facilitar navegacao.
 - Logs estruturados, sem URLs completas contendo tokens.
 
+## Modelos canonicos e enriquecimento progressivo
+
+Use um unico modelo para o mesmo conceito enquanto ele atravessa um fluxo linear.
+As etapas enriquecem esse objeto em vez de criar aliases com nomes de lifecycle.
+
+Exemplo:
+
+```ts
+type Manifest = {
+  logicalKey: string;
+  role: "root" | "variant" | "rendition";
+  source: ManifestSource;
+  content: { bytes: Uint8Array };
+  inspection: ManifestInspection;
+  artifact?: ArtifactReference;
+};
+```
+
+O collector preenche source, content e inspection. O application service adiciona
+`artifact` depois do storage. O evidence builder projeta o mesmo `Manifest` para
+`ManifestEvidence`, removendo bytes e mantendo apenas fatos e referencias
+serializaveis.
+
+Evite criar `FetchedManifest`, `CollectedManifest`, `ProcessedManifest` ou
+`PromotedManifest` apenas para expressar a ordem do pipeline. Um tipo separado so
+se justifica quando:
+
+- atravessa uma fronteira externa com contrato proprio;
+- remove dados que nao podem ser serializados ou expostos;
+- representa uma invariante materialmente diferente;
+- impede uma classe real de erro que nao pode ser protegida por uma validacao
+  pequena e explicita.
+
+Essa regra vale tambem para segments, probes e artifacts futuros.
+
 ## Hexagonal sem cerimonia
 
 Um caso de uso recebe dependencias:
@@ -77,7 +112,7 @@ Antes de copiar:
 1. Identificar commit de origem.
 2. Copiar somente source, testes e fixtures necessarios.
 3. Nao copiar `dist`, coverage, dados locais ou configs obsoletas.
-4. Criar README de proveniencia no modulo.
+4. Registrar proveniencia no README do modulo.
 5. Fazer a importacao em commit isolado antes de adaptacoes amplas.
 
 ## Definition of Done de uma mudanca

@@ -95,6 +95,13 @@ Nao trocar a stack sem registrar a decisao em
 6. Manter o pacote interno de stream tools deterministico e sem conceitos de
    usuario, jobs, agentes, prompts ou produto.
 7. O LLM explica evidencias; ferramentas deterministicas produzem os fatos.
+8. Preferir um modelo canonico por conceito, enriquecido ao longo do pipeline.
+9. Nao criar tipos diferentes apenas para nomear etapas como `Collected`,
+   `Processed`, `Promoted` ou `Stored` quando continuam representando a mesma
+   entidade. Separar tipos somente quando houver uma invariante ou fronteira real.
+10. Projecoes serializaveis podem ser tipos separados quando removem dados de
+    runtime, como bytes, handles ou segredos. Exemplo: `Manifest` interno vira
+    `ManifestEvidence` no report sem carregar o corpo baixado.
 
 ## Regras de implementacao
 
@@ -160,4 +167,3 @@ git diff --check
 ```
 
 Registre no status o que nao foi executado e por que.
-

@@ -2,7 +2,7 @@ import { loadConfig } from "../config.js";
 import { createDatabasePool } from "../database/client.js";
 import { logger } from "../infra/logger.js";
 import { FilesystemArtifactStore } from "../investigation/adapters/filesystem-artifact-store.js";
-import { ManifestEvidenceCollector } from "../investigation/adapters/manifest-evidence-collector.js";
+import { HttpManifestCollector } from "../investigation/adapters/http-manifest-collector.js";
 import { PostgresInvestigationJobRepository } from "../investigation/adapters/postgres-investigation-job.js";
 import { createInvestigationWorker } from "../investigation/application/run-investigation.js";
 import { SafeHttpClient } from "../stream-tools/safe-http-client.js";
@@ -11,7 +11,7 @@ const config = loadConfig();
 const pool = createDatabasePool(config.databaseUrl);
 const repository = new PostgresInvestigationJobRepository(pool);
 const artifactStore = new FilesystemArtifactStore(config.dataDir);
-const collector = new ManifestEvidenceCollector(new SafeHttpClient({
+const collector = new HttpManifestCollector(new SafeHttpClient({
   timeoutMs: config.streamTimeoutMs,
   maxBytes: config.manifestMaxBytes,
 }));

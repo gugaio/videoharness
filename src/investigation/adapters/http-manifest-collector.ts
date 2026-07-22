@@ -3,11 +3,11 @@ import { selectHlsManifestSample } from "../../stream-tools/hls-manifest.js";
 import { inspectManifest } from "../../stream-tools/manifest.js";
 import { SafeHttpClient } from "../../stream-tools/safe-http-client.js";
 import type {
-  CollectedManifest,
-  StreamEvidenceCollector,
-} from "../ports/stream-evidence-collector.js";
+  Manifest,
+  ManifestCollector,
+} from "../ports/manifest-collector.js";
 
-export class ManifestEvidenceCollector implements StreamEvidenceCollector {
+export class HttpManifestCollector implements ManifestCollector {
   private readonly maxDerivedManifests: number;
 
   constructor(
@@ -17,10 +17,10 @@ export class ManifestEvidenceCollector implements StreamEvidenceCollector {
     this.maxDerivedManifests = Math.max(0, Math.min(2, options.maxDerivedManifests ?? 2));
   }
 
-  async collectManifestEvidence(sourceUrl: string) {
+  async collect(sourceUrl: string) {
     const response = await this.http.getText(sourceUrl);
-    const root = toCollectedManifest(response, "manifest/root", "root");
-    const manifests: CollectedManifest[] = [root];
+    const root = toManifest(response, "manifest/root", "root");
+    const manifests: Manifest[] = [root];
     const hls = root.inspection.hls;
     if (root.inspection.protocol !== "hls" || root.inspection.kind !== "master" || !hls) {
       return { manifests };
@@ -51,9 +51,9 @@ export class ManifestEvidenceCollector implements StreamEvidenceCollector {
     url: string,
     logicalKey: string,
     role: "variant" | "rendition",
-  ): Promise<CollectedManifest> {
+  ): Promise<Manifest> {
     const response = await this.http.getText(url);
-    const manifest = toCollectedManifest(response, logicalKey, role);
+    const manifest = toManifest(response, logicalKey, role);
     if (manifest.inspection.protocol !== "hls" || manifest.inspection.kind !== "media") {
       throw new StreamCollectionError(
         "UNSUPPORTED_MANIFEST",
@@ -65,19 +65,21 @@ export class ManifestEvidenceCollector implements StreamEvidenceCollector {
   }
 }
 
-function toCollectedManifest(
+function toManifest(
   response: Awaited<ReturnType<SafeHttpClient["getText"]>>,
   logicalKey: string,
-  role: CollectedManifest["role"],
-): CollectedManifest {
+  role: Manifest["role"],
+): Manifest {
   return {
     logicalKey,
     role,
-    requestedUrl: response.requestedUrl,
-    finalUrl: response.finalUrl,
-    statusCode: response.statusCode,
-    ...(response.contentType ? { contentType: response.contentType } : {}),
-    bytes: response.bytes,
+    source: {
+      requestedUrl: response.requestedUrl,
+      finalUrl: response.finalUrl,
+      statusCode: response.statusCode,
+      ...(response.contentType ? { contentType: response.contentType } : {}),
+    },
+    content: { bytes: response.bytes },
     inspection: inspectManifest(response.text, response.finalUrl),
   };
 }

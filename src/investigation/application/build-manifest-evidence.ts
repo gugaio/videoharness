@@ -2,44 +2,35 @@ import type { EvidenceBundleV2, ManifestEvidence } from "../domain/evidence.js";
 import type { ClaimedInvestigationJob } from "../domain/investigation-job.js";
 import type { InvestigationReportContent } from "../domain/investigation-report.js";
 import type {
-  CollectedManifest,
-  CollectedManifestEvidence,
-} from "../ports/stream-evidence-collector.js";
+  Manifest,
+  ManifestCollection,
+} from "../ports/manifest-collector.js";
 
-export type PromotedManifest = {
-  artifactId: string;
-  storageKey: string;
-  sizeBytes: number;
-  collected: CollectedManifest;
-};
-
-export function buildManifestEvidence(
-  promoted: PromotedManifest[],
-  collected: CollectedManifestEvidence,
-): EvidenceBundleV2 {
-  const root = promoted.find((manifest) => manifest.collected.role === "root");
-  if (!root) throw new Error("Collected manifest evidence has no root artifact");
-  const rootHls = root.collected.inspection.hls;
-  const variantArtifact = promoted.find((manifest) => manifest.collected.role === "variant");
-  const audioArtifact = promoted.find((manifest) =>
-    manifest.collected.logicalKey === "manifest/rendition/audio/0");
+export function buildManifestEvidence(collection: ManifestCollection): EvidenceBundleV2 {
+  const root = collection.manifests.find((manifest) => manifest.role === "root");
+  if (!root) throw new Error("Manifest collection has no root manifest");
+  requireArtifact(root);
+  const rootHls = root.inspection.hls;
+  const variant = collection.manifests.find((manifest) => manifest.role === "variant");
+  const audio = collection.manifests.find((manifest) =>
+    manifest.logicalKey === "manifest/rendition/audio/0");
   const observations: EvidenceBundleV2["observations"] = [{
     code: "MANIFEST_DETECTED",
     severity: "info",
-    message: `${root.collected.inspection.protocol.toUpperCase()} ${root.collected.inspection.kind} manifest detected.`,
+    message: `${root.inspection.protocol.toUpperCase()} ${root.inspection.kind} manifest detected.`,
   }];
-  if (collected.hlsSelection) {
+  if (collection.hlsSelection) {
     observations.push({
       code: "HLS_VARIANT_SELECTED",
       severity: "info",
-      message: `Variant ${collected.hlsSelection.variant.index} selected by highest bandwidth for bounded investigation.`,
+      message: `Variant ${collection.hlsSelection.variant.index} selected by highest bandwidth for bounded investigation.`,
     });
   }
-  if (audioArtifact && collected.hlsSelection?.audioRendition) {
+  if (audio?.artifact && collection.hlsSelection?.audioRendition) {
     observations.push({
       code: "HLS_AUDIO_RENDITION_SELECTED",
       severity: "info",
-      message: `Linked audio rendition ${collected.hlsSelection.audioRendition.index} selected for bounded investigation.`,
+      message: `Linked audio rendition ${collection.hlsSelection.audioRendition.index} selected for bounded investigation.`,
     });
   }
 
@@ -47,33 +38,33 @@ export function buildManifestEvidence(
     schemaVersion: 2,
     collectedAt: new Date().toISOString(),
     source: {
-      requestedUrl: root.collected.requestedUrl,
-      finalUrl: root.collected.finalUrl,
-      protocol: root.collected.inspection.protocol,
-      httpStatus: root.collected.statusCode,
-      ...(root.collected.contentType ? { contentType: root.collected.contentType } : {}),
+      requestedUrl: root.source.requestedUrl,
+      finalUrl: root.source.finalUrl,
+      protocol: root.inspection.protocol,
+      httpStatus: root.source.statusCode,
+      ...(root.source.contentType ? { contentType: root.source.contentType } : {}),
     },
-    manifests: promoted.map(toManifestEvidence),
+    manifests: collection.manifests.map(toManifestEvidence),
     mediaSamples: [],
     ...(rootHls ? {
       hls: {
         variants: rootHls.variants,
         renditions: rootHls.renditions,
-        ...(collected.hlsSelection ? {
+        ...(collection.hlsSelection ? {
           selection: {
-            rule: collected.hlsSelection.rule,
-            variantIndex: collected.hlsSelection.variant.index,
-            ...(variantArtifact ? { variantLogicalKey: variantArtifact.collected.logicalKey } : {}),
-            ...(collected.hlsSelection.audioRendition
-              ? { audioRenditionIndex: collected.hlsSelection.audioRendition.index }
+            rule: collection.hlsSelection.rule,
+            variantIndex: collection.hlsSelection.variant.index,
+            ...(variant?.artifact ? { variantLogicalKey: variant.logicalKey } : {}),
+            ...(collection.hlsSelection.audioRendition
+              ? { audioRenditionIndex: collection.hlsSelection.audioRendition.index }
               : {}),
-            ...(audioArtifact ? { audioRenditionLogicalKey: audioArtifact.collected.logicalKey } : {}),
+            ...(audio?.artifact ? { audioRenditionLogicalKey: audio.logicalKey } : {}),
           },
         } : {}),
       },
     } : {}),
     observations,
-    limitations: root.collected.inspection.protocol === "hls" && root.collected.inspection.kind === "master"
+    limitations: root.inspection.protocol === "hls" && root.inspection.kind === "master"
       ? [
           "One representative HLS variant and at most one linked audio rendition were selected deterministically.",
           "Segments, codecs, timestamps and playback behavior were not analyzed yet.",
@@ -130,17 +121,18 @@ export function buildManifestReport(
   };
 }
 
-function toManifestEvidence(promoted: PromotedManifest): ManifestEvidence {
-  const inspection = promoted.collected.inspection;
+function toManifestEvidence(manifest: Manifest): ManifestEvidence {
+  requireArtifact(manifest);
+  const inspection = manifest.inspection;
   const hls = inspection.hls;
   return {
-    artifactId: promoted.artifactId,
-    logicalKey: promoted.collected.logicalKey,
-    role: promoted.collected.role,
-    requestedUrl: promoted.collected.requestedUrl,
-    finalUrl: promoted.collected.finalUrl,
+    artifactId: manifest.artifact.id,
+    logicalKey: manifest.logicalKey,
+    role: manifest.role,
+    requestedUrl: manifest.source.requestedUrl,
+    finalUrl: manifest.source.finalUrl,
     kind: inspection.kind,
-    sizeBytes: promoted.sizeBytes,
+    sizeBytes: manifest.artifact.sizeBytes,
     ...(inspection.variantCount !== undefined ? { variantCount: inspection.variantCount } : {}),
     ...(inspection.segmentCount !== undefined ? { segmentCount: inspection.segmentCount } : {}),
     ...(inspection.representationCount !== undefined
@@ -153,4 +145,12 @@ function toManifestEvidence(promoted: PromotedManifest): ManifestEvidence {
       : {}),
     ...(hls ? { discontinuityCount: hls.discontinuityCount, hasEndList: hls.hasEndList } : {}),
   };
+}
+
+function requireArtifact(
+  manifest: Manifest,
+): asserts manifest is Manifest & { artifact: NonNullable<Manifest["artifact"]> } {
+  if (!manifest.artifact) {
+    throw new Error(`Manifest ${manifest.logicalKey} has not been stored as an artifact`);
+  }
 }

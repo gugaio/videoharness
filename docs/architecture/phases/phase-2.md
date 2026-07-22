@@ -46,3 +46,16 @@ Substituir o pipeline placeholder por coleta e analise real de streams.
 - Arquivos superados sao removidos somente depois do commit; arquivos de um lote
   rejeitado sao removidos pelo worker.
 - Reports antigos com `EvidenceBundle` v1 continuam legiveis; novas coletas usam v2.
+
+## Modelo do pipeline
+
+- `Manifest` e o modelo interno canonico durante coleta, inspecao e persistencia.
+- O collector preenche origem, bytes e `ManifestInspection`; o worker acrescenta a
+  referencia de `artifact` depois de gravar o arquivo.
+- `ManifestEvidence` existe somente na fronteira persistida do report e nao carrega
+  os bytes do runtime.
+- Segmentos e resultados de probe devem seguir a mesma estrategia: enriquecer um
+  modelo claro e criar outra representacao apenas quando houver uma fronteira ou
+  invariante real.
+- Nomes baseados somente na etapa do pipeline, como `Collected` ou `Promoted`, nao
+  fazem parte da arquitetura da fase.

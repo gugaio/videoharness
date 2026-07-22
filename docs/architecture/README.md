@@ -41,7 +41,7 @@ Casos de uso esperados:
 - `InvestigationRepository`;
 - `JobRepository`;
 - `InvestigationEventRepository`;
-- `StreamEvidenceCollector`;
+- `ManifestCollector`;
 - `InvestigationAI`;
 - `ArtifactStore`.
 
@@ -56,6 +56,17 @@ Casos de uso esperados:
 
 Nao criar ports para logger, IDs, factories ou helpers sem uma necessidade de teste
 ou troca concreta.
+
+## Modelagem do pipeline
+
+O mesmo conceito usa um modelo canonico enriquecido ao longo do fluxo. Para
+manifests, `ManifestCollector` retorna `Manifest[]` com source, bytes e inspection;
+o worker adiciona `artifact` ao mesmo objeto depois de gravar no storage. Somente a
+fronteira do report cria `ManifestEvidence`, uma projecao sem bytes.
+
+Nomes baseados apenas em etapas (`CollectedManifest`, `PromotedManifest`) devem ser
+evitados. Tipos diferentes ficam reservados para fronteiras ou invariantes reais,
+nao para cada chamada sequencial.
 
 ## Fluxo principal
 

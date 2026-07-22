@@ -2,9 +2,9 @@ import { Readable } from "node:stream";
 import type http from "node:http";
 import { describe, expect, it, vi } from "vitest";
 import { SafeHttpClient, type PinnedRequester } from "../../stream-tools/safe-http-client.js";
-import { ManifestEvidenceCollector } from "./manifest-evidence-collector.js";
+import { HttpManifestCollector } from "./http-manifest-collector.js";
 
-describe("ManifestEvidenceCollector", () => {
+describe("HttpManifestCollector", () => {
   it("collects one selected variant and one linked default audio rendition", async () => {
     const requester = vi.fn<PinnedRequester>(async (url) => {
       if (url.pathname.endsWith("master.m3u8")) {
@@ -26,9 +26,9 @@ describe("ManifestEvidenceCollector", () => {
       }
       throw new Error(`unexpected request ${url.toString()}`);
     });
-    const collector = new ManifestEvidenceCollector(createHttpClient(requester));
+    const collector = new HttpManifestCollector(createHttpClient(requester));
 
-    const result = await collector.collectManifestEvidence("https://stream.example/live/master.m3u8");
+    const result = await collector.collect("https://stream.example/live/master.m3u8");
 
     expect(requester.mock.calls.map((call) => call[0].pathname)).toEqual([
       "/live/master.m3u8",
@@ -53,18 +53,18 @@ describe("ManifestEvidenceCollector", () => {
       "#EXT-X-STREAM-INF:BANDWIDTH=1000",
       "http://127.0.0.1/private.m3u8",
     ].join("\n")));
-    const collector = new ManifestEvidenceCollector(createHttpClient(requester));
+    const collector = new HttpManifestCollector(createHttpClient(requester));
 
-    await expect(collector.collectManifestEvidence("https://stream.example/master.m3u8"))
+    await expect(collector.collect("https://stream.example/master.m3u8"))
       .rejects.toMatchObject({ code: "STREAM_DESTINATION_BLOCKED", retryable: false });
     expect(requester).toHaveBeenCalledTimes(1);
   });
 
   it("keeps media-playlist input to a single root artifact", async () => {
     const requester = vi.fn<PinnedRequester>(async () => response("#EXTM3U\n#EXTINF:4,\nsegment.ts"));
-    const collector = new ManifestEvidenceCollector(createHttpClient(requester));
+    const collector = new HttpManifestCollector(createHttpClient(requester));
 
-    const result = await collector.collectManifestEvidence("https://stream.example/media.m3u8");
+    const result = await collector.collect("https://stream.example/media.m3u8");
 
     expect(result.manifests).toHaveLength(1);
     expect(result.manifests[0]).toMatchObject({ logicalKey: "manifest/root", role: "root" });
