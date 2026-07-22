@@ -1,6 +1,6 @@
 # Fase 1 - Thin Slice Persistente
 
-Status: **em andamento**
+Status: **concluida**
 
 ## Objetivo
 
@@ -22,22 +22,22 @@ Formulario -> API -> Postgres job -> Worker -> events -> SSE -> report placehold
 - [x] Contratos iniciais de investigation e intake.
 - [x] Repository PostgreSQL explicito para intake.
 - [x] Criacao idempotente de investigation, job e evento na mesma transacao.
-- Worker com claim, lease e heartbeat.
-- State machine minima.
+- [x] Worker com claim, lease e heartbeat.
+- [x] State machine minima.
 - [x] Consulta do caso persistido.
 - [x] SSE com historico e `Last-Event-ID`.
 - [x] Homepage e primeira tela de investigacao funcionais.
-- Report placeholder explicitamente identificado como fixture tecnica.
+- [x] Report placeholder explicitamente identificado como fixture tecnica.
 
-## Proxima fatia
+## Implementacao final
 
-Implementar lifecycle placeholder do worker com:
+O lifecycle placeholder foi fechado com:
 
 1. claim transacional com `FOR UPDATE SKIP LOCKED`;
-2. lease e heartbeat;
-3. transicoes reais da state machine;
-4. eventos persistidos em cada etapa;
-5. report placeholder ao concluir.
+2. recuperacao de lease expirado e limite de tentativas;
+3. heartbeat durante etapas longas;
+4. transicoes, eventos, conclusao e report em transacoes;
+5. fixture tecnica honesta, sem simular evidencia de streaming.
 
 ## Definition of Done
 
@@ -47,6 +47,8 @@ Implementar lifecycle placeholder do worker com:
 - Recarregar a pagina restaura a timeline.
 - Reiniciar a API nao perde estado.
 - Um job abandonado pode ser recuperado.
+
+Todos os itens foram validados, incluindo recuperacao real de um lease expirado.
 
 ## Fora da fase
 

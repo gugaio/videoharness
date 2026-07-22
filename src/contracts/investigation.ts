@@ -37,3 +37,33 @@ export const InvestigationEventSchema = z.object({
   payload: z.record(z.string(), z.unknown()),
   createdAt: z.string().datetime(),
 });
+
+export const InvestigationReportContentSchema = z.object({
+  placeholder: z.literal(true),
+  title: z.string().min(1),
+  summary: z.string().min(1),
+  problemReported: z.string().optional(),
+  findings: z.array(z.object({
+    title: z.string().min(1),
+    status: z.literal("not_run"),
+    explanation: z.string().min(1),
+  })),
+  confidence: z.object({
+    level: z.literal("not_assessed"),
+    explanation: z.string().min(1),
+  }),
+  generatedBy: z.literal("phase-1-lifecycle-fixture"),
+});
+
+export const InvestigationReportSchema = z.object({
+  id: z.string().uuid(),
+  investigationId: z.string().uuid(),
+  schemaVersion: z.number().int().positive(),
+  content: InvestigationReportContentSchema,
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const InvestigationReportResponseSchema = z.object({
+  report: InvestigationReportSchema,
+});

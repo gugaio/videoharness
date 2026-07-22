@@ -28,9 +28,34 @@ export const InvestigationEventSchema = z.object({
   createdAt: z.string(),
 });
 
+const InvestigationReportSchema = z.object({
+  id: z.string().uuid(),
+  investigationId: z.string().uuid(),
+  schemaVersion: z.number().int().positive(),
+  content: z.object({
+    placeholder: z.literal(true),
+    title: z.string(),
+    summary: z.string(),
+    problemReported: z.string().optional(),
+    findings: z.array(z.object({
+      title: z.string(),
+      status: z.literal("not_run"),
+      explanation: z.string(),
+    })),
+    confidence: z.object({
+      level: z.literal("not_assessed"),
+      explanation: z.string(),
+    }),
+    generatedBy: z.literal("phase-1-lifecycle-fixture"),
+  }),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
 export type Health = z.infer<typeof HealthSchema>;
 export type Investigation = z.infer<typeof InvestigationSchema>;
 export type InvestigationEvent = z.infer<typeof InvestigationEventSchema>;
+export type InvestigationReport = z.infer<typeof InvestigationReportSchema>;
 
 export async function getHealth(): Promise<Health> {
   const response = await fetch("/v1/health");
@@ -66,4 +91,10 @@ export async function getInvestigation(id: string): Promise<Investigation> {
   const response = await fetch(`/v1/investigations/${encodeURIComponent(id)}`);
   const result = await parseResponse(response, z.object({ investigation: InvestigationSchema }));
   return result.investigation;
+}
+
+export async function getInvestigationReport(id: string): Promise<InvestigationReport> {
+  const response = await fetch(`/v1/investigations/${encodeURIComponent(id)}/report`);
+  const result = await parseResponse(response, z.object({ report: InvestigationReportSchema }));
+  return result.report;
 }

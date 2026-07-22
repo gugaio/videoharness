@@ -26,6 +26,23 @@ const investigationQueries = {
       }
     : null,
   listEventsAfter: async () => [],
+  getReport: async (id: string) => id === "c56a4180-65aa-42ec-a945-5fd21dec0538"
+    ? {
+        id: "8dc67e09-4b25-4fe5-a69a-58f896fb5197",
+        investigationId: id,
+        schemaVersion: 1,
+        content: {
+          placeholder: true as const,
+          title: "Investigation lifecycle validated",
+          summary: "Lifecycle complete.",
+          findings: [],
+          confidence: { level: "not_assessed" as const, explanation: "Evidence is not available." },
+          generatedBy: "phase-1-lifecycle-fixture" as const,
+        },
+        createdAt: "2026-07-21T12:00:00.000Z",
+        updatedAt: "2026-07-21T12:00:00.000Z",
+      }
+    : null,
 };
 
 describe("GET /v1/health", () => {
@@ -157,5 +174,22 @@ describe("investigation queries", () => {
       payload: { state: "queued" },
       createdAt: "2026-07-21T12:00:00.000Z",
     })).toContain("id: 42\nevent: investigation.event\ndata:");
+  });
+
+  it("returns the persisted report", async () => {
+    const server = buildApiServer({
+      database: { check: async () => undefined },
+      startInvestigation,
+      investigationQueries,
+    });
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/v1/investigations/c56a4180-65aa-42ec-a945-5fd21dec0538/report",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ report: { content: { placeholder: true } } });
+    await server.close();
   });
 });

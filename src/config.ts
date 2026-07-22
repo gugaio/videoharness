@@ -10,6 +10,7 @@ const EnvironmentSchema = z.object({
   ),
   VIDEO_HARNESS_WORKER_ID: z.string().trim().min(1).default("worker-local"),
   VIDEO_HARNESS_WORKER_POLL_MS: z.coerce.number().int().min(250).max(60_000).default(2_000),
+  VIDEO_HARNESS_WORKER_LEASE_MS: z.coerce.number().int().min(3_000).max(300_000).default(30_000),
   VIDEO_HARNESS_DATA_DIR: z.string().trim().min(1).default("./.video-harness-data"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 });
@@ -20,6 +21,7 @@ export type VideoHarnessConfig = {
   databaseUrl: string;
   workerId: string;
   workerPollMs: number;
+  workerLeaseMs: number;
   dataDir: string;
   nodeEnv: "development" | "test" | "production";
 };
@@ -32,6 +34,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): VideoH
     databaseUrl: parsed.VIDEO_HARNESS_DATABASE_URL,
     workerId: parsed.VIDEO_HARNESS_WORKER_ID,
     workerPollMs: parsed.VIDEO_HARNESS_WORKER_POLL_MS,
+    workerLeaseMs: parsed.VIDEO_HARNESS_WORKER_LEASE_MS,
     dataDir: path.resolve(parsed.VIDEO_HARNESS_DATA_DIR),
     nodeEnv: parsed.NODE_ENV,
   };

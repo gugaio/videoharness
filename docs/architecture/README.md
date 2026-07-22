@@ -104,6 +104,11 @@ investigacao usa um workspace isolado.
 - Retry limitado e classificacao de falhas.
 - Um job representa inicialmente o pipeline inteiro.
 - Sem Redis ou queue framework no MVP.
+- Claim seleciona jobs pendentes ou leases expirados com `FOR UPDATE SKIP LOCKED`.
+- Cada claim incrementa `attempts`; jobs abandonados podem ser retomados ate
+  `max_attempts`.
+- Transicoes renovam o lease e persistem estado + evento atomicamente.
+- Conclusao persiste report, investigation, job e evento na mesma transacao.
 
 ## Eventos
 

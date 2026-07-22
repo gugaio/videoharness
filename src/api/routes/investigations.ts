@@ -47,6 +47,15 @@ export function registerInvestigationRoutes(
     return { investigation };
   });
 
+  server.get<{ Params: { id: string } }>("/v1/investigations/:id/report", async (request) => {
+    const id = parseInvestigationId(request.params.id);
+    const investigation = await dependencies.queries.getInvestigation(id);
+    if (!investigation) throw new ApiError(404, "INVESTIGATION_NOT_FOUND", "Investigation not found");
+    const report = await dependencies.queries.getReport(id);
+    if (!report) throw new ApiError(404, "REPORT_NOT_READY", "Investigation report is not ready");
+    return { report };
+  });
+
   server.get<{ Params: { id: string } }>("/v1/investigations/:id/events", async (request, reply) => {
     const id = parseInvestigationId(request.params.id);
     const investigation = await dependencies.queries.getInvestigation(id);

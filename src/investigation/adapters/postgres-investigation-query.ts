@@ -1,5 +1,6 @@
 import type pg from "pg";
 import type { InvestigationEvent } from "../domain/investigation-event.js";
+import type { InvestigationReport, InvestigationReportContent } from "../domain/investigation-report.js";
 import type { Investigation } from "../domain/investigation.js";
 import type { InvestigationQueryRepository } from "../ports/investigation-query.js";
 
@@ -21,6 +22,15 @@ type InvestigationEventRow = {
   message: string;
   payload: Record<string, unknown>;
   created_at: Date;
+};
+
+type InvestigationReportRow = {
+  id: string;
+  investigation_id: string;
+  schema_version: number;
+  content: InvestigationReportContent;
+  created_at: Date;
+  updated_at: Date;
 };
 
 function toInvestigation(row: InvestigationRow): Investigation {
@@ -66,5 +76,25 @@ export class PostgresInvestigationQuery implements InvestigationQueryRepository 
       payload: row.payload,
       createdAt: row.created_at.toISOString(),
     }));
+  }
+
+  async findReport(investigationId: string): Promise<InvestigationReport | null> {
+    const result = await this.pool.query<InvestigationReportRow>(
+      `SELECT id, investigation_id, schema_version, content, created_at, updated_at
+         FROM reports
+        WHERE investigation_id = $1`,
+      [investigationId],
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          id: row.id,
+          investigationId: row.investigation_id,
+          schemaVersion: row.schema_version,
+          content: row.content,
+          createdAt: row.created_at.toISOString(),
+          updatedAt: row.updated_at.toISOString(),
+        }
+      : null;
   }
 }

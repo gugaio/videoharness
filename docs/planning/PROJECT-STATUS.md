@@ -4,19 +4,19 @@ Ultima atualizacao: **2026-07-21**
 
 ## Resumo
 
-- Fase ativa: **Fase 1 - Thin Slice Persistente**.
-- Estado: **em andamento**.
+- Fase ativa: **Fase 2 - Evidencia Deterministica**.
+- Estado: **pronta para iniciar**.
 - Repositorio: novo e independente.
 - Runtime: API, worker, UI e PostgreSQL executaveis.
-- Objetivo imediato: executar jobs e publicar lifecycle pelo worker.
+- Objetivo imediato: definir evidence bundle e acesso seguro a streams.
 
 ## Fases
 
 | Fase | Status | Objetivo |
 |---|---|---|
 | 0 | Concluida | Fundacao documental, decisoes e plano executavel |
-| 1 | Em andamento | Thin slice completo com API, worker, Postgres, SSE e UI |
-| 2 | Planejada | Evidencia deterministica real de streaming |
+| 1 | Concluida | Thin slice completo com API, worker, Postgres, SSE e UI |
+| 2 | Pronta para iniciar | Evidencia deterministica real de streaming |
 | 3 | Planejada | Investigacao assistida por IA e report estruturado |
 | 4 | Planejada | UX premium e experiencia end-to-end |
 | 5 | Planejada | Hardening, deploy e validacao com usuarios |
@@ -38,24 +38,87 @@ Ultima atualizacao: **2026-07-21**
 - Homepage conectada e primeira pagina real do caso.
 - Homepage React/Vite dark-first e responsiva.
 - Dockerfiles, Compose e CI inicial.
+- Worker PostgreSQL com claim concorrente seguro, lease, heartbeat e retry limitado.
+- State machine persistida de `queued` ate `completed` ou `failed`.
+- Recuperacao de jobs abandonados e encerramento de tentativas esgotadas.
+- Report fixture persistido, consultavel e apresentado na tela do caso.
 
-## Pendencias da fase ativa
+## Checklist da Fase 1
 
 - [x] Definir contratos iniciais de investigation e intake.
 - [x] Implementar repository PostgreSQL de intake.
 - [x] Criar investigation, job e evento inicial em uma transacao.
-- [ ] Implementar claim, lease e heartbeat no worker.
+- [x] Implementar claim, lease e heartbeat no worker.
 - [x] Implementar historico e stream SSE.
 - [x] Conectar o formulario da homepage ao fluxo real.
 - [x] Exibir timeline persistida.
-- [ ] Exibir report placeholder.
+- [x] Exibir report placeholder.
+
+## Pendencias da fase ativa
+
+- [ ] Definir schema versionado do evidence bundle.
+- [ ] Criar port deterministico de coleta.
+- [ ] Proteger acesso de rede contra SSRF e redirects maliciosos.
+- [ ] Detectar HLS/DASH com timeout e limites.
+- [ ] Persistir o primeiro manifest como artifact.
 
 ## Proximo passo recomendado
 
-Implementar claim, lease, heartbeat e lifecycle placeholder no worker, publicando
-eventos persistidos ate um report placeholder.
+Definir o evidence bundle versionado e implementar a primeira fronteira segura de
+acesso a manifests HLS/DASH, com protecao SSRF, timeout e limites.
 
 ## Registro de atualizacoes
+
+### 2026-07-21 - Worker recuperavel e conclusao da Fase 1
+
+Fase impactada: 1.
+
+Entrega:
+
+- Criados port e adapter PostgreSQL especificos para execucao de jobs.
+- O job reclamado separa metadados de execucao do contexto tipado da investigation,
+  evitando repetir `sourceUrl` e `problemDescription` no contrato do job.
+- Claim usa `FOR UPDATE SKIP LOCKED`, incrementa tentativa e assume jobs pendentes
+  ou com lease expirado.
+- Heartbeat renova ownership durante etapas longas e transicoes renovam o lease.
+- Lifecycle avanca por `validating`, `collecting`, `analyzing` e `synthesizing`,
+  sempre persistindo estado e evento na mesma transacao.
+- Falhas voltam o caso para fila enquanto houver tentativas; esgotamento encerra
+  job e investigation como `failed`.
+- Conclusao grava report, investigation, job e evento atomicamente.
+- Implementado `GET /v1/investigations/:id/report` e exibicao do report na UI.
+- Report e eventos da Fase 1 se identificam como fixtures e nao alegam analise de
+  streaming inexistente.
+
+Arquivos-chave:
+
+- `src/investigation/application/run-investigation.ts`
+- `src/investigation/ports/investigation-job.ts`
+- `src/investigation/adapters/postgres-investigation-job.ts`
+- `src/worker/index.ts`
+- `src/investigation/domain/investigation-report.ts`
+- `ui/src/pages/InvestigationPage.tsx`
+
+Checklist de validacao:
+
+- [x] `npm run check`;
+- [x] `npm test` - 15 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build`;
+- [x] fluxo real concluiu com 1 job, 6 eventos e 1 report persistido;
+- [x] report fixture consultado pela API real;
+- [x] job com lease expirado foi recuperado por outro worker na tentativa 2;
+- [x] API e workers encerraram graciosamente por sinal.
+
+Pendencias:
+
+- O pipeline ainda nao acessa nem analisa streams.
+- O report ainda e uma fixture tecnica, conforme o escopo da Fase 1.
+
+Proximo passo recomendado:
+
+- Iniciar a Fase 2 pelo evidence bundle e pela protecao SSRF.
 
 ### 2026-07-21 - Consulta, SSE e primeira tela de investigacao
 

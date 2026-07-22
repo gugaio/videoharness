@@ -1,43 +1,50 @@
 import { loadConfig } from "../config.js";
-import { createDatabaseHealth, createDatabasePool } from "../database/client.js";
+import { createDatabasePool } from "../database/client.js";
 import { logger } from "../infra/logger.js";
+import { PostgresInvestigationJobRepository } from "../investigation/adapters/postgres-investigation-job.js";
+import { createInvestigationWorker } from "../investigation/application/run-investigation.js";
 
 const config = loadConfig();
 const pool = createDatabasePool(config.databaseUrl);
-const database = createDatabaseHealth(pool);
-let closed = false;
-let timer: ReturnType<typeof setInterval> | undefined;
-let databaseStatus: "unknown" | "up" | "down" = "unknown";
+const repository = new PostgresInvestigationJobRepository(pool);
+const worker = createInvestigationWorker({
+  repository,
+  workerId: config.workerId,
+  leaseMs: config.workerLeaseMs,
+});
+let shutdownRequested = false;
 
-async function poll(): Promise<void> {
+function requestShutdown(signal: string): void {
+  if (shutdownRequested) return;
+  shutdownRequested = true;
+  logger.info("worker.shutdown_requested", { workerId: config.workerId, signal });
+}
+
+process.once("SIGINT", () => requestShutdown("SIGINT"));
+process.once("SIGTERM", () => requestShutdown("SIGTERM"));
+
+logger.info("worker.started", {
+  workerId: config.workerId,
+  pollMs: config.workerPollMs,
+  leaseMs: config.workerLeaseMs,
+});
+
+while (!shutdownRequested) {
   try {
-    await database.check();
-    if (databaseStatus !== "up") {
-      logger.info("worker.database_ready", { workerId: config.workerId });
-    }
-    databaseStatus = "up";
+    const processed = await worker.runNext();
+    if (!processed) await delay(config.workerPollMs);
   } catch (error) {
-    if (databaseStatus !== "down") {
-      logger.warn("worker.database_unavailable", {
-        workerId: config.workerId,
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-    databaseStatus = "down";
+    logger.warn("worker.poll_failed", {
+      workerId: config.workerId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    await delay(config.workerPollMs);
   }
 }
 
-async function shutdown(signal: string): Promise<void> {
-  if (closed) return;
-  closed = true;
-  if (timer) clearInterval(timer);
-  logger.info("worker.shutdown", { workerId: config.workerId, signal });
-  await pool.end();
+await pool.end();
+logger.info("worker.stopped", { workerId: config.workerId });
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
-
-process.once("SIGINT", () => void shutdown("SIGINT"));
-process.once("SIGTERM", () => void shutdown("SIGTERM"));
-
-await poll();
-timer = setInterval(() => void poll(), config.workerPollMs);
-logger.info("worker.started", { workerId: config.workerId, pollMs: config.workerPollMs });

@@ -1,6 +1,6 @@
 # API - Video Harness Space
 
-Status: health, criacao, consulta e SSE de investigacao implementados.
+Status: health, criacao, consulta, SSE e report de investigacao implementados.
 
 Prefixo inicial: `/v1`.
 
@@ -24,7 +24,7 @@ flowchart TD
 | Implementado | POST | `/v1/investigations` | Criar investigacao e enfileirar pipeline |
 | Implementado | GET | `/v1/investigations/:id` | Estado atual e metadados do caso |
 | Implementado | GET | `/v1/investigations/:id/events` | Historico e stream SSE da timeline |
-| Planejado | GET | `/v1/investigations/:id/report` | Report final do caso |
+| Implementado | GET | `/v1/investigations/:id/report` | Report final do caso |
 | Planejado | GET | `/v1/reports/shared/:token` | Report compartilhado por token |
 
 ## Criar investigacao
@@ -110,6 +110,18 @@ GET /v1/investigations/:id
 ```
 
 Retorna `{ "investigation": Investigation }` ou `404 INVESTIGATION_NOT_FOUND`.
+
+## Consultar report
+
+```http
+GET /v1/investigations/:id/report
+```
+
+Retorna `{ "report": InvestigationReport }`. Antes da conclusao retorna
+`404 REPORT_NOT_READY`. Na Fase 1, `report.content.placeholder=true` e
+`generatedBy=phase-1-lifecycle-fixture` deixam explicito que nenhuma evidencia de
+streaming foi coletada. A Fase 2 substitui essa fixture por resultados
+deterministicos.
 
 ## Erros
 

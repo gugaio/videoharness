@@ -6,7 +6,7 @@ Indice de onboarding para humanos e agentes.
 
 1. `AGENTS.md` - regras obrigatorias do repositorio.
 2. `docs/planning/PROJECT-STATUS.md` - estado real e proximo passo.
-3. `docs/architecture/phases/phase-1.md` - fase atualmente ativa.
+3. `docs/architecture/phases/phase-2.md` - proxima fase de implementacao.
 
 ## Produto
 
@@ -24,11 +24,12 @@ Indice de onboarding para humanos e agentes.
 
 ## Estado atual
 
-- Fase ativa: **Fase 1 - Thin Slice Persistente**.
-- Fase 0 concluida com API, worker, UI, PostgreSQL, migration e CI executaveis.
-- Criacao, consulta e timeline SSE de investigacoes estao implementadas.
-- Homepage cria o caso e navega para a primeira tela real da investigacao.
-- Proximo passo: worker reclamar jobs e publicar lifecycle placeholder real.
+- Fase 1 concluida: intake, worker recuperavel, timeline SSE e report fixture
+  funcionam de ponta a ponta sobre PostgreSQL.
+- O worker usa claim transacional, lease, heartbeat e retry limitado.
+- Homepage cria o caso e a tela restaura eventos e apresenta a conclusao.
+- Proxima fase: **Fase 2 - Evidencia Deterministica**.
+- Proximo passo: definir o evidence bundle e a fronteira segura de acesso a URLs.
 
 ## Referencias locais
 

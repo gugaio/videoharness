@@ -1,10 +1,12 @@
 import type { InvestigationEvent } from "../domain/investigation-event.js";
+import type { InvestigationReport } from "../domain/investigation-report.js";
 import type { Investigation } from "../domain/investigation.js";
 import type { InvestigationQueryRepository } from "../ports/investigation-query.js";
 
 export type InvestigationQueries = {
   getInvestigation(id: string): Promise<Investigation | null>;
   listEventsAfter(investigationId: string, afterEventId: string): Promise<InvestigationEvent[]>;
+  getReport(investigationId: string): Promise<InvestigationReport | null>;
 };
 
 export function createInvestigationQueries(repository: InvestigationQueryRepository): InvestigationQueries {
@@ -12,5 +14,6 @@ export function createInvestigationQueries(repository: InvestigationQueryReposit
     getInvestigation: (id) => repository.findById(id),
     listEventsAfter: (investigationId, afterEventId) =>
       repository.listEventsAfter(investigationId, afterEventId, 200),
+    getReport: (investigationId) => repository.findReport(investigationId),
   };
 }

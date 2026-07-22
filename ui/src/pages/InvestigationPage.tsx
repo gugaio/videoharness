@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   getInvestigation,
+  getInvestigationReport,
   InvestigationEventSchema,
   type InvestigationEvent,
 } from "../lib/api";
@@ -15,7 +16,15 @@ export function InvestigationPage(): JSX.Element {
     queryKey: ["investigation", investigationId],
     queryFn: () => getInvestigation(investigationId),
     enabled: Boolean(investigationId),
-    refetchInterval: 5_000,
+    refetchInterval: (query) => {
+      const state = query.state.data?.state;
+      return state === "completed" || state === "failed" ? false : 2_000;
+    },
+  });
+  const report = useQuery({
+    queryKey: ["investigation-report", investigationId],
+    queryFn: () => getInvestigationReport(investigationId),
+    enabled: investigation.data?.state === "completed",
   });
 
   useEffect(() => {
@@ -68,7 +77,13 @@ export function InvestigationPage(): JSX.Element {
                 </span>
                 <span className="font-mono text-xs text-white/30">{investigation.data.id}</span>
               </div>
-              <h1 className="mt-5 text-2xl font-semibold tracking-tight sm:text-3xl">Investigation in progress</h1>
+              <h1 className="mt-5 text-2xl font-semibold tracking-tight sm:text-3xl">
+                {investigation.data.state === "completed"
+                  ? "Investigation completed"
+                  : investigation.data.state === "failed"
+                    ? "Investigation could not be completed"
+                    : "Investigation in progress"}
+              </h1>
               <p className="mt-3 break-all font-mono text-sm text-harness-muted">{investigation.data.sourceUrl}</p>
               {investigation.data.problemDescription && (
                 <div className="mt-6 border-l border-white/20 pl-4">
@@ -77,6 +92,31 @@ export function InvestigationPage(): JSX.Element {
                 </div>
               )}
             </section>
+
+            {report.data && (
+              <section className="mt-10 rounded-3xl border border-amber-200/15 bg-amber-200/[0.04] p-6 sm:p-8">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs uppercase tracking-[0.2em] text-amber-100/55">Technical fixture report</p>
+                  <span className="rounded-full border border-amber-200/15 px-3 py-1 text-[10px] uppercase tracking-wider text-amber-100/55">
+                    Phase 1 placeholder
+                  </span>
+                </div>
+                <h2 className="mt-4 text-2xl font-medium">{report.data.content.title}</h2>
+                <p className="mt-3 max-w-2xl leading-7 text-harness-muted">{report.data.content.summary}</p>
+                <div className="mt-6 grid gap-3 sm:grid-cols-2">
+                  {report.data.content.findings.map((finding) => (
+                    <article className="rounded-2xl border border-white/10 bg-black/15 p-5" key={finding.title}>
+                      <p className="text-sm font-medium">{finding.title}</p>
+                      <p className="mt-2 text-sm leading-6 text-harness-muted">{finding.explanation}</p>
+                    </article>
+                  ))}
+                  <article className="rounded-2xl border border-white/10 bg-black/15 p-5">
+                    <p className="text-sm font-medium">Confidence not assessed</p>
+                    <p className="mt-2 text-sm leading-6 text-harness-muted">{report.data.content.confidence.explanation}</p>
+                  </article>
+                </div>
+              </section>
+            )}
 
             <section className="mt-10">
               <div className="flex items-end justify-between gap-4">

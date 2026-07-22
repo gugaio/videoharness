@@ -62,6 +62,9 @@ Somente Investigate e interativo.
 - Timeline restaurada a partir dos eventos append-only.
 - Dedupe de eventos por ID durante reconexao.
 - Estados de opening, erro e timeline vazia.
+- Estado do caso atualizado enquanto o worker executa.
+- Conclusao e report fixture apresentados sem esconder que a analise real ainda
+  nao foi executada.
 
 Proibido:
 
@@ -83,6 +86,13 @@ Ordem visual sugerida:
 6. Artifacts e limitations.
 
 O report deve funcionar como pagina compartilhavel e como documento de engenharia.
+
+### Estado implementado
+
+- A tela do caso consulta o report quando a investigation chega a `completed`.
+- A fixture da Fase 1 possui hierarquia visual propria e rotulo explicito de
+  placeholder tecnico.
+- Confidence permanece `not_assessed`; a UI nao inventa root cause ou evidencia.
 
 ## Responsividade
 
