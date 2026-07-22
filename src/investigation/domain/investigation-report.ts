@@ -1,4 +1,4 @@
-import type { EvidenceBundle } from "./evidence.js";
+import type { EvidenceBundleV1, EvidenceBundleV2 } from "./evidence.js";
 
 export type PhaseOnePlaceholderReportContent = {
   placeholder: true;
@@ -17,7 +17,7 @@ export type PhaseOnePlaceholderReportContent = {
   generatedBy: "phase-1-lifecycle-fixture";
 };
 
-export type ManifestEvidenceReportContent = {
+type ManifestEvidenceReportBase = {
   placeholder: false;
   title: string;
   summary: string;
@@ -31,9 +31,12 @@ export type ManifestEvidenceReportContent = {
     level: "limited";
     explanation: string;
   };
-  evidence: EvidenceBundle;
-  generatedBy: "deterministic-manifest-v1";
 };
+
+export type ManifestEvidenceReportContent = ManifestEvidenceReportBase & (
+  | { evidence: EvidenceBundleV1; generatedBy: "deterministic-manifest-v1" }
+  | { evidence: EvidenceBundleV2; generatedBy: "deterministic-manifest-v2" }
+);
 
 export type InvestigationReportContent =
   | PhaseOnePlaceholderReportContent

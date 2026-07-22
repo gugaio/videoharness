@@ -134,6 +134,12 @@ Layout alvo:
 Temporary files sao removidos ao final. Manifestos, evidencias selecionadas,
 screenshots e reports podem ser promovidos para artifacts.
 
+Artifacts promovidos possuem um `logical_key` estavel dentro da investigation,
+como `manifest/root` ou `manifest/variant/0`. Um novo retry grava arquivos com
+storage keys novos, substitui metadados do mesmo artifact logico em uma transacao
+e somente entao remove os arquivos superados. Um lote que falha antes do commit
+remove apenas os arquivos ainda nao registrados.
+
 ## Estrutura de codigo alvo
 
 ```text

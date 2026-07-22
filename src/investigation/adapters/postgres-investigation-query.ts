@@ -1,4 +1,5 @@
 import type pg from "pg";
+import { InvestigationReportContentSchema } from "../../contracts/investigation.js";
 import type { InvestigationEvent } from "../domain/investigation-event.js";
 import type { InvestigationReport, InvestigationReportContent } from "../domain/investigation-report.js";
 import type { Investigation } from "../domain/investigation.js";
@@ -28,7 +29,7 @@ type InvestigationReportRow = {
   id: string;
   investigation_id: string;
   schema_version: number;
-  content: InvestigationReportContent;
+  content: unknown;
   created_at: Date;
   updated_at: Date;
 };
@@ -91,7 +92,7 @@ export class PostgresInvestigationQuery implements InvestigationQueryRepository 
           id: row.id,
           investigationId: row.investigation_id,
           schemaVersion: row.schema_version,
-          content: row.content,
+          content: InvestigationReportContentSchema.parse(row.content) as InvestigationReportContent,
           createdAt: row.created_at.toISOString(),
           updatedAt: row.updated_at.toISOString(),
         }

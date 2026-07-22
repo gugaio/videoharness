@@ -46,6 +46,10 @@ Ultima atualizacao: **2026-07-21**
   limite de bytes.
 - Deteccao inicial HLS/DASH e evidence bundle versionado.
 - Root manifest persistido como artifact e report deterministico apresentado na UI.
+- Artifacts registrados atomicamente em lote com `logicalKey` idempotente por
+  investigation e limpeza segura entre retries.
+- Evidence Bundle v2 preparado para multiplos manifests e media samples, mantendo
+  leitura dos reports v1 existentes.
 
 ## Checklist da Fase 1
 
@@ -74,6 +78,53 @@ Importar/adaptar os parsers estritamente necessarios do VHS para extrair estrutu
 HLS/DASH e selecionar uma amostra pequena de manifests derivados.
 
 ## Registro de atualizacoes
+
+### 2026-07-21 - Artifacts em lote e Evidence Bundle v2
+
+Fase impactada: 2.
+
+Entrega:
+
+- Adicionada migration com `artifacts.logical_key` e unicidade parcial por
+  investigation, sem invalidar artifacts historicos.
+- Repository agora registra um lote de artifacts e o evidence bundle na mesma
+  transacao.
+- Retries substituem a mesma logical key; arquivos superados sao removidos somente
+  depois do commit e arquivos nao registrados sao limpos em caso de rollback.
+- Novas coletas geram `EvidenceBundle` v2 com arrays de manifests e media samples.
+- Contratos backend e UI continuam aceitando reports v1 persistidos.
+- Leitura de reports do PostgreSQL passou a validar o JSON persistido com Zod.
+
+Arquivos-chave:
+
+- `src/database/migrations/003_artifact_logical_keys.sql`
+- `src/investigation/domain/evidence.ts`
+- `src/investigation/ports/investigation-job.ts`
+- `src/investigation/adapters/postgres-investigation-job.ts`
+- `src/investigation/application/run-investigation.ts`
+- `src/contracts/investigation.ts`
+
+Checklist de validacao:
+
+- [x] `npm run check`;
+- [x] `npm test` - 52 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build`;
+- [x] migration aplicada em PostgreSQL 17 local;
+- [x] Compose reconstruido e smoke HLS real concluido;
+- [x] retry real concluiu na tentativa 2 mantendo exatamente um registro e um
+  arquivo para `manifest/root`.
+
+Pendencias:
+
+- O lote atual ainda contem apenas o root manifest; a infraestrutura esta pronta
+  para manifests derivados e media samples.
+
+Proximo passo recomendado:
+
+- Extrair variants/renditions HLS e preservar uma amostra limitada de manifests
+  derivados usando as logical keys preparadas nesta entrega.
 
 ### 2026-07-21 - Primeira evidencia real e fronteira SSRF
 

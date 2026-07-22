@@ -156,35 +156,70 @@ export class PostgresInvestigationJobRepository implements InvestigationJobRepos
     }
   }
 
-  async recordEvidence(
+  async recordEvidenceBatch(
     jobId: string,
     workerId: string,
     leaseMs: number,
-    artifact: Parameters<InvestigationJobRepository["recordEvidence"]>[3],
-    event: Parameters<InvestigationJobRepository["recordEvidence"]>[4],
-  ): Promise<void> {
+    artifacts: Parameters<InvestigationJobRepository["recordEvidenceBatch"]>[3],
+    evidence: Parameters<InvestigationJobRepository["recordEvidenceBatch"]>[4],
+    event: Parameters<InvestigationJobRepository["recordEvidenceBatch"]>[5],
+  ): ReturnType<InvestigationJobRepository["recordEvidenceBatch"]> {
+    if (artifacts.length === 0) throw new Error("At least one evidence artifact is required");
+    const logicalKeys = artifacts.map((artifact) => artifact.logicalKey);
+    if (new Set(logicalKeys).size !== logicalKeys.length) {
+      throw new Error("Evidence artifact logical keys must be unique within a batch");
+    }
+
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
       const investigationId = await renewAndGetInvestigationId(client, jobId, workerId, leaseMs);
-      await client.query(
-        `INSERT INTO artifacts (id, investigation_id, kind, storage_key, content_type, size_bytes, metadata)
-         VALUES ($1, $2, 'manifest', $3, $4, $5, $6::jsonb)`,
-        [
-          artifact.id,
-          investigationId,
-          artifact.storageKey,
-          artifact.contentType ?? null,
-          artifact.sizeBytes,
-          JSON.stringify({ evidence: artifact.evidence }),
-        ],
+      const existing = await client.query<{ logical_key: string; storage_key: string }>(
+        `SELECT logical_key, storage_key
+           FROM artifacts
+          WHERE investigation_id = $1 AND logical_key = ANY($2::text[])
+          FOR UPDATE`,
+        [investigationId, logicalKeys],
       );
+      const evidenceOwnerKey = artifacts.find((artifact) => artifact.logicalKey === "manifest/root")?.logicalKey
+        ?? artifacts[0]!.logicalKey;
+      for (const artifact of artifacts) {
+        await client.query(
+          `INSERT INTO artifacts (
+             id, investigation_id, logical_key, kind, storage_key, content_type, size_bytes, metadata
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+           ON CONFLICT (investigation_id, logical_key) WHERE logical_key IS NOT NULL
+           DO UPDATE SET id = EXCLUDED.id,
+                         kind = EXCLUDED.kind,
+                         storage_key = EXCLUDED.storage_key,
+                         content_type = EXCLUDED.content_type,
+                         size_bytes = EXCLUDED.size_bytes,
+                         metadata = EXCLUDED.metadata,
+                         created_at = now()`,
+          [
+            artifact.id,
+            investigationId,
+            artifact.logicalKey,
+            artifact.kind,
+            artifact.storageKey,
+            artifact.contentType ?? null,
+            artifact.sizeBytes,
+            JSON.stringify(artifact.logicalKey === evidenceOwnerKey ? { evidence } : {}),
+          ],
+        );
+      }
       await client.query(
         `UPDATE investigations SET state = 'collecting', updated_at = now() WHERE id = $1`,
         [investigationId],
       );
       await insertEvent(client, investigationId, event);
       await client.query("COMMIT");
+      const currentStorageKeys = new Set(artifacts.map((artifact) => artifact.storageKey));
+      return {
+        supersededStorageKeys: existing.rows
+          .map((artifact) => artifact.storage_key)
+          .filter((storageKey) => !currentStorageKeys.has(storageKey)),
+      };
     } catch (error) {
       await client.query("ROLLBACK").catch(() => undefined);
       throw error;

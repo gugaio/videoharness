@@ -19,7 +19,7 @@ function createRepository(): InvestigationJobRepository {
     claimNext: vi.fn(async () => claimedJob),
     heartbeat: vi.fn(async () => true),
     transition: vi.fn(async () => undefined),
-    recordEvidence: vi.fn(async () => undefined),
+    recordEvidenceBatch: vi.fn(async () => ({ supersededStorageKeys: [] })),
     complete: vi.fn(async () => undefined),
     fail: vi.fn(async () => "retrying" as const),
   };
@@ -61,12 +61,20 @@ describe("investigation worker", () => {
       "analyzing",
       "synthesizing",
     ]);
-    expect(repository.recordEvidence).toHaveBeenCalledOnce();
+    expect(repository.recordEvidenceBatch).toHaveBeenCalledOnce();
+    expect(repository.recordEvidenceBatch).toHaveBeenCalledWith(
+      claimedJob.id,
+      "worker-test",
+      30_000,
+      [expect.objectContaining({ logicalKey: "manifest/root", kind: "manifest" })],
+      expect.objectContaining({ schemaVersion: 2, manifests: expect.any(Array), mediaSamples: [] }),
+      expect.objectContaining({ type: "investigation.evidence_found" }),
+    );
     expect(repository.complete).toHaveBeenCalledWith(
       claimedJob.id,
       "worker-test",
       expect.any(String),
-      expect.objectContaining({ placeholder: false, generatedBy: "deterministic-manifest-v1" }),
+      expect.objectContaining({ placeholder: false, generatedBy: "deterministic-manifest-v2" }),
       expect.objectContaining({ type: "investigation.report_ready" }),
     );
     expect(repository.fail).not.toHaveBeenCalled();
@@ -132,7 +140,7 @@ describe("investigation worker", () => {
 
   it("removes a stored file when artifact metadata cannot be committed", async () => {
     const repository = createRepository();
-    vi.mocked(repository.recordEvidence).mockRejectedValueOnce(new Error("artifact transaction failed"));
+    vi.mocked(repository.recordEvidenceBatch).mockRejectedValueOnce(new Error("artifact transaction failed"));
     const worker = createInvestigationWorker({
       repository, collector, artifactStore, workerId: "worker-test", leaseMs: 30_000,
     });
@@ -146,6 +154,22 @@ describe("investigation worker", () => {
       "artifact transaction failed",
       true,
     );
+  });
+
+  it("removes the superseded artifact only after the replacement metadata is committed", async () => {
+    const repository = createRepository();
+    vi.mocked(repository.recordEvidenceBatch).mockResolvedValueOnce({
+      supersededStorageKeys: ["artifacts/case/previous.m3u8"],
+    });
+    const worker = createInvestigationWorker({
+      repository, collector, artifactStore, workerId: "worker-test", leaseMs: 30_000,
+    });
+
+    await expect(worker.runNext()).resolves.toBe(true);
+
+    expect(artifactStore.remove).toHaveBeenCalledWith("artifacts/case/previous.m3u8");
+    expect(artifactStore.remove).not.toHaveBeenCalledWith("artifacts/case/manifest.m3u8");
+    expect(repository.complete).toHaveBeenCalledOnce();
   });
 
   it("renews the lease while a lifecycle stage is still running", async () => {

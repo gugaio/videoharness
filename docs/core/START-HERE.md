@@ -31,6 +31,9 @@ Indice de onboarding para humanos e agentes.
 - Fase ativa: **Fase 2 - Evidencia Deterministica**.
 - A primeira fatia real coleta manifests HLS/DASH por uma fronteira protegida
   contra SSRF, persiste artifact + evidence bundle e gera report deterministico.
+- Artifacts agora possuem identidade logica por investigation, sao registrados em
+  lote e podem ser substituidos com seguranca em retries; novos reports usam o
+  `EvidenceBundle` v2 orientado a multiplos manifests e media samples.
 - Proximo passo: aprofundar o parsing do manifest e selecionar variants sem baixar
   segmentos ainda.
 

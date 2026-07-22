@@ -96,3 +96,26 @@ Consequencia:
 - A policy e deliberadamente conservadora e pode rejeitar hosts com DNS misto.
 - Proxies corporativos e streams privados exigirao uma policy explicita futura;
   nao sao suportados no MVP publico.
+
+## 2026-07-21 - Identidade logica e lote de artifacts
+
+Decisao:
+
+- Artifacts possuem `logical_key` unica por investigation.
+- Uma coleta registra artifacts e evidence bundle em um unico lote PostgreSQL.
+- Retries substituem o registro da mesma logical key e removem o arquivo anterior
+  somente depois do commit.
+- O `EvidenceBundle` v1 permanece legivel; novas coletas usam o v2 com arrays de
+  manifests e media samples.
+
+Motivo:
+
+- A proxima fatia produz root manifest, manifests derivados e depois chunks.
+- O contrato anterior assumia um unico arquivo e poderia acumular artifacts
+  duplicados quando uma tentativa falhasse depois da coleta.
+
+Consequencia:
+
+- Collectors podem continuar pequenos, mas o application core ja aceita promover
+  varios artifacts atomicamente.
+- Compatibilidade de leitura evita invalidar investigations locais existentes.

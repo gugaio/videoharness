@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { StreamCollectionError } from "../../stream-tools/errors.js";
-import type { EvidenceBundle } from "../domain/evidence.js";
+import type { EvidenceBundleV2, ManifestEvidence } from "../domain/evidence.js";
 import {
   JobLeaseLostError,
   type ClaimedInvestigationJob,
@@ -32,7 +32,7 @@ export function createInvestigationWorker(input: {
 
       let leaseLost = false;
       let activeHeartbeat: Promise<void> | undefined;
-      let uncommittedStorageKey: string | undefined;
+      const uncommittedStorageKeys = new Set<string>();
       const heartbeat = async (): Promise<void> => {
         if (activeHeartbeat || leaseLost) return activeHeartbeat;
         activeHeartbeat = input.repository.heartbeat(job.id, input.workerId, input.leaseMs)
@@ -61,33 +61,39 @@ export function createInvestigationWorker(input: {
           extension: collected.inspection.protocol === "hls" ? "m3u8" : "mpd",
           content: collected.bytes,
         });
-        uncommittedStorageKey = stored.storageKey;
+        uncommittedStorageKeys.add(stored.storageKey);
         const evidence = createEvidenceBundle(artifactId, stored.sizeBytes, collected);
-        await input.repository.recordEvidence(
+        const rootManifest = evidence.manifests[0]!;
+        const recorded = await input.repository.recordEvidenceBatch(
           job.id,
           input.workerId,
           input.leaseMs,
-          {
+          [{
             id: artifactId,
+            logicalKey: rootManifest.logicalKey,
+            kind: "manifest",
             storageKey: stored.storageKey,
             ...(collected.contentType ? { contentType: collected.contentType } : {}),
             sizeBytes: stored.sizeBytes,
-            evidence,
-          },
+          }],
+          evidence,
           {
             type: "investigation.evidence_found",
             actor: "Media Agent",
-            message: `${evidence.source.protocol.toUpperCase()} ${evidence.manifest.kind} manifest collected and preserved as evidence.`,
+            message: `${evidence.source.protocol.toUpperCase()} ${rootManifest.kind} manifest collected and preserved as evidence.`,
             payload: {
               state: "collecting",
               artifactId,
+              logicalKey: rootManifest.logicalKey,
               protocol: evidence.source.protocol,
-              manifestKind: evidence.manifest.kind,
-              sizeBytes: evidence.manifest.sizeBytes,
+              manifestKind: rootManifest.kind,
+              sizeBytes: rootManifest.sizeBytes,
             },
           },
         );
-        uncommittedStorageKey = undefined;
+        uncommittedStorageKeys.clear();
+        await Promise.all(recorded.supersededStorageKeys.map((storageKey) =>
+          input.artifactStore.remove(storageKey).catch(() => undefined)));
 
         await persistTransition(input.repository, job, input.workerId, input.leaseMs, analysisTransition(evidence));
         await persistTransition(input.repository, job, input.workerId, input.leaseMs, synthesisTransition());
@@ -107,7 +113,8 @@ export function createInvestigationWorker(input: {
           },
         );
       } catch (error) {
-        if (uncommittedStorageKey) await input.artifactStore.remove(uncommittedStorageKey).catch(() => undefined);
+        await Promise.all(Array.from(uncommittedStorageKeys, (storageKey) =>
+          input.artifactStore.remove(storageKey).catch(() => undefined)));
         const failure = classifyFailure(error);
         await input.repository.fail(job.id, input.workerId, failure.code, failure.message, failure.retryable);
       } finally {
@@ -141,10 +148,11 @@ function validatingTransition(job: ClaimedInvestigationJob): InvestigationTransi
   };
 }
 
-function analysisTransition(evidence: EvidenceBundle): InvestigationTransition {
-  const count = evidence.manifest.variantCount
-    ?? evidence.manifest.representationCount
-    ?? evidence.manifest.segmentCount
+function analysisTransition(evidence: EvidenceBundleV2): InvestigationTransition {
+  const rootManifest = evidence.manifests[0]!;
+  const count = rootManifest.variantCount
+    ?? rootManifest.representationCount
+    ?? rootManifest.segmentCount
     ?? 0;
   return {
     state: "analyzing",
@@ -155,7 +163,7 @@ function analysisTransition(evidence: EvidenceBundle): InvestigationTransition {
       payload: {
         state: "analyzing",
         protocol: evidence.source.protocol,
-        manifestKind: evidence.manifest.kind,
+        manifestKind: rootManifest.kind,
         entryCount: count,
       },
     },
@@ -178,9 +186,9 @@ function createEvidenceBundle(
   artifactId: string,
   sizeBytes: number,
   collected: Awaited<ReturnType<StreamEvidenceCollector["collectManifest"]>>,
-): EvidenceBundle {
+): EvidenceBundleV2 {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     collectedAt: new Date().toISOString(),
     source: {
       requestedUrl: collected.requestedUrl,
@@ -189,8 +197,12 @@ function createEvidenceBundle(
       httpStatus: collected.statusCode,
       ...(collected.contentType ? { contentType: collected.contentType } : {}),
     },
-    manifest: {
+    manifests: [{
       artifactId,
+      logicalKey: "manifest/root",
+      role: "root",
+      requestedUrl: collected.requestedUrl,
+      finalUrl: collected.finalUrl,
       kind: collected.inspection.kind,
       sizeBytes,
       ...(collected.inspection.variantCount !== undefined
@@ -202,7 +214,8 @@ function createEvidenceBundle(
       ...(collected.inspection.representationCount !== undefined
         ? { representationCount: collected.inspection.representationCount }
         : {}),
-    },
+    }],
+    mediaSamples: [],
     observations: [{
       code: "MANIFEST_DETECTED",
       severity: "info",
@@ -217,12 +230,13 @@ function createEvidenceBundle(
 
 function createManifestReport(
   job: ClaimedInvestigationJob,
-  evidence: EvidenceBundle,
+  evidence: EvidenceBundleV2,
 ): InvestigationReportContent {
+  const rootManifest: ManifestEvidence = evidence.manifests[0]!;
   return {
     placeholder: false,
     title: `${evidence.source.protocol.toUpperCase()} manifest collected`,
-    summary: `The root ${evidence.manifest.kind} manifest was fetched through the protected network boundary and preserved as evidence.`,
+    summary: `The root ${rootManifest.kind} manifest was fetched through the protected network boundary and preserved as evidence.`,
     ...(job.investigation.problemDescription
       ? { problemReported: job.investigation.problemDescription }
       : {}),
@@ -230,7 +244,7 @@ function createManifestReport(
       {
         title: "Manifest detected",
         status: "observed",
-        explanation: `${evidence.source.protocol.toUpperCase()} ${evidence.manifest.kind}, ${evidence.manifest.sizeBytes} bytes.`,
+        explanation: `${evidence.source.protocol.toUpperCase()} ${rootManifest.kind}, ${rootManifest.sizeBytes} bytes.`,
       },
       {
         title: "Current analysis boundary",
@@ -243,7 +257,7 @@ function createManifestReport(
       explanation: "The manifest format is directly observed, but root-cause confidence requires segment and media evidence.",
     },
     evidence,
-    generatedBy: "deterministic-manifest-v1",
+    generatedBy: "deterministic-manifest-v2",
   };
 }
 

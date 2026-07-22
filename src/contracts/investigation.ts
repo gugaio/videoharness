@@ -38,16 +38,24 @@ export const InvestigationEventSchema = z.object({
   createdAt: z.string().datetime(),
 });
 
-const EvidenceBundleSchema = z.object({
+const EvidenceSourceSchema = z.object({
+  requestedUrl: z.string().url(),
+  finalUrl: z.string().url(),
+  protocol: z.enum(["hls", "dash"]),
+  httpStatus: z.number().int(),
+  contentType: z.string().optional(),
+});
+
+const EvidenceObservationSchema = z.object({
+  code: z.string(),
+  severity: z.enum(["info", "warning", "error"]),
+  message: z.string(),
+});
+
+const EvidenceBundleV1Schema = z.object({
   schemaVersion: z.literal(1),
   collectedAt: z.string().datetime(),
-  source: z.object({
-    requestedUrl: z.string().url(),
-    finalUrl: z.string().url(),
-    protocol: z.enum(["hls", "dash"]),
-    httpStatus: z.number().int(),
-    contentType: z.string().optional(),
-  }),
+  source: EvidenceSourceSchema,
   manifest: z.object({
     artifactId: z.string().uuid(),
     kind: z.enum(["master", "media", "mpd"]),
@@ -56,11 +64,33 @@ const EvidenceBundleSchema = z.object({
     segmentCount: z.number().int().nonnegative().optional(),
     representationCount: z.number().int().nonnegative().optional(),
   }),
-  observations: z.array(z.object({
-    code: z.string(),
-    severity: z.enum(["info", "warning", "error"]),
-    message: z.string(),
+  observations: z.array(EvidenceObservationSchema),
+  limitations: z.array(z.string()),
+});
+
+const EvidenceBundleV2Schema = z.object({
+  schemaVersion: z.literal(2),
+  collectedAt: z.string().datetime(),
+  source: EvidenceSourceSchema,
+  manifests: z.array(z.object({
+    artifactId: z.string().uuid(),
+    logicalKey: z.string().min(1),
+    role: z.enum(["root", "variant", "rendition"]),
+    requestedUrl: z.string().url(),
+    finalUrl: z.string().url(),
+    kind: z.enum(["master", "media", "mpd"]),
+    sizeBytes: z.number().int().nonnegative(),
+    variantCount: z.number().int().nonnegative().optional(),
+    segmentCount: z.number().int().nonnegative().optional(),
+    representationCount: z.number().int().nonnegative().optional(),
+  })).min(1),
+  mediaSamples: z.array(z.object({
+    artifactId: z.string().uuid(),
+    logicalKey: z.string().min(1),
+    kind: z.enum(["init-segment", "media-segment"]),
+    sizeBytes: z.number().int().nonnegative(),
   })),
+  observations: z.array(EvidenceObservationSchema),
   limitations: z.array(z.string()),
 });
 
@@ -81,7 +111,7 @@ const PhaseOneReportContentSchema = z.object({
   generatedBy: z.literal("phase-1-lifecycle-fixture"),
 });
 
-const ManifestReportContentSchema = z.object({
+const ManifestReportContentBaseSchema = z.object({
   placeholder: z.literal(false),
   title: z.string().min(1),
   summary: z.string().min(1),
@@ -95,13 +125,22 @@ const ManifestReportContentSchema = z.object({
     level: z.literal("limited"),
     explanation: z.string().min(1),
   }),
-  evidence: EvidenceBundleSchema,
+});
+
+const ManifestReportContentV1Schema = ManifestReportContentBaseSchema.extend({
+  evidence: EvidenceBundleV1Schema,
   generatedBy: z.literal("deterministic-manifest-v1"),
 });
 
-export const InvestigationReportContentSchema = z.discriminatedUnion("placeholder", [
+const ManifestReportContentV2Schema = ManifestReportContentBaseSchema.extend({
+  evidence: EvidenceBundleV2Schema,
+  generatedBy: z.literal("deterministic-manifest-v2"),
+});
+
+export const InvestigationReportContentSchema = z.union([
   PhaseOneReportContentSchema,
-  ManifestReportContentSchema,
+  ManifestReportContentV1Schema,
+  ManifestReportContentV2Schema,
 ]);
 
 export const InvestigationReportSchema = z.object({

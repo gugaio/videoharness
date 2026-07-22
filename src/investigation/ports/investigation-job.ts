@@ -8,6 +8,19 @@ import type { EvidenceBundle } from "../domain/evidence.js";
 
 export type JobFailureDisposition = "retrying" | "failed" | "lease_lost";
 
+export type EvidenceArtifactRecord = {
+  id: string;
+  logicalKey: string;
+  kind: "manifest" | "init-segment" | "media-segment";
+  storageKey: string;
+  contentType?: string;
+  sizeBytes: number;
+};
+
+export type RecordEvidenceResult = {
+  supersededStorageKeys: string[];
+};
+
 export interface InvestigationJobRepository {
   claimNext(workerId: string, leaseMs: number): Promise<ClaimedInvestigationJob | null>;
   heartbeat(jobId: string, workerId: string, leaseMs: number): Promise<boolean>;
@@ -17,19 +30,14 @@ export interface InvestigationJobRepository {
     leaseMs: number,
     transition: InvestigationTransition,
   ): Promise<void>;
-  recordEvidence(
+  recordEvidenceBatch(
     jobId: string,
     workerId: string,
     leaseMs: number,
-    artifact: {
-      id: string;
-      storageKey: string;
-      contentType?: string;
-      sizeBytes: number;
-      evidence: EvidenceBundle;
-    },
+    artifacts: EvidenceArtifactRecord[],
+    evidence: EvidenceBundle,
     event: InvestigationLifecycleEvent,
-  ): Promise<void>;
+  ): Promise<RecordEvidenceResult>;
   complete(
     jobId: string,
     workerId: string,

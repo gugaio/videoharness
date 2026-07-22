@@ -120,8 +120,9 @@ GET /v1/investigations/:id/report
 Retorna `{ "report": InvestigationReport }`. Antes da conclusao retorna
 `404 REPORT_NOT_READY`. Reports antigos da Fase 1 possuem
 `placeholder=true`. A coleta de manifest da Fase 2 produz `placeholder=false`,
-`generatedBy=deterministic-manifest-v1` e um `EvidenceBundle` versionado com
-source, manifest, observations e limitations.
+`generatedBy=deterministic-manifest-v2` e um `EvidenceBundle` v2 com source,
+manifests, media samples, observations e limitations. Reports anteriores com
+`generatedBy=deterministic-manifest-v1` e `EvidenceBundle` v1 continuam aceitos.
 
 Falhas de coleta podem encerrar a investigation com codigos como:
 
