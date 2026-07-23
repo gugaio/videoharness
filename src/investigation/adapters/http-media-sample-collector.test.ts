@@ -73,6 +73,27 @@ describe("HttpMediaSampleCollector", () => {
     ]);
     expect(requester).toHaveBeenCalledTimes(3);
   });
+
+  it("materializes every segment of a short VOD in full mode", async () => {
+    const requester = vi.fn<PinnedRequester>(async (url) => response(url.pathname));
+    const collector = new HttpMediaSampleCollector(new SafeHttpClient({
+      resolver: async () => [{ address: "93.184.216.34", family: 4 }], requester,
+    }), { mode: "full", maxTotalBytes: 10_000 });
+    const text = ["#EXTM3U", ...Array.from({ length: 5 }, (_, index) => `#EXTINF:4,\nsegment-${index}.ts`), "#EXT-X-ENDLIST"].join("\n");
+
+    const result = await collector.collect({
+      manifests: [{
+        logicalKey: "manifest/root", role: "root",
+        source: { requestedUrl: "https://stream.example/index.m3u8", finalUrl: "https://stream.example/index.m3u8", statusCode: 200 },
+        content: { bytes: new TextEncoder().encode(text) },
+        inspection: inspectManifest(text, "https://stream.example/index.m3u8"),
+      }],
+    });
+
+    expect(result.limitations).toEqual([]);
+    expect(result.samples.map((sample) => sample.sampleIndex)).toEqual([0, 1, 2, 3, 4]);
+    expect(requester).toHaveBeenCalledTimes(5);
+  });
 });
 
 function response(body: string): http.IncomingMessage {

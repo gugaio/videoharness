@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { EvidenceBundleV2 } from "../domain/evidence.js";
+import type { InvestigationLab } from "../ports/investigation-lab.js";
 import type { AiAgentProgress } from "../ports/investigation-ai.js";
 import { PiInvestigationAI, parseLeadOutput, parseSpecialistOutput } from "./pi-investigation-ai.js";
 
@@ -129,13 +130,14 @@ const evidence: EvidenceBundleV2 = {
   limitations: [],
 };
 
-function createAi(runStructured: RunStructured): PiInvestigationAI {
+function createAi(runStructured: RunStructured, lab?: InvestigationLab): PiInvestigationAI {
   const ai = new PiInvestigationAI({
     apiKey: "test-key",
     provider: "openai",
     apiUrl: "https://provider.test/v1",
     model: "test-model",
     timeoutMs: 1_000,
+    ...(lab ? { lab } : {}),
   });
   (ai as unknown as { runStructured: RunStructured }).runStructured = runStructured;
   return ai;
@@ -151,6 +153,34 @@ function successfulRun(investigationId: string, agentId: string): ReturnType<Run
 }
 
 describe("Pi investigation progress reporting", () => {
+  it("runs freeze detection before synthesis when the reported symptom is repeated frames", async () => {
+    const execute = vi.fn<InvestigationLab["execute"]>().mockResolvedValue({
+      exitCode: 0,
+      timedOut: false,
+      durationMs: 120,
+      stdout: "",
+      stderr: "freeze_start: 2.96963\nfreeze_duration: 1.03437",
+      outputTruncated: false,
+    });
+    const ai = createAi(vi.fn<RunStructured>(successfulRun), { execute });
+    const investigationEvidence = structuredClone(evidence);
+
+    await ai.investigate({
+      investigationId: "c56a4180-65aa-42ec-a945-5fd21dec0538",
+      problemDescription: "A imagem congela e mostra frames repetidos.",
+      evidence: investigationEvidence,
+    });
+
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.stringContaining("freezedetect"),
+      timeoutMs: 120_000,
+    }));
+    expect(investigationEvidence.observations).toContainEqual(expect.objectContaining({
+      code: "FREEZE_DETECTION",
+      message: expect.stringContaining("freeze_start: 2.96963"),
+    }));
+  });
+
   it("reports the real lifecycle of every bounded agent run", async () => {
     const ai = createAi(vi.fn<RunStructured>(successfulRun));
     const progress: AiAgentProgress[] = [];

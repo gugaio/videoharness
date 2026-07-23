@@ -3,8 +3,11 @@ import { createDatabasePool } from "../database/client.js";
 import { logger } from "../infra/logger.js";
 import { FilesystemArtifactStore } from "../investigation/adapters/filesystem-artifact-store.js";
 import { FfprobeMediaProbe } from "../investigation/adapters/ffprobe-media-probe.js";
+import { FilesystemLabWorkspace } from "../investigation/adapters/filesystem-lab-workspace.js";
 import { HttpMediaSampleCollector } from "../investigation/adapters/http-media-sample-collector.js";
 import { PiInvestigationAI } from "../investigation/adapters/pi-investigation-ai.js";
+import { PostgresShellRunRecorder } from "../investigation/adapters/postgres-shell-run-recorder.js";
+import { UnixSocketInvestigationLab } from "../investigation/adapters/unix-socket-investigation-lab.js";
 import { HttpManifestCollector } from "../investigation/adapters/http-manifest-collector.js";
 import { PostgresInvestigationJobRepository } from "../investigation/adapters/postgres-investigation-job.js";
 import { createInvestigationWorker } from "../investigation/application/run-investigation.js";
@@ -27,14 +30,21 @@ const mediaCollector = new HttpMediaSampleCollector(new SafeHttpClient({
   timeoutMs: config.streamTimeoutMs,
   maxBytes: config.mediaSampleMaxBytes,
   ...localDevelopmentAlias,
-}), { maxTotalBytes: config.mediaSampleMaxTotalBytes });
+}), { maxTotalBytes: config.mediaSampleMaxTotalBytes, mode: "full" });
 const mediaProbe = new FfprobeMediaProbe({ dataDirectory: config.dataDir, timeoutMs: config.ffprobeTimeoutMs });
+const labWorkspace = new FilesystemLabWorkspace(config.dataDir);
+const lab = config.labSocketPath && config.labToken
+  ? new UnixSocketInvestigationLab({ socketPath: config.labSocketPath, token: config.labToken, timeoutMs: config.labCommandTimeoutMs })
+  : undefined;
+const shellRunRecorder = new PostgresShellRunRecorder(pool);
 const ai = new PiInvestigationAI({
   ...(config.aiApiKey ? { apiKey: config.aiApiKey } : {}),
   provider: config.aiProvider,
   apiUrl: config.aiApiUrl,
   model: config.aiModel,
   timeoutMs: config.aiTimeoutMs,
+  ...(lab ? { lab } : {}),
+  ...(lab ? { shellRunRecorder } : {}),
 });
 const worker = createInvestigationWorker({
   repository,
@@ -42,6 +52,7 @@ const worker = createInvestigationWorker({
   collector,
   mediaCollector,
   mediaProbe,
+  labWorkspace,
   ai,
   workerId: config.workerId,
   leaseMs: config.workerLeaseMs,
@@ -67,6 +78,7 @@ logger.info("worker.started", {
   mediaSampleMaxBytes: config.mediaSampleMaxBytes,
   mediaSampleMaxTotalBytes: config.mediaSampleMaxTotalBytes,
   ffprobeTimeoutMs: config.ffprobeTimeoutMs,
+  labEnabled: Boolean(lab),
   aiEnabled: Boolean(config.aiApiKey),
   aiProvider: config.aiProvider,
   aiApiUrl: config.aiApiUrl,

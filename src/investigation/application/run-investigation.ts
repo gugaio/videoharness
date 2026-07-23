@@ -10,6 +10,7 @@ import type { ArtifactStore } from "../ports/artifact-store.js";
 import type { InvestigationJobRepository } from "../ports/investigation-job.js";
 import type { ManifestCollector } from "../ports/manifest-collector.js";
 import type { MediaProbe, MediaSampleCollector } from "../ports/media-sample-collector.js";
+import type { ManifestCollection } from "../ports/manifest-collector.js";
 import type {
   AiAgentProgress,
   AiAgentRun,
@@ -31,6 +32,7 @@ export function createInvestigationWorker(input: {
   artifactStore: ArtifactStore;
   mediaCollector?: MediaSampleCollector;
   mediaProbe?: MediaProbe;
+  labWorkspace?: { prepare(investigationId: string, collection: ManifestCollection): Promise<void> };
   ai?: InvestigationAI;
   workerId: string;
   leaseMs: number;
@@ -87,6 +89,9 @@ export function createInvestigationWorker(input: {
               collection.mediaLimitations.push(`FFprobe could not inspect ${sample.logicalKey}: ${formatProbeFailure(error)}`);
             }
           }
+        }
+        if (input.labWorkspace) {
+          await input.labWorkspace.prepare(job.investigation.id, collection);
         }
         if (leaseLost) throw new JobLeaseLostError();
 

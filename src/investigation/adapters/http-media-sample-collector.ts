@@ -5,9 +5,11 @@ import type { ManifestCollection } from "../ports/manifest-collector.js";
 
 export class HttpMediaSampleCollector implements MediaSampleCollector {
   private readonly maxTotalBytes: number;
+  private readonly mode: "sample" | "full";
 
-  constructor(private readonly http: SafeHttpClient, options: { maxTotalBytes?: number } = {}) {
+  constructor(private readonly http: SafeHttpClient, options: { maxTotalBytes?: number; mode?: "sample" | "full" } = {}) {
     this.maxTotalBytes = options.maxTotalBytes ?? 16_777_216;
+    this.mode = options.mode ?? "sample";
   }
 
   async collect(collection: ManifestCollection): Promise<{ samples: MediaSample[]; limitations: string[] }> {
@@ -38,10 +40,14 @@ export class HttpMediaSampleCollector implements MediaSampleCollector {
           sourceManifestLogicalKey: manifest.logicalKey,
           url: hls.initSegment.url,
         });
-        totalBytes = assertWithinTotal(totalBytes, init.content.bytes.byteLength, this.maxTotalBytes);
+        if (totalBytes + init.content.bytes.byteLength > this.maxTotalBytes) {
+          limitations.push(`${manifest.logicalKey} init segment exceeds the investigation byte budget.`);
+          continue;
+        }
+        totalBytes += init.content.bytes.byteLength;
         samples.push(init);
       }
-      for (const index of sampleIndices(segments.length)) {
+      for (const index of this.mode === "full" ? segments.map((_, index) => index) : sampleIndices(segments.length)) {
         const segment = segments[index]!;
         if (!segment.url) continue;
         const media = await this.fetch({
@@ -53,7 +59,11 @@ export class HttpMediaSampleCollector implements MediaSampleCollector {
           ...(segment.sequence === undefined ? {} : { sequence: segment.sequence }),
           ...(segment.duration === undefined ? {} : { declaredDuration: segment.duration }),
         });
-        totalBytes = assertWithinTotal(totalBytes, media.content.bytes.byteLength, this.maxTotalBytes);
+        if (totalBytes + media.content.bytes.byteLength > this.maxTotalBytes) {
+          limitations.push(`${manifest.logicalKey} full media collection stopped at segment ${index}; the investigation byte budget was reached.`);
+          break;
+        }
+        totalBytes += media.content.bytes.byteLength;
         samples.push(media);
       }
     }
@@ -76,14 +86,6 @@ export class HttpMediaSampleCollector implements MediaSampleCollector {
 
 function sampleIndices(length: number): number[] {
   return [...new Set([0, Math.floor((length - 1) / 2), length - 1])];
-}
-
-function assertWithinTotal(current: number, added: number, maximum: number): number {
-  const total = current + added;
-  if (total > maximum) {
-    throw new StreamCollectionError("STREAM_RESPONSE_TOO_LARGE", "The sampled media exceeds the allowed total size", false);
-  }
-  return total;
 }
 
 function sampleKey(manifestKey: string, suffix: string): string {

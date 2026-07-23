@@ -5,6 +5,8 @@ import { Type } from "typebox";
 import { z } from "zod";
 import { logger } from "../../infra/logger.js";
 import type { EvidenceBundleV2, EvidenceBundleV3 } from "../domain/evidence.js";
+import type { InvestigationLab } from "../ports/investigation-lab.js";
+import type { ShellRunRecorder } from "../ports/shell-run-recorder.js";
 import type { AiAgentProgress, AiAgentRun, AiFinding, AiInvestigationResult, InvestigationAI } from "../ports/investigation-ai.js";
 
 const LIMITED_CONFIDENCE = 0.2;
@@ -50,7 +52,7 @@ const profiles = [
 ] as const;
 
 export class PiInvestigationAI implements InvestigationAI {
-  constructor(private readonly config: { apiKey?: string; provider: string; apiUrl: string; model: string; timeoutMs: number }) {}
+  constructor(private readonly config: { apiKey?: string; provider: string; apiUrl: string; model: string; timeoutMs: number; lab?: InvestigationLab; shellRunRecorder?: ShellRunRecorder }) {}
 
   async investigate(input: {
     investigationId: string;
@@ -59,6 +61,7 @@ export class PiInvestigationAI implements InvestigationAI {
     onProgress?: (update: AiAgentProgress) => Promise<void>;
   }): Promise<AiInvestigationResult> {
     if (!this.config.apiKey) return unavailableResult();
+    await collectRequiredSymptomMeasurements(input, this.config.lab, this.config.shellRunRecorder);
     const evidenceIds = new Set(buildEvidenceIndex(input.evidence).map((item) => item.id));
     const packet = JSON.stringify({
       problemDescription: input.problemDescription ?? "No problem was reported; assess the observed stream health.",
@@ -107,12 +110,12 @@ export class PiInvestigationAI implements InvestigationAI {
       const lead = await this.runStructured(
         input.investigationId,
         "lead-investigator",
-        leadPrompt(),
+        leadPrompt(Boolean(this.config.lab)),
         JSON.stringify({ packet: JSON.parse(packet), specialists: completed }),
         parseLeadOutput,
-        createEvidenceTools(input.evidence),
+        createEvidenceTools(input.evidence, this.config.lab, input.investigationId, this.config.shellRunRecorder),
       );
-      const filtered = filterSpecialist(lead, evidenceIds);
+      const filtered = filterSpecialist(lead, new Set(buildEvidenceIndex(input.evidence).map((item) => item.id)));
       agentRuns.push({ id: "lead-investigator", state: "completed", summary: lead.summary });
       await reportProgress({ agent: "lead-investigator", stage: "completed" });
       return {
@@ -257,10 +260,12 @@ Return exactly one JSON object without markdown:
 {"summary":"string","findings":[{"title":"string","severity":"info|warning|error","explanation":"string","evidenceIds":["exact evidence ID"],"confidence":0.5}],"limitations":["string"]}
 Every confidence MUST be a finite JSON number between 0 and 1, never a string, null, NaN or Infinity. When confidence cannot be assessed, use 0.2 and explain why in limitations. Findings may be empty when the evidence does not support a claim.`;
 }
-function leadPrompt(): string {
+function leadPrompt(hasLab: boolean): string {
   return `You are the Lead Investigator. Synthesize the specialist reports and deterministic HLS MPEG-TS evidence.
-State that the result is inconclusive when evidence is insufficient. Every finding must cite exact IDs present in evidenceIndex.
+The initial packet is a starting point, not a stopping condition. If it does not confirm or rule out the reported symptom, you MUST use the available investigation tools to obtain a relevant additional measurement before returning an inconclusive result. Do not merely list an unmeasured cause as a possibility.
+Every finding must cite exact IDs present in evidenceIndex.
 You may inspect an already preserved sample through inspect_preserved_sample; it cannot fetch or execute anything.
+${hasLab ? "You also have shell_exec: it is a real shell in an isolated local media lab. Input HLS is ../input/index.m3u8 relative to the shell working directory. It has no network or secrets. Use it whenever the initial evidence is inconclusive for the reported symptom. Examples: visual freeze/repeated frames -> ffmpeg -hide_banner -nostdin -loglevel info -i ../input/index.m3u8 -map 0:v:0 -vf freezedetect=n=-50dB:d=0.4 -an -f null -; black video -> blackdetect; silence/audio dropout -> silencedetect; decode suspicion -> ffmpeg decode to null with error logging; timing/keyframe suspicion -> ffprobe frame or packet analysis. Select only measurements relevant to the symptom. Each shell result returns an evidenceId; cite it in any supported finding." : "No media lab is available in this run; state the resulting limitation rather than inventing a measurement."}
 Return exactly one JSON object without markdown:
 {"summary":"string","likelyCause":"string","confidence":0.5,"findings":[{"title":"string","severity":"info|warning|error","explanation":"string","evidenceIds":["exact evidence ID"],"confidence":0.5}],"recommendations":["string"],"limitations":["string"]}
 Every confidence MUST be a finite JSON number between 0 and 1, never a string, null, NaN or Infinity. When confidence cannot be assessed, use 0.2.`;
@@ -306,13 +311,15 @@ function buildEvidenceIndex(evidence: EvidenceBundleV2 | EvidenceBundleV3): Arra
 function sanitizeEvidence(evidence: EvidenceBundleV2 | EvidenceBundleV3): object {
   return { protocol: evidence.source.protocol, manifests: evidence.manifests.map(({ requestedUrl: _requestedUrl, finalUrl: _finalUrl, ...item }) => item), mediaSamples: evidence.mediaSamples, observations: evidence.observations, limitations: evidence.limitations, hls: evidence.hls, ...(evidence.schemaVersion === 3 ? { playbackSessions: evidence.playbackSessions } : {}) };
 }
-/**
- * The model can request only a re-rendering of facts already preserved in the
- * evidence packet. It cannot pass commands, paths, URLs, or media bytes.
- */
-function createEvidenceTools(evidence: EvidenceBundleV2 | EvidenceBundleV3): AgentTool[] {
+/** Specialists inspect saved facts; only the Lead receives the separate lab shell. */
+function createEvidenceTools(
+  evidence: EvidenceBundleV2 | EvidenceBundleV3,
+  lab?: InvestigationLab,
+  investigationId?: string,
+  shellRunRecorder?: ShellRunRecorder,
+): AgentTool[] {
   const samples = new Map(evidence.mediaSamples.map((sample) => [sample.logicalKey, sample]));
-  return [{
+  const tools: AgentTool[] = [{
     name: "inspect_preserved_sample",
     label: "Inspect preserved media sample",
     description: "Return the deterministic probe facts for one sample logical key from the evidence index. No network or media process is started.",
@@ -326,6 +333,75 @@ function createEvidenceTools(evidence: EvidenceBundleV2 | EvidenceBundleV3): Age
       return { content: [{ type: "text", text: JSON.stringify(result) }], details: { logicalKey: sample.logicalKey } };
     },
   }];
+  if (!lab || !investigationId) return tools;
+  tools.push({
+    name: "shell_exec",
+    label: "Run a command in the investigation lab",
+    description: "Run bash in an isolated local media workspace. It has FFmpeg, FFprobe, MediaInfo, jq and Python, but no network, secrets or host filesystem. Input HLS is ../input/index.m3u8. The returned evidenceId must be cited when it supports a finding.",
+    parameters: Type.Object({
+      command: Type.String({ minLength: 1, maxLength: 12_000 }),
+      timeoutMs: Type.Optional(Type.Number({ minimum: 1_000, maximum: 120_000 })),
+    }),
+    executionMode: "sequential",
+    execute: async (_toolCallId, params) => {
+      const value = params as { command: string; timeoutMs?: number };
+      const result = await lab.execute({
+        investigationId,
+        command: value.command,
+        ...(value.timeoutMs === undefined ? {} : { timeoutMs: value.timeoutMs }),
+      });
+      const shellRunId = shellRunRecorder
+        ? await shellRunRecorder.record({ investigationId, command: value.command, result }).catch(() => undefined)
+        : undefined;
+      const evidenceId = `observation:${evidence.observations.length}`;
+      evidence.observations.push({
+        code: "SHELL_MEASUREMENT",
+        severity: result.exitCode === 0 && !result.timedOut ? "info" : "warning",
+        message: shellMeasurementMessage(value.command, result, shellRunId),
+      });
+      return {
+        content: [{ type: "text", text: JSON.stringify({ evidenceId, ...result }) }],
+        details: { evidenceId, command: value.command, exitCode: result.exitCode, timedOut: result.timedOut },
+      };
+    },
+  });
+  return tools;
+}
+
+function shellMeasurementMessage(command: string, result: Awaited<ReturnType<InvestigationLab["execute"]>>, shellRunId?: string): string {
+  const output = `${result.stdout}\n${result.stderr}`.replace(/\s+/g, " ").trim().slice(0, 1_500);
+  return `Shell measurement completed${shellRunId ? ` (shellRunId=${shellRunId})` : ""} (exit=${result.exitCode ?? "null"}, timedOut=${result.timedOut}, durationMs=${result.durationMs}, command=${command.slice(0, 240)}). ${output || "No output."}`;
+}
+
+const FREEZE_DETECTION_COMMAND = "ffmpeg -hide_banner -nostdin -loglevel info -protocol_whitelist file,crypto,data -i ../input/index.m3u8 -map 0:v:0 -vf freezedetect=n=-50dB:d=0.4 -an -f null -";
+
+async function collectRequiredSymptomMeasurements(
+  input: { investigationId: string; problemDescription?: string; evidence: EvidenceBundleV2 | EvidenceBundleV3 },
+  lab?: InvestigationLab,
+  shellRunRecorder?: ShellRunRecorder,
+): Promise<void> {
+  if (!lab || !requiresFreezeDetection(input.problemDescription)) return;
+  try {
+    const result = await lab.execute({ investigationId: input.investigationId, command: FREEZE_DETECTION_COMMAND, timeoutMs: 120_000 });
+    const shellRunId = shellRunRecorder
+      ? await shellRunRecorder.record({ investigationId: input.investigationId, command: FREEZE_DETECTION_COMMAND, result }).catch(() => undefined)
+      : undefined;
+    input.evidence.observations.push({
+      code: "FREEZE_DETECTION",
+      severity: result.exitCode === 0 && !result.timedOut ? "info" : "warning",
+      message: shellMeasurementMessage(FREEZE_DETECTION_COMMAND, result, shellRunId),
+    });
+  } catch (error) {
+    input.evidence.observations.push({
+      code: "FREEZE_DETECTION_UNAVAILABLE",
+      severity: "warning",
+      message: `Required freeze detection could not run: ${error instanceof Error ? error.message : "unknown lab error"}.`,
+    });
+  }
+}
+
+function requiresFreezeDetection(problemDescription?: string): boolean {
+  return /(?:freeze|frozen|freezing|congel|trav(?:a|ou|ando)|imagem\s+(?:parada|congelada)|frames?\s+(?:repetid|duplicad))/iu.test(problemDescription ?? "");
 }
 function filterSpecialist(output: SpecialistOutput, valid: Set<string>): SpecialistOutput {
   return { ...output, findings: output.findings.map((finding) => ({ ...finding, evidenceIds: finding.evidenceIds.filter((id) => valid.has(id)) })).filter((finding) => finding.evidenceIds.length > 0), limitations: output.limitations.slice(0, 8) };
@@ -370,4 +446,4 @@ function publicError(error: unknown): string {
 }
 function unavailableResult(): AiInvestigationResult { return { available: false, findings: [], recommendations: [], limitations: ["AI analysis is unavailable because no provider API key is configured."], agents: [...profiles.map((profile) => ({ id: profile.id, state: "unavailable" as const })), { id: "lead-investigator", state: "unavailable" as const }] }; }
 function normalizeBaseUrl(value: string): string { return value.replace(/\/chat\/completions\/?$/, "").replace(/\/$/, ""); }
-export const PiPromptRevision = createHash("sha256").update(`${specialistPrompt("x", "x")}${leadPrompt()}`).digest("hex").slice(0, 12);
+export const PiPromptRevision = createHash("sha256").update(`${specialistPrompt("x", "x")}${leadPrompt(true)}`).digest("hex").slice(0, 12);

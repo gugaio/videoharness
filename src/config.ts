@@ -20,6 +20,9 @@ const EnvironmentSchema = z.object({
   VIDEO_HARNESS_MEDIA_SAMPLE_MAX_BYTES: z.coerce.number().int().min(1_024).max(33_554_432).default(20_971_520),
   VIDEO_HARNESS_MEDIA_SAMPLE_MAX_TOTAL_BYTES: z.coerce.number().int().min(1_024).max(67_108_864).default(20_971_520),
   VIDEO_HARNESS_FFPROBE_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
+  VIDEO_HARNESS_LAB_SOCKET_PATH: z.string().trim().min(1).optional().transform((value) => value || undefined),
+  VIDEO_HARNESS_LAB_TOKEN: z.string().trim().min(16).optional().transform((value) => value || undefined),
+  VIDEO_HARNESS_LAB_COMMAND_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(60_000),
   VIDEO_HARNESS_AI_PROVIDER: z.string().trim().min(1).default("openai"),
   VIDEO_HARNESS_AI_API_URL: z.string().trim().url().default("https://api.openai.com/v1/chat/completions"),
   VIDEO_HARNESS_AI_MODEL: z.string().trim().min(1).default("gpt-5.5"),
@@ -42,6 +45,9 @@ export type VideoHarnessConfig = {
   mediaSampleMaxBytes: number;
   mediaSampleMaxTotalBytes: number;
   ffprobeTimeoutMs: number;
+  labSocketPath?: string;
+  labToken?: string;
+  labCommandTimeoutMs: number;
   aiProvider: string;
   aiApiUrl: string;
   aiModel: string;
@@ -68,6 +74,9 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): VideoH
     mediaSampleMaxBytes: parsed.VIDEO_HARNESS_MEDIA_SAMPLE_MAX_BYTES,
     mediaSampleMaxTotalBytes: parsed.VIDEO_HARNESS_MEDIA_SAMPLE_MAX_TOTAL_BYTES,
     ffprobeTimeoutMs: parsed.VIDEO_HARNESS_FFPROBE_TIMEOUT_MS,
+    ...(parsed.VIDEO_HARNESS_LAB_SOCKET_PATH ? { labSocketPath: parsed.VIDEO_HARNESS_LAB_SOCKET_PATH } : {}),
+    ...(parsed.VIDEO_HARNESS_LAB_TOKEN ? { labToken: parsed.VIDEO_HARNESS_LAB_TOKEN } : {}),
+    labCommandTimeoutMs: parsed.VIDEO_HARNESS_LAB_COMMAND_TIMEOUT_MS,
     aiProvider: parsed.VIDEO_HARNESS_AI_PROVIDER,
     aiApiUrl: parsed.VIDEO_HARNESS_AI_API_URL,
     aiModel: parsed.VIDEO_HARNESS_AI_MODEL,

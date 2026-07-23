@@ -11,7 +11,7 @@ RUN npm run build && npm prune --omit=dev
 FROM node:22-bookworm-slim AS runtime
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg mediainfo tini \
+  && apt-get install -y --no-install-recommends bash ffmpeg mediainfo tini jq python3 file \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --gid 10001 harness \
   && useradd --uid 10001 --gid harness --create-home --home-dir /home/harness --shell /usr/sbin/nologin harness
