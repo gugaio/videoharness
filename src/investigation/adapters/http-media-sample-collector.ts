@@ -12,7 +12,7 @@ export class HttpMediaSampleCollector implements MediaSampleCollector {
 
   async collect(collection: ManifestCollection): Promise<{ samples: MediaSample[]; limitations: string[] }> {
     const candidates = collection.manifests.filter((manifest) =>
-      manifest.role !== "root" && manifest.inspection.protocol === "hls" && manifest.inspection.hls?.kind === "media");
+      manifest.inspection.protocol === "hls" && manifest.inspection.hls?.kind === "media");
     const samples: MediaSample[] = [];
     const limitations: string[] = [];
     let totalBytes = 0;
@@ -22,12 +22,12 @@ export class HttpMediaSampleCollector implements MediaSampleCollector {
         limitations.push(`${manifest.logicalKey} declares ${hls.encryptionMethod} encryption; media bytes were not sampled.`);
         continue;
       }
-      const segment = hls.segments?.[0];
-      if (!segment?.url) {
+      const segments = hls.segments ?? [];
+      if (segments.length === 0 || !segments.some((segment) => segment.url)) {
         limitations.push(`${manifest.logicalKey} has no fetchable media segment.`);
         continue;
       }
-      if (segment.byteRange || hls.initSegment?.byteRange) {
+      if (segments.some((segment) => segment.byteRange) || hls.initSegment?.byteRange) {
         limitations.push(`${manifest.logicalKey} uses byte ranges; media bytes were not sampled in this phase.`);
         continue;
       }
@@ -41,16 +41,21 @@ export class HttpMediaSampleCollector implements MediaSampleCollector {
         totalBytes = assertWithinTotal(totalBytes, init.content.bytes.byteLength, this.maxTotalBytes);
         samples.push(init);
       }
-      const media = await this.fetch({
-        logicalKey: sampleKey(manifest.logicalKey, "media/0"),
-        kind: "media-segment",
-        sourceManifestLogicalKey: manifest.logicalKey,
-        url: segment.url,
-        ...(segment.sequence === undefined ? {} : { sequence: segment.sequence }),
-        ...(segment.duration === undefined ? {} : { declaredDuration: segment.duration }),
-      });
-      totalBytes = assertWithinTotal(totalBytes, media.content.bytes.byteLength, this.maxTotalBytes);
-      samples.push(media);
+      for (const index of sampleIndices(segments.length)) {
+        const segment = segments[index]!;
+        if (!segment.url) continue;
+        const media = await this.fetch({
+          logicalKey: sampleKey(manifest.logicalKey, `media/${index}`),
+          kind: "media-segment",
+          sourceManifestLogicalKey: manifest.logicalKey,
+          sampleIndex: index,
+          url: segment.url,
+          ...(segment.sequence === undefined ? {} : { sequence: segment.sequence }),
+          ...(segment.duration === undefined ? {} : { declaredDuration: segment.duration }),
+        });
+        totalBytes = assertWithinTotal(totalBytes, media.content.bytes.byteLength, this.maxTotalBytes);
+        samples.push(media);
+      }
     }
     return { samples, limitations };
   }
@@ -61,11 +66,16 @@ export class HttpMediaSampleCollector implements MediaSampleCollector {
       logicalKey: input.logicalKey,
       kind: input.kind,
       sourceManifestLogicalKey: input.sourceManifestLogicalKey,
+      ...(input.sampleIndex === undefined ? {} : { sampleIndex: input.sampleIndex }),
       ...(input.sequence === undefined ? {} : { sequence: input.sequence }),
       ...(input.declaredDuration === undefined ? {} : { declaredDuration: input.declaredDuration }),
       content: { bytes: response.bytes },
     };
   }
+}
+
+function sampleIndices(length: number): number[] {
+  return [...new Set([0, Math.floor((length - 1) / 2), length - 1])];
 }
 
 function assertWithinTotal(current: number, added: number, maximum: number): number {

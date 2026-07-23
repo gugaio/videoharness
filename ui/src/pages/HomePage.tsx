@@ -59,9 +59,9 @@ export function HomePage(): JSX.Element {
       <NetworkBackdrop />
       <div className="relative mx-auto flex min-h-screen w-full max-w-[1180px] flex-col px-5 pb-10 pt-6 sm:px-8 lg:px-12">
         <header className="flex items-center justify-between">
-          <a className="flex items-center gap-3 text-sm font-semibold tracking-tight" href="/">
-            <span className="grid h-8 w-8 place-items-center rounded-lg border border-white/10 bg-white/[0.06] font-mono text-xs">
-              VHS
+          <a className="group flex items-center gap-3 text-sm font-semibold tracking-tight" href="/">
+            <span className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-sky-400/80 via-violet-500/80 to-fuchsia-500/80 font-mono text-[11px] font-bold text-white shadow-lg shadow-violet-500/20 transition group-hover:brightness-110">
+              V
             </span>
             <span className="hidden text-white/90 sm:inline">Video Harness Space</span>
           </a>
@@ -82,10 +82,13 @@ export function HomePage(): JSX.Element {
             </p>
             <h1 className="text-balance text-4xl font-semibold leading-[1.05] tracking-[-0.045em] sm:text-6xl lg:text-[72px]">
               Investigate any video
-              <br className="hidden sm:block" /> stream in seconds.
+              <br className="hidden sm:block" /> stream{" "}
+              <span className="bg-gradient-to-r from-sky-300 via-violet-300 to-fuchsia-300 bg-clip-text text-transparent">
+                in seconds.
+              </span>
             </h1>
             <p className="mx-auto mt-6 max-w-2xl text-pretty text-base leading-7 text-harness-muted sm:text-lg">
-              Paste a URL and let AI agents analyze playback, network, media and compatibility issues.
+              Paste a URL and a team of AI agents analyzes playback, network, media and compatibility issues — live, in front of you.
             </p>
           </div>
 
@@ -113,7 +116,7 @@ export function HomePage(): JSX.Element {
               placeholder="My live freezes after 15 minutes on Samsung TVs."
             />
             <button
-              className="mt-5 h-14 w-full rounded-2xl bg-harness-accent text-base font-semibold text-[#0a0c12] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-45"
+              className="mt-5 h-14 w-full rounded-2xl bg-gradient-to-r from-sky-300 via-violet-300 to-fuchsia-300 text-base font-semibold text-[#0a0c12] shadow-lg shadow-violet-500/20 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
               disabled={!url.trim() || health.data?.ok !== true || start.isPending}
               type="submit"
             >
@@ -168,7 +171,7 @@ function ModuleCard(props: {
 function NetworkBackdrop(): JSX.Element {
   return (
     <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
-      <div className="absolute left-1/2 top-[40%] h-[520px] w-[1100px] -translate-x-1/2 rounded-full bg-blue-400/[0.055] blur-3xl" />
+      <div className="absolute left-1/2 top-[30%] h-[520px] w-[1100px] -translate-x-1/2 animate-aurora-drift rounded-full bg-gradient-to-r from-sky-500/[0.09] via-violet-500/[0.1] to-fuchsia-500/[0.08] blur-3xl" />
       <div className="network-grid absolute inset-x-0 top-[33%] h-[440px] opacity-55" />
       <div className="absolute inset-x-0 bottom-0 h-64 bg-gradient-to-t from-black/35 to-transparent" />
     </div>

@@ -25,6 +25,25 @@ npm --prefix ui run check
 npm --prefix ui run build
 ```
 
+## Testar um HLS servido na maquina host
+
+No Docker Compose local, a URL pode continuar usando `localhost`:
+
+```text
+http://localhost:8080/index.m3u8
+```
+
+O worker resolve somente esse hostname por `host.docker.internal`, configurado
+como host gateway no Compose. O servidor local precisa aceitar conexoes vindas do
+gateway Docker; para servidores de desenvolvimento, normalmente isso significa
+escutar em `0.0.0.0`.
+
+Essa excecao nao libera `127.0.0.1`, IPs privados literais, outros hostnames
+privados ou redirects para redes privadas. Uma URL publica tambem nao pode usar
+redirect para entrar no alias localhost. Fora do Compose, localhost permanece
+bloqueado a menos que `VIDEO_HARNESS_STREAM_LOCALHOST_ALIAS` seja configurada
+explicitamente para desenvolvimento.
+
 ## Convencoes
 
 - TypeScript strict.

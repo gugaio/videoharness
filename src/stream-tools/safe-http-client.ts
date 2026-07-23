@@ -29,6 +29,7 @@ export class SafeHttpClient {
   private readonly maxBytes: number;
   private readonly maxRedirects: number;
   private readonly requester: PinnedRequester;
+  private readonly allowedPrivateHostnameAliases: ReadonlyMap<string, string>;
 
   constructor(options: {
     resolver?: DnsResolver;
@@ -36,12 +37,19 @@ export class SafeHttpClient {
     maxBytes?: number;
     maxRedirects?: number;
     requester?: PinnedRequester;
+    allowedPrivateHostnameAliases?: Readonly<Record<string, string>>;
   } = {}) {
     this.resolver = options.resolver ?? resolveAddresses;
     this.timeoutMs = options.timeoutMs ?? 10_000;
     this.maxBytes = options.maxBytes ?? 1_048_576;
     this.maxRedirects = options.maxRedirects ?? 3;
     this.requester = options.requester ?? requestPinned;
+    this.allowedPrivateHostnameAliases = new Map(
+      Object.entries(options.allowedPrivateHostnameAliases ?? {}).map(([hostname, alias]) => [
+        normalizeHostname(hostname),
+        normalizeHostname(alias),
+      ]),
+    );
   }
 
   async getText(value: string): Promise<SafeTextResponse> {
@@ -50,11 +58,17 @@ export class SafeHttpClient {
   }
 
   async getBytes(value: string): Promise<SafeBinaryResponse> {
-    const requestedUrl = parseStreamUrl(value).toString();
+    const parsedRequestedUrl = parseStreamUrl(value);
+    const requestedUrl = parsedRequestedUrl.toString();
+    const requestedAliasHostname = this.allowedPrivateHostnameAliases.has(
+      normalizeHostname(parsedRequestedUrl.hostname),
+    )
+      ? normalizeHostname(parsedRequestedUrl.hostname)
+      : undefined;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      return await this.request(requestedUrl, requestedUrl, 0, controller.signal);
+      return await this.request(requestedUrl, requestedUrl, 0, controller.signal, requestedAliasHostname);
     } catch (error) {
       if (error instanceof StreamCollectionError) throw error;
       if (controller.signal.aborted) {
@@ -73,9 +87,13 @@ export class SafeHttpClient {
     currentValue: string,
     redirectCount: number,
     signal: AbortSignal,
+    requestedAliasHostname?: string,
   ): Promise<SafeBinaryResponse> {
     const url = parseStreamUrl(currentValue);
-    const addresses = await raceWithAbort(this.resolveAndValidate(url.hostname), signal);
+    const addresses = await raceWithAbort(
+      this.resolveAndValidate(url.hostname, requestedAliasHostname),
+      signal,
+    );
     const target = addresses[0]!;
     const response = await this.requester(url, target, signal);
     const statusCode = response.statusCode ?? 0;
@@ -89,7 +107,13 @@ export class SafeHttpClient {
       if (redirectCount >= this.maxRedirects) {
         throw new StreamCollectionError("STREAM_TOO_MANY_REDIRECTS", "The stream exceeded the redirect limit", false);
       }
-      return this.request(requestedUrl, new URL(location, url).toString(), redirectCount + 1, signal);
+      return this.request(
+        requestedUrl,
+        new URL(location, url).toString(),
+        redirectCount + 1,
+        signal,
+        requestedAliasHostname,
+      );
     }
 
     if (statusCode < 200 || statusCode >= 300) {
@@ -122,14 +146,21 @@ export class SafeHttpClient {
     };
   }
 
-  private async resolveAndValidate(hostname: string): Promise<ResolvedAddress[]> {
-    const normalizedHostname = stripIpv6Brackets(hostname);
+  private async resolveAndValidate(
+    hostname: string,
+    requestedAliasHostname?: string,
+  ): Promise<ResolvedAddress[]> {
+    const normalizedHostname = normalizeHostname(hostname);
+    const configuredAlias = normalizedHostname === requestedAliasHostname
+      ? this.allowedPrivateHostnameAliases.get(normalizedHostname)
+      : undefined;
+    const resolutionHostname = configuredAlias ?? normalizedHostname;
     let addresses: ResolvedAddress[];
     try {
-      const family = isIP(normalizedHostname);
+      const family = isIP(resolutionHostname);
       addresses = family
-        ? [{ address: normalizedHostname, family: family as 4 | 6 }]
-        : await this.resolver(normalizedHostname);
+        ? [{ address: resolutionHostname, family: family as 4 | 6 }]
+        : await this.resolver(resolutionHostname);
     } catch (error) {
       throw new StreamCollectionError("STREAM_DNS_FAILED", "The stream hostname could not be resolved", true, {
         cause: error,
@@ -138,7 +169,7 @@ export class SafeHttpClient {
     if (addresses.length === 0) {
       throw new StreamCollectionError("STREAM_DNS_FAILED", "The stream hostname returned no addresses", true);
     }
-    if (addresses.some((entry) => !isPublicAddress(entry.address))) {
+    if (!configuredAlias && addresses.some((entry) => !isPublicAddress(entry.address))) {
       throw new StreamCollectionError(
         "STREAM_DESTINATION_BLOCKED",
         "The stream destination is not a public network address",
@@ -147,6 +178,10 @@ export class SafeHttpClient {
     }
     return addresses;
   }
+}
+
+function normalizeHostname(value: string): string {
+  return stripIpv6Brackets(value).trim().toLowerCase().replace(/\.$/, "");
 }
 
 export function isPublicAddress(value: string): boolean {

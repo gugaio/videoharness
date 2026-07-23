@@ -273,7 +273,9 @@ export class PostgresInvestigationJobRepository implements InvestigationJobRepos
         ? {
             type: "investigation.failed",
             actor: "system",
-            message: "The investigation could not be completed after the configured attempts.",
+            message: retryable
+              ? "The investigation could not be completed after the configured attempts."
+              : errorMessage,
             payload: { state: "failed", errorCode },
           }
         : {

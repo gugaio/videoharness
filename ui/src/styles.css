@@ -5,7 +5,7 @@
 :root {
   color-scheme: dark;
   font-family: Inter, "SF Pro Display", "Segoe UI", sans-serif;
-  background: #080a10;
+  background: #070810;
   color: #f4f5f7;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -17,7 +17,8 @@
 
 html {
   min-width: 320px;
-  background: #080a10;
+  background: #070810;
+  scroll-behavior: smooth;
 }
 
 body {
@@ -50,6 +51,62 @@ textarea {
   transform-origin: center bottom;
 }
 
+/* Soft gradient outline used on hero/verdict cards. */
+.gradient-ring {
+  position: relative;
+  border: 1px solid transparent;
+  background:
+    linear-gradient(#0d101b, #0d101b) padding-box,
+    linear-gradient(135deg, rgba(125, 211, 252, 0.5), rgba(167, 139, 250, 0.5), rgba(240, 171, 252, 0.4)) border-box;
+}
+
+/* Custom scrollbar, dark friendly. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  border: 2px solid #070810;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 ::selection {
-  background: rgba(219, 227, 255, 0.22);
+  background: rgba(167, 139, 250, 0.35);
+}
+
+/* Progressive disclosure without default disclosure triangle noise. */
+details > summary {
+  list-style: none;
+}
+
+details > summary::-webkit-details-marker {
+  display: none;
+}
+
+details[open] .disclosure-chevron {
+  transform: rotate(180deg);
+}
+
+.disclosure-chevron {
+  transition: transform 0.25s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

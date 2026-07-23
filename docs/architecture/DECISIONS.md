@@ -177,8 +177,10 @@ Consequencia:
 
 Decisao:
 
-- O worker baixa no maximo um segmento de cada playlist HLS selecionada e o init
-  segment associado, quando existir.
+- O worker baixa segmentos de inicio, meio e fim de cada playlist HLS selecionada
+  e o init segment associado, quando existir.
+- Quando a URL submetida ja aponta para uma media playlist, o root e amostrado
+  diretamente sem exigir uma master.
 - FFprobe recebe somente bytes gravados temporariamente no workspace isolado da
   investigation; URLs externas nunca sao passadas ao processo.
 - Criptografia declarada e byte ranges permanecem como limitacoes da primeira
@@ -190,3 +192,29 @@ Motivo:
   de rede previsiveis.
 - Separar a rede protegida do processo de midia evita abrir uma segunda fronteira
   de SSRF no FFprobe.
+
+## 2026-07-23 - Alias localhost restrito ao Compose de desenvolvimento
+
+Decisao:
+
+- O runtime padrao continua bloqueando qualquer destino privado, loopback ou DNS
+  misto.
+- O Compose local configura somente o hostname exato `localhost` como alias
+  confiavel para `host.docker.internal`.
+- IPs privados literais, outros hostnames privados e redirects que saem do alias
+  ou tentam entrar nele a partir de uma URL publica continuam bloqueados.
+
+Motivo:
+
+- Desenvolvedores precisam investigar um HLS servido na propria maquina enquanto
+  o worker executa em container.
+- Dentro do container, `localhost` aponta para o worker e nao para o host.
+- Desabilitar a policy SSRF inteira para facilitar testes criaria um comportamento
+  inseguro e diferente demais do deploy.
+
+Consequencia:
+
+- `http://localhost:<porta>/...` funciona no Docker Compose local quando o servidor
+  do host aceita conexoes pelo gateway Docker.
+- Deploys e execucoes fora do Compose so permitem localhost quando
+  `VIDEO_HARNESS_STREAM_LOCALHOST_ALIAS` e configurada explicitamente.

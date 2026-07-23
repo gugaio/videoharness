@@ -28,7 +28,7 @@ Indice de onboarding para humanos e agentes.
   ponta a ponta sobre PostgreSQL.
 - O worker usa claim transacional, lease, heartbeat e retry limitado.
 - Homepage cria o caso e a tela restaura eventos e apresenta a conclusao.
-- Fase ativa: **Fase 2 - Evidencia Deterministica**.
+- Fase ativa: **Fase 2 - HLS MPEG-TS + Investigacao Assistida**.
 - A primeira fatia real coleta manifests HLS/DASH por uma fronteira protegida
   contra SSRF, persiste artifact + evidence bundle e gera report deterministico.
 - Artifacts agora possuem identidade logica por investigation, sao registrados em
@@ -38,8 +38,8 @@ Indice de onboarding para humanos e agentes.
   bandwidth e preservam seu media manifest e uma rendition de audio vinculada.
 - A primeira amostra de media HLS ja baixa no maximo um segmento por playlist
   selecionada, preserva init segments quando necessarios e executa FFprobe local.
-- Proximo passo: aprofundar representations DASH depois de validar a amostra HLS
-  em mais streams reais.
+- O MVP valida HLS com MPEG-TS e agentes Pi; DASH, CMAF e DRM ficam fora do
+  corte inicial.
 
 ## Referencias locais
 

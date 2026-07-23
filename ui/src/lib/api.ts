@@ -102,6 +102,7 @@ const EvidenceBundleV2Schema = z.object({
     kind: z.enum(["init-segment", "media-segment"]),
     sizeBytes: z.number().int().nonnegative(),
     sourceManifestLogicalKey: z.string().min(1).optional(),
+    sampleIndex: z.number().int().nonnegative().optional(),
     sequence: z.number().int().nonnegative().optional(),
     declaredDuration: z.number().nonnegative().optional(),
     probe: z.object({
@@ -167,6 +168,12 @@ const ManifestReportContentBaseSchema = z.object({
     level: z.literal("limited"),
     explanation: z.string(),
   }),
+  ai: z.object({
+    available: z.boolean(), summary: z.string().optional(), likelyCause: z.string().optional(), confidence: z.number().min(0).max(1).optional(),
+    findings: z.array(z.object({ title: z.string(), severity: z.enum(["info", "warning", "error"]), explanation: z.string(), evidenceIds: z.array(z.string()), confidence: z.number().min(0).max(1) })),
+    recommendations: z.array(z.string()), limitations: z.array(z.string()),
+    agents: z.array(z.object({ id: z.enum(["timeline-playback", "container-encoding", "manifest-delivery", "lead-investigator"]), state: z.enum(["completed", "failed", "unavailable"]), summary: z.string().optional(), limitation: z.string().optional() })),
+  }).optional(),
 });
 
 const ManifestReportContentV1Schema = ManifestReportContentBaseSchema.extend({

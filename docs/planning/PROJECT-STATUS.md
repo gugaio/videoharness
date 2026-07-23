@@ -1,14 +1,14 @@
 # Project Status - Video Harness Space
 
-Ultima atualizacao: **2026-07-22**
+Ultima atualizacao: **2026-07-23**
 
 ## Resumo
 
-- Fase ativa: **Fase 2 - Evidencia Deterministica**.
+- Fase ativa: **Fase 2 - HLS MPEG-TS + Investigacao Assistida**.
 - Estado: **em andamento**.
 - Repositorio: novo e independente.
 - Runtime: API, worker, UI e PostgreSQL executaveis.
-- Objetivo imediato: validar a amostra HLS em streams reais e aprofundar DASH.
+- Objetivo imediato: validar HLS MPEG-TS e os agentes Pi de ponta a ponta.
 
 ## Fases
 
@@ -17,7 +17,7 @@ Ultima atualizacao: **2026-07-22**
 | 0 | Concluida | Fundacao documental, decisoes e plano executavel |
 | 1 | Concluida | Thin slice completo com API, worker, Postgres, SSE e UI |
 | 2 | Em andamento | Evidencia deterministica real de streaming |
-| 3 | Planejada | Investigacao assistida por IA e report estruturado |
+| 3 | Em andamento | Investigacao assistida por IA e report estruturado |
 | 4 | Planejada | UX premium e experiencia end-to-end |
 | 5 | Planejada | Hardening, deploy e validacao com usuarios |
 
@@ -57,6 +57,15 @@ Ultima atualizacao: **2026-07-22**
   segment CMAF quando aplicavel, limite por resposta e limite agregado.
 - FFprobe local com timeout, argumentos estruturados, output limitado e limpeza
   de workspace; codecs, tracks, duracao e timestamps entram no evidence bundle.
+- Amostragem HLS distribuida em inicio, meio e fim da playlist.
+- Runtime Pi com tres especialistas isolados e Lead Investigator; sem chave de
+  API, a investigation mantem o report deterministico com limitacao explicita.
+- Boundary Pi tolerante a confidence nao finita e findings parcialmente
+  malformados, com retry e observabilidade segura por agente.
+- Compose local com alias restrito para investigar HLS servido em `localhost`,
+  preservando o bloqueio SSRF para IPs e redirects privados.
+- Media playlists submetidas diretamente agora amostram segmentos de inicio, meio
+  e fim a partir do root.
 
 ## Checklist da Fase 1
 
@@ -78,15 +87,142 @@ Ultima atualizacao: **2026-07-22**
 - [x] Persistir o primeiro manifest como artifact.
 - [x] Extrair estrutura profunda de variants/renditions HLS.
 - [x] Coletar manifests HLS derivados com amostragem limitada.
-- [ ] Extrair representations DASH.
+- [ ] Extrair representations DASH (pos-MVP HLS MPEG-TS).
 - [x] Coletar e analisar uma amostra limitada de segmentos HLS.
 
 ## Proximo passo recomendado
 
-Validar a coleta HLS em streams reais MPEG-TS/CMAF e, depois, extrair
-representations DASH com o mesmo limite e modelo de evidencia.
+Reorganizar a UI do report para apresentar primeiro conclusao, confianca e
+recomendacoes, mantendo findings tecnicos e limitacoes auditaveis.
 
 ## Registro de atualizacoes
+
+### 2026-07-23 - HLS localhost e media playlist direta
+
+Fases impactadas: 2 e 3.
+
+Entrega:
+
+- O Compose local mapeia somente o hostname exato `localhost` para
+  `host.docker.internal`; a policy padrao continua bloqueando destinos privados.
+- IPs privados literais, redirects que saem do alias e URLs publicas que tentam
+  redirecionar para o alias continuam bloqueados.
+- O sampler inclui o root quando a URL submetida ja e uma HLS media playlist.
+- Falhas deterministicas nao retryable exibem na timeline a mensagem publica
+  especifica em vez de dizer incorretamente que todas as tentativas acabaram.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 72 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build`;
+- [x] `git diff --check`;
+- [x] Compose reconstruido e saudavel;
+- [x] smoke contra `http://localhost:8080/index.m3u8`.
+
+Smoke local:
+
+- investigation: `cf35b4a9-d42e-45c0-a02a-a1ba6ca08288`;
+- tres segmentos MPEG-TS preservados e inspecionados com FFprobe;
+- H.264 e AAC observados nas tres amostras;
+- audio inicial observado cerca de 1,955 s depois do video no primeiro segmento;
+- tres especialistas e Lead Investigator concluidos;
+- report com sete findings de IA, cinco recomendacoes e causa provavel persistida.
+
+Proximo passo recomendado:
+
+- Melhorar a hierarquia visual do report e expor claramente as analises por
+  especialista, conclusao, recomendacoes e limitacoes.
+
+### 2026-07-23 - Agentes Pi validados de ponta a ponta
+
+Fase impactada: 3.
+
+Entrega:
+
+- `confidence` nao finita, ausente, nula ou fora da faixa passa a confidence
+  limitada sem derrubar a resposta inteira.
+- Findings sao validados individualmente; um item malformado nao invalida o
+  summary nem os demais findings do especialista.
+- Prompts de especialista e Lead exigem JSON unico e confidence finita entre
+  zero e um; o segundo attempt recebe instrucao explicita de correcao do contrato.
+- Logs seguros registram inicio, status HTTP, conclusao, duracao e categoria de
+  falha por agente sem persistir prompt, resposta bruta ou chave.
+- Timeout padrao do runtime e Compose alinhado em 45 segundos.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 67 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build`;
+- [x] `git diff --check`;
+- [x] Compose reconstruido com API, worker, web e PostgreSQL saudaveis;
+- [x] smoke real HLS MPEG-TS com provider configurado.
+
+Smoke real:
+
+- URL: `https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8`;
+- investigation: `3143d345-81ae-4fd4-befe-37a46f37d9a4`;
+- especialistas timeline/playback, container/encoding e manifest/delivery
+  concluidos;
+- Lead Investigator concluido;
+- report persistido com causa provavel, confidence `0.74`, 12 findings citando
+  evidence IDs, seis recomendacoes e limitacoes;
+- falha transitoria inicial de manifest/delivery recuperada pelo retry.
+
+Proximo passo recomendado:
+
+- Melhorar a hierarquia visual do report para separar conclusao, recomendacoes,
+  analyses dos especialistas, evidencias deterministicas e limitacoes.
+
+### 2026-07-23 - Resiliencia do boundary Pi
+
+Fase impactada: 3.
+
+Entrega:
+
+- Saidas Pi agora aceitam `confidence` numerica serializada como string.
+- Cada especialista e o Lead repetem uma vez quando a resposta esta vazia ou nao
+  atende ao contrato JSON; o estado final do agente tambem serve de fallback para
+  extrair a mensagem do provider.
+- Adicionados testes de coercao para specialist e Lead.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 64 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build`;
+- [x] `git diff --check`.
+
+Proximo passo recomendado:
+
+- Reconstruir o Compose e criar uma nova investigation para validar os quatro
+  agentes com o provider configurado.
+
+### 2026-07-22 - Corte HLS MPEG-TS e agentes Pi
+
+Fases impactadas: 2 e 3.
+
+Entrega:
+
+- O MVP foi explicitamente limitado a HLS MPEG-TS; DASH, CMAF, DRM e byte ranges
+  foram adiados para evitar diluir a validacao do fluxo principal.
+- O sampler escolhe inicio, meio e fim de cada playlist media selecionada.
+- Adicionado adapter Pi com tres especialistas sem tools e um Lead Investigator.
+  O core depende apenas do port `InvestigationAI` e valida saidas estruturadas.
+- O report preserva a camada deterministica e adiciona findings/recomendacoes da
+  IA somente quando eles citam evidence IDs existentes.
+
+Pendencias:
+
+- Fixtures MPEG-TS de continuidade, A/V offset e keyframe ainda precisam ser
+  adicionadas; o smoke com provider Pi real depende da chave do operador.
 
 ### 2026-07-22 - Amostra HLS e FFprobe estruturado
 
@@ -98,7 +234,7 @@ Entrega:
   `EXT-X-MAP`, byte ranges e criptografia declarada.
 - Worker coleta no maximo um segmento por variant/rendition selecionada e seu init
   segment, pela mesma fronteira SSRF usada para manifests.
-- A amostra possui limite de 8 MiB por resposta e 16 MiB agregado por padrao.
+- A amostra possui limite de 20 MiB por resposta e 20 MiB agregado por padrao.
 - FFprobe processa somente arquivo temporario local, com timeout e output limitado;
   container, tracks, codecs e timestamps sao persistidos no Evidence Bundle v2.
 - Artifacts de manifests e media samples entram no mesmo lote idempotente. A UI

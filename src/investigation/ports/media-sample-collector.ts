@@ -4,6 +4,7 @@ export type MediaSample = {
   logicalKey: string;
   kind: "init-segment" | "media-segment";
   sourceManifestLogicalKey: string;
+  sampleIndex?: number;
   sequence?: number;
   declaredDuration?: number;
   content: { bytes: Uint8Array };

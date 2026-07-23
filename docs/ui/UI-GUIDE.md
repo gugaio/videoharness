@@ -96,6 +96,8 @@ O report deve funcionar como pagina compartilhavel e como documento de engenhari
 - Reports da Fase 2 sao identificados como `Deterministic evidence report` e
   `Observed evidence`. A amostra de media adiciona findings de codecs/tracks sem
   apresentar a selecao limitada como causa raiz; confidence permanece `limited`.
+- Quando configurado, o Lead Investigator aparece como uma camada separada sobre
+  a evidencia deterministica, com causa provavel e proximos passos auditaveis.
 - Masters HLS exibem um finding adicional com a variant representativa selecionada
   e o numero real de manifests preservados; a regra de selecao nao e apresentada
   como root cause.

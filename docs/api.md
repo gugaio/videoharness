@@ -132,6 +132,11 @@ trazer init/media artifacts, sequencia, duracao declarada e o resultado
 estruturado do FFprobe (container, tracks, codecs e timestamps). A amostra e
 limitada e nao representa uma simulacao completa de playback.
 
+Quando `VIDEO_HARNESS_AI_API_KEY` esta configurada, o mesmo report pode incluir
+`content.ai`, com findings, recomendacoes e execucoes dos especialistas Pi. Todo
+finding de IA referencia apenas IDs presentes na evidencia serializada; sem chave
+o report deterministico continua sendo concluido com a limitacao correspondente.
+
 Falhas de coleta podem encerrar a investigation com codigos como:
 
 - `STREAM_DESTINATION_BLOCKED`;
@@ -140,6 +145,12 @@ Falhas de coleta podem encerrar a investigation com codigos como:
 - `STREAM_TOO_MANY_REDIRECTS`;
 - `STREAM_HTTP_ERROR`;
 - `UNSUPPORTED_MANIFEST`.
+
+O runtime padrao bloqueia localhost e redes privadas. Somente o Docker Compose
+local configura o hostname exato `localhost` como alias para o host de
+desenvolvimento; IPs privados literais e redirects para outros destinos privados
+continuam bloqueados. URLs publicas tambem nao podem redirecionar para o alias
+localhost.
 
 ## Erros
 

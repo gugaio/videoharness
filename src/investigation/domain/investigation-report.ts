@@ -1,4 +1,5 @@
 import type { EvidenceBundleV1, EvidenceBundleV2 } from "./evidence.js";
+import type { AiInvestigationResult } from "../ports/investigation-ai.js";
 
 export type PhaseOnePlaceholderReportContent = {
   placeholder: true;
@@ -14,6 +15,7 @@ export type PhaseOnePlaceholderReportContent = {
     level: "not_assessed";
     explanation: string;
   };
+  ai?: AiInvestigationResult;
   generatedBy: "phase-1-lifecycle-fixture";
 };
 

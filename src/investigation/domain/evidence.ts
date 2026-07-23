@@ -88,6 +88,7 @@ export type EvidenceBundleV2 = {
     kind: "init-segment" | "media-segment";
     sizeBytes: number;
     sourceManifestLogicalKey?: string;
+    sampleIndex?: number;
     sequence?: number;
     declaredDuration?: number;
     probe?: {

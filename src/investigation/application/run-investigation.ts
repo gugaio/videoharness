@@ -10,6 +10,7 @@ import type { ArtifactStore } from "../ports/artifact-store.js";
 import type { InvestigationJobRepository } from "../ports/investigation-job.js";
 import type { ManifestCollector } from "../ports/manifest-collector.js";
 import type { MediaProbe, MediaSampleCollector } from "../ports/media-sample-collector.js";
+import type { AiInvestigationResult, InvestigationAI } from "../ports/investigation-ai.js";
 import {
   buildManifestEvidence,
   buildManifestReport,
@@ -25,6 +26,7 @@ export function createInvestigationWorker(input: {
   artifactStore: ArtifactStore;
   mediaCollector?: MediaSampleCollector;
   mediaProbe?: MediaProbe;
+  ai?: InvestigationAI;
   workerId: string;
   leaseMs: number;
   heartbeatMs?: number;
@@ -164,6 +166,34 @@ export function createInvestigationWorker(input: {
           input.leaseMs,
           buildAnalyzingTransition(evidence),
         );
+        let aiResult: AiInvestigationResult | undefined;
+        if (input.ai) {
+          await input.repository.transition(job.id, input.workerId, input.leaseMs, {
+            state: "analyzing",
+            event: {
+              type: "investigation.observation",
+              actor: "AI Investigation Team",
+              message: "Specialists are correlating the deterministic evidence.",
+              payload: { state: "analyzing", stage: "ai_specialists" },
+            },
+          });
+          aiResult = await input.ai.investigate({
+            investigationId: job.investigation.id,
+            ...(job.investigation.problemDescription ? { problemDescription: job.investigation.problemDescription } : {}),
+            evidence,
+          });
+          await input.repository.transition(job.id, input.workerId, input.leaseMs, {
+            state: "analyzing",
+            event: {
+              type: "investigation.observation",
+              actor: "AI Investigation Team",
+              message: aiResult.available
+                ? `${aiResult.agents.filter((agent) => agent.state === "completed").length} AI agent runs completed.`
+                : "AI analysis is unavailable; retaining the deterministic report.",
+              payload: { state: "analyzing", stage: "ai_complete", available: aiResult.available },
+            },
+          });
+        }
         await input.repository.transition(
           job.id,
           input.workerId,
@@ -177,7 +207,7 @@ export function createInvestigationWorker(input: {
           job.id,
           input.workerId,
           randomUUID(),
-          buildManifestReport(job, evidence),
+          buildManifestReport(job, evidence, aiResult),
           {
             type: "investigation.report_ready",
             actor: "Investigator",

@@ -28,6 +28,51 @@ describe("HttpMediaSampleCollector", () => {
     ]);
     expect(requester).toHaveBeenCalledTimes(2);
   });
+
+  it("samples a submitted root manifest when it is already a media playlist", async () => {
+    const requester = vi.fn<PinnedRequester>(async (url) => response(url.pathname));
+    const collector = new HttpMediaSampleCollector(new SafeHttpClient({
+      resolver: async () => [{ address: "93.184.216.34", family: 4 }],
+      requester,
+    }));
+    const text = [
+      "#EXTM3U",
+      "#EXT-X-MEDIA-SEQUENCE:10",
+      "#EXTINF:4,",
+      "segments/first.ts",
+      "#EXTINF:4,",
+      "segments/middle.ts",
+      "#EXTINF:4,",
+      "segments/last.ts",
+      "#EXT-X-ENDLIST",
+    ].join("\n");
+
+    const result = await collector.collect({
+      manifests: [{
+        logicalKey: "manifest/root",
+        role: "root",
+        source: {
+          requestedUrl: "https://stream.example/index.m3u8",
+          finalUrl: "https://stream.example/index.m3u8",
+          statusCode: 200,
+        },
+        content: { bytes: new TextEncoder().encode(text) },
+        inspection: inspectManifest(text, "https://stream.example/index.m3u8"),
+      }],
+    });
+
+    expect(result.limitations).toEqual([]);
+    expect(result.samples.map((sample) => ({
+      logicalKey: sample.logicalKey,
+      sampleIndex: sample.sampleIndex,
+      sequence: sample.sequence,
+    }))).toEqual([
+      { logicalKey: "sample/root/media/0", sampleIndex: 0, sequence: 10 },
+      { logicalKey: "sample/root/media/1", sampleIndex: 1, sequence: 11 },
+      { logicalKey: "sample/root/media/2", sampleIndex: 2, sequence: 12 },
+    ]);
+    expect(requester).toHaveBeenCalledTimes(3);
+  });
 });
 
 function response(body: string): http.IncomingMessage {

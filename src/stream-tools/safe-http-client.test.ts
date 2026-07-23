@@ -56,6 +56,69 @@ describe("SafeHttpClient", () => {
     expect(requester).not.toHaveBeenCalled();
   });
 
+  it("allows only an explicitly configured local development hostname alias", async () => {
+    const resolver = vi.fn(async () => [{ address: "172.17.0.1", family: 4 as const }]);
+    const requester = vi.fn<PinnedRequester>()
+      .mockResolvedValue(response(200, "#EXTM3U", { "content-type": "application/vnd.apple.mpegurl" }));
+    const client = new SafeHttpClient({
+      resolver,
+      requester,
+      allowedPrivateHostnameAliases: { localhost: "host.docker.internal" },
+    });
+
+    const result = await client.getText("http://localhost:8080/index.m3u8");
+
+    expect(resolver).toHaveBeenCalledWith("host.docker.internal");
+    expect(requester.mock.calls[0]?.[0].hostname).toBe("localhost");
+    expect(requester.mock.calls[0]?.[1].address).toBe("172.17.0.1");
+    expect(result.text).toBe("#EXTM3U");
+  });
+
+  it("keeps literal private IPs blocked when a localhost alias is configured", async () => {
+    const requester = vi.fn<PinnedRequester>();
+    const client = new SafeHttpClient({
+      requester,
+      allowedPrivateHostnameAliases: { localhost: "host.docker.internal" },
+    });
+
+    await expect(client.getText("http://127.0.0.1:8080/index.m3u8"))
+      .rejects.toMatchObject({ code: "STREAM_DESTINATION_BLOCKED", retryable: false });
+    expect(requester).not.toHaveBeenCalled();
+  });
+
+  it("revalidates redirects away from the configured localhost alias", async () => {
+    const requester = vi.fn<PinnedRequester>()
+      .mockResolvedValueOnce(response(302, "", { location: "http://127.0.0.1:8080/private.m3u8" }));
+    const client = new SafeHttpClient({
+      resolver: async () => [{ address: "172.17.0.1", family: 4 }],
+      requester,
+      allowedPrivateHostnameAliases: { localhost: "host.docker.internal" },
+    });
+
+    await expect(client.getText("http://localhost:8080/index.m3u8"))
+      .rejects.toMatchObject({ code: "STREAM_DESTINATION_BLOCKED", retryable: false });
+    expect(requester).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not allow a public request to redirect into the localhost alias", async () => {
+    const resolver = vi.fn(async (hostname: string) => [{
+      address: hostname === "stream.example" ? "93.184.216.34" : "172.17.0.1",
+      family: 4 as const,
+    }]);
+    const requester = vi.fn<PinnedRequester>()
+      .mockResolvedValueOnce(response(302, "", { location: "http://localhost:8080/private.m3u8" }));
+    const client = new SafeHttpClient({
+      resolver,
+      requester,
+      allowedPrivateHostnameAliases: { localhost: "host.docker.internal" },
+    });
+
+    await expect(client.getText("https://stream.example/master.m3u8"))
+      .rejects.toMatchObject({ code: "STREAM_DESTINATION_BLOCKED", retryable: false });
+    expect(requester).toHaveBeenCalledTimes(1);
+    expect(resolver).toHaveBeenLastCalledWith("localhost");
+  });
+
   it("revalidates redirects and pins each request to its validated address", async () => {
     const resolver = vi.fn(async (hostname: string) => [{
       address: hostname === "first.example" ? "93.184.216.34" : "1.1.1.1",

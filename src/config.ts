@@ -12,10 +12,19 @@ const EnvironmentSchema = z.object({
   VIDEO_HARNESS_WORKER_POLL_MS: z.coerce.number().int().min(250).max(60_000).default(2_000),
   VIDEO_HARNESS_WORKER_LEASE_MS: z.coerce.number().int().min(3_000).max(300_000).default(30_000),
   VIDEO_HARNESS_STREAM_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
+  VIDEO_HARNESS_STREAM_LOCALHOST_ALIAS: z.string().trim()
+    .regex(/^[a-zA-Z0-9.-]+$/, "Localhost alias must be a hostname or IP address")
+    .optional()
+    .transform((value) => value || undefined),
   VIDEO_HARNESS_MANIFEST_MAX_BYTES: z.coerce.number().int().min(1_024).max(10_485_760).default(1_048_576),
-  VIDEO_HARNESS_MEDIA_SAMPLE_MAX_BYTES: z.coerce.number().int().min(1_024).max(33_554_432).default(8_388_608),
-  VIDEO_HARNESS_MEDIA_SAMPLE_MAX_TOTAL_BYTES: z.coerce.number().int().min(1_024).max(67_108_864).default(16_777_216),
+  VIDEO_HARNESS_MEDIA_SAMPLE_MAX_BYTES: z.coerce.number().int().min(1_024).max(33_554_432).default(20_971_520),
+  VIDEO_HARNESS_MEDIA_SAMPLE_MAX_TOTAL_BYTES: z.coerce.number().int().min(1_024).max(67_108_864).default(20_971_520),
   VIDEO_HARNESS_FFPROBE_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
+  VIDEO_HARNESS_AI_PROVIDER: z.string().trim().min(1).default("openai"),
+  VIDEO_HARNESS_AI_API_URL: z.string().trim().url().default("https://api.openai.com/v1/chat/completions"),
+  VIDEO_HARNESS_AI_MODEL: z.string().trim().min(1).default("gpt-5.5"),
+  VIDEO_HARNESS_AI_API_KEY: z.string().trim().optional().transform((value) => value || undefined),
+  VIDEO_HARNESS_AI_TIMEOUT_MS: z.coerce.number().int().min(5_000).max(180_000).default(45_000),
   VIDEO_HARNESS_DATA_DIR: z.string().trim().min(1).default("./.video-harness-data"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 });
@@ -28,10 +37,16 @@ export type VideoHarnessConfig = {
   workerPollMs: number;
   workerLeaseMs: number;
   streamTimeoutMs: number;
+  streamLocalhostAlias?: string;
   manifestMaxBytes: number;
   mediaSampleMaxBytes: number;
   mediaSampleMaxTotalBytes: number;
   ffprobeTimeoutMs: number;
+  aiProvider: string;
+  aiApiUrl: string;
+  aiModel: string;
+  aiApiKey?: string;
+  aiTimeoutMs: number;
   dataDir: string;
   nodeEnv: "development" | "test" | "production";
 };
@@ -46,10 +61,18 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): VideoH
     workerPollMs: parsed.VIDEO_HARNESS_WORKER_POLL_MS,
     workerLeaseMs: parsed.VIDEO_HARNESS_WORKER_LEASE_MS,
     streamTimeoutMs: parsed.VIDEO_HARNESS_STREAM_TIMEOUT_MS,
+    ...(parsed.VIDEO_HARNESS_STREAM_LOCALHOST_ALIAS
+      ? { streamLocalhostAlias: parsed.VIDEO_HARNESS_STREAM_LOCALHOST_ALIAS }
+      : {}),
     manifestMaxBytes: parsed.VIDEO_HARNESS_MANIFEST_MAX_BYTES,
     mediaSampleMaxBytes: parsed.VIDEO_HARNESS_MEDIA_SAMPLE_MAX_BYTES,
     mediaSampleMaxTotalBytes: parsed.VIDEO_HARNESS_MEDIA_SAMPLE_MAX_TOTAL_BYTES,
     ffprobeTimeoutMs: parsed.VIDEO_HARNESS_FFPROBE_TIMEOUT_MS,
+    aiProvider: parsed.VIDEO_HARNESS_AI_PROVIDER,
+    aiApiUrl: parsed.VIDEO_HARNESS_AI_API_URL,
+    aiModel: parsed.VIDEO_HARNESS_AI_MODEL,
+    ...(parsed.VIDEO_HARNESS_AI_API_KEY ? { aiApiKey: parsed.VIDEO_HARNESS_AI_API_KEY } : {}),
+    aiTimeoutMs: parsed.VIDEO_HARNESS_AI_TIMEOUT_MS,
     dataDir: path.resolve(parsed.VIDEO_HARNESS_DATA_DIR),
     nodeEnv: parsed.NODE_ENV,
   };

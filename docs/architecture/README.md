@@ -175,6 +175,9 @@ prompts/
 - URLs aceitam somente HTTP(S) e nao podem conter credenciais embutidas.
 - Todos os resultados DNS precisam ser publicos; resposta mista publica/privada e
   bloqueada.
+- O Compose local configura somente `localhost` como alias explicito para
+  `host.docker.internal`; esse bypass nao existe no runtime padrao nem autoriza
+  IPs privados literais.
 - A conexao usa diretamente o IP validado, preservando `Host` e SNI, para evitar
   uma segunda resolucao vulneravel a DNS rebinding.
 - Cada redirect e manual, limitado e passa novamente pela validacao completa.
@@ -191,8 +194,10 @@ prompts/
 - No maximo uma rendition de audio do grupo vinculado e coletada, preferindo
   `DEFAULT=YES`, depois `AUTOSELECT=YES` e por fim a ordem da master.
 - O lote e limitado a root + uma variant + uma rendition de audio.
-- Subtitles, outras variants e segmentos permanecem somente como descritores ate
-  uma hipotese justificar coleta adicional.
+- A playlist media selecionada, ou o root quando ele ja e uma media playlist, tem
+  segmentos de inicio, meio e fim amostrados.
+- Subtitles e outras variants permanecem somente como descritores ate uma
+  hipotese justificar coleta adicional.
 
 ## Fases
 

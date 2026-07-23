@@ -4,14 +4,14 @@ Status: **em andamento**
 
 ## Objetivo
 
-Substituir o pipeline placeholder por coleta e analise real de streams.
+Substituir o pipeline placeholder por coleta e analise real de HLS MPEG-TS.
 
 ## Escopo
 
 - Importacao controlada das partes necessarias do VHS.
 - [x] Deteccao inicial HLS e DASH.
-- Clone/amostragem limitada.
-- FFprobe e MediaInfo.
+- Amostragem limitada de HLS MPEG-TS.
+- FFprobe estruturado; MediaInfo fica posterior ao MVP.
 - Manifest, codec, timeline, GOP e delivery evidence.
 - [x] Evidence bundle v1 para o root manifest.
 - [x] Evidence bundle v2 preparado para multiplos manifests e media samples.
@@ -22,11 +22,14 @@ Substituir o pipeline placeholder por coleta e analise real de streams.
 - [x] Selecao limitada de uma variant e uma rendition de audio vinculada.
 - [x] Coleta protegida e persistencia dos manifests HLS derivados.
 - [x] Amostragem limitada de init/media segments HLS e FFprobe estruturado local.
+- [x] Tres posicoes deterministicas por playlist: inicio, meio e fim.
+- [x] Media playlist submetida diretamente e amostrada a partir do root.
+- [x] Compose local acessa `localhost` do host por um alias SSRF restrito.
 
 ## Proxima fatia recomendada
 
-1. Validar a coleta HLS em streams reais com MPEG-TS, CMAF e audio separado.
-2. Aprofundar representations DASH somente depois da fatia HLS ponta a ponta.
+1. Validar HLS MPEG-TS com fixtures e smoke real.
+2. Integrar especialistas Pi e Lead Investigator sobre a evidencia coletada.
 
 ## Definition of Done
 
@@ -60,11 +63,18 @@ Substituir o pipeline placeholder por coleta e analise real de streams.
 
 ## Amostragem HLS implementada
 
-- No maximo um media segment por variant/rendition selecionada e seu init segment
-  quando declarado por `EXT-X-MAP`.
-- Cada resposta e limitada a 8 MiB por padrao e a soma da amostra a 16 MiB;
+- Segmentos de inicio, meio e fim por variant/rendition selecionada, ou pelo root
+  quando ele ja e uma media playlist, e seu init segment quando declarado por
+  `EXT-X-MAP`.
+- Cada resposta e limitada a 20 MiB por padrao e a soma da amostra a 20 MiB;
   ambos os limites sao configuraveis pelo worker.
 - FFprobe recebe somente arquivo temporario local, usa argumentos estruturados,
   timeout e limite de output. O arquivo e removido no fim do probe.
 - Streams com criptografia declarada ou byte ranges sao preservados como uma
   limitacao explicita nesta primeira fatia; nao ha download de chaves.
+
+## Corte do MVP
+
+- Suportado: HLS e container MPEG-TS sem criptografia, com uma variant selecionada
+  e amostras de inicio/meio/fim.
+- Fora do MVP: DASH, CMAF/fMP4, byte ranges, DRM, LL-HLS e comparacao de ladder.

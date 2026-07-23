@@ -6,6 +6,7 @@ import type {
   ManifestCollection,
 } from "../ports/manifest-collector.js";
 import type { MediaSample } from "../ports/media-sample-collector.js";
+import type { AiInvestigationResult } from "../ports/investigation-ai.js";
 
 export function buildManifestEvidence(collection: ManifestCollection): EvidenceBundleV2 {
   const root = collection.manifests.find((manifest) => manifest.role === "root");
@@ -78,6 +79,10 @@ export function buildManifestEvidence(collection: ManifestCollection): EvidenceB
         ? [
           "One representative HLS variant and at most one linked audio rendition were selected deterministically.",
         ]
+        : root.inspection.protocol === "hls" && root.inspection.kind === "media"
+          ? [
+            "The submitted HLS media playlist was sampled directly; no master playlist or alternate variants were available.",
+          ]
         : [
           "Only the submitted manifest was collected in this investigation phase.",
         ]),
@@ -92,6 +97,7 @@ export function buildManifestEvidence(collection: ManifestCollection): EvidenceB
 export function buildManifestReport(
   job: ClaimedInvestigationJob,
   evidence: EvidenceBundleV2,
+  ai?: AiInvestigationResult,
 ): InvestigationReportContent {
   const rootManifest = evidence.manifests[0]!;
   const selectedVariant = evidence.hls?.selection
@@ -129,6 +135,7 @@ export function buildManifestReport(
         status: "observed" as const,
         explanation: observation.message,
       }))),
+      ...(ai?.findings.map((finding) => ({ title: finding.title, status: finding.severity === "info" ? "observed" as const : "limitation" as const, explanation: `${finding.explanation} Evidence: ${finding.evidenceIds.join(", ")}.` })) ?? []),
       {
         title: "Current analysis boundary",
         status: "limitation",
@@ -137,9 +144,12 @@ export function buildManifestReport(
     ],
     confidence: {
       level: "limited",
-      explanation: "The manifest and a bounded media sample are directly observed, but root-cause confidence requires broader playback and delivery evidence.",
+      explanation: ai?.likelyCause
+        ? `AI synthesis: ${ai.likelyCause}`
+        : "The manifest and a bounded media sample are directly observed, but root-cause confidence requires broader playback and delivery evidence.",
     },
     evidence,
+    ...(ai ? { ai } : {}),
     generatedBy: "deterministic-media-v1",
   };
 }
@@ -152,6 +162,7 @@ function toMediaSampleEvidence(sample: MediaSample): EvidenceBundleV2["mediaSamp
     kind: sample.kind,
     sizeBytes: sample.artifact.sizeBytes,
     sourceManifestLogicalKey: sample.sourceManifestLogicalKey,
+    ...(sample.sampleIndex === undefined ? {} : { sampleIndex: sample.sampleIndex }),
     ...(sample.sequence === undefined ? {} : { sequence: sample.sequence }),
     ...(sample.declaredDuration === undefined ? {} : { declaredDuration: sample.declaredDuration }),
     ...(sample.probe ? { probe: sample.probe } : {}),
@@ -165,10 +176,12 @@ function describeProbe(sample: EvidenceBundleV2["mediaSamples"][number]): string
 }
 
 function findAvOffset(samples: MediaSample[]): number | undefined {
-  const video = samples.flatMap((sample) => sample.probe?.tracks ?? []).find((track) => track.kind === "video" && track.firstPts !== undefined);
-  const audio = samples.flatMap((sample) => sample.probe?.tracks ?? []).find((track) => track.kind === "audio" && track.firstPts !== undefined);
-  if (video?.firstPts === undefined || audio?.firstPts === undefined) return undefined;
-  return audio.firstPts - video.firstPts;
+  for (const sample of samples.filter((entry) => entry.kind === "media-segment")) {
+    const video = sample.probe?.tracks.find((track) => track.kind === "video" && track.firstPts !== undefined);
+    const audio = sample.probe?.tracks.find((track) => track.kind === "audio" && track.firstPts !== undefined);
+    if (video?.firstPts !== undefined && audio?.firstPts !== undefined) return audio.firstPts - video.firstPts;
+  }
+  return undefined;
 }
 
 function formatOffset(offset: number): string {

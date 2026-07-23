@@ -1,6 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { CaseHero } from "../components/CaseHero";
+import { InvestigationFeed } from "../components/InvestigationFeed";
+import { InvestigationReportView } from "../components/InvestigationReport";
 import {
   getInvestigation,
   getInvestigationReport,
@@ -48,116 +51,57 @@ export function InvestigationPage(): JSX.Element {
   }, [investigationId]);
 
   return (
-    <main className="min-h-screen bg-harness-bg text-harness-text">
-      <div className="mx-auto w-full max-w-4xl px-5 pb-20 pt-6 sm:px-8">
+    <main className="relative min-h-screen bg-harness-bg text-harness-text">
+      <AuroraBackdrop />
+      <div className="relative mx-auto w-full max-w-3xl px-5 pb-24 pt-6 sm:px-8">
         <header className="flex items-center justify-between">
-          <Link className="flex items-center gap-3 text-sm font-semibold" to="/">
-            <span className="grid h-8 w-8 place-items-center rounded-lg border border-white/10 bg-white/[0.06] font-mono text-xs">VHS</span>
-            <span className="hidden sm:inline">Video Harness Space</span>
+          <Link className="group flex items-center gap-3 text-sm font-semibold" to="/">
+            <span className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-sky-400/80 via-violet-500/80 to-fuchsia-500/80 font-mono text-[11px] font-bold text-white shadow-lg shadow-violet-500/20 transition group-hover:brightness-110">
+              V
+            </span>
+            <span className="hidden text-white/85 sm:inline">Video Harness Space</span>
           </Link>
-          <span className="flex items-center gap-2 text-xs text-harness-muted">
-            <span className={`h-2 w-2 rounded-full ${connected ? "bg-harness-success" : "bg-amber-300"}`} />
+          <span className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/60">
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                connected ? "bg-emerald-400 animate-pulse-dot" : "bg-amber-300"
+              }`}
+            />
             {connected ? "Live" : "Reconnecting"}
           </span>
         </header>
 
-        {investigation.isLoading && <p className="mt-24 text-center text-harness-muted">Opening investigation…</p>}
+        {investigation.isLoading && (
+          <p className="mt-24 text-center text-sm text-harness-muted">Opening investigation…</p>
+        )}
         {investigation.error && (
-          <div className="mt-20 rounded-2xl border border-rose-300/20 bg-rose-300/5 p-6 text-rose-200">
+          <div className="mt-20 rounded-2xl border border-rose-300/20 bg-rose-300/5 p-6 text-sm text-rose-200">
             {investigation.error.message}
           </div>
         )}
 
         {investigation.data && (
-          <>
-            <section className="mt-14 rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-panel sm:p-8">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="rounded-full border border-blue-300/20 bg-blue-300/10 px-3 py-1 text-xs capitalize text-blue-200">
-                  {investigation.data.state}
-                </span>
-                <span className="font-mono text-xs text-white/30">{investigation.data.id}</span>
-              </div>
-              <h1 className="mt-5 text-2xl font-semibold tracking-tight sm:text-3xl">
-                {investigation.data.state === "completed"
-                  ? "Investigation completed"
-                  : investigation.data.state === "failed"
-                    ? "Investigation could not be completed"
-                    : "Investigation in progress"}
-              </h1>
-              <p className="mt-3 break-all font-mono text-sm text-harness-muted">{investigation.data.sourceUrl}</p>
-              {investigation.data.problemDescription && (
-                <div className="mt-6 border-l border-white/20 pl-4">
-                  <p className="text-xs uppercase tracking-[0.18em] text-white/35">Problem reported</p>
-                  <p className="mt-2 leading-7 text-white/85">{investigation.data.problemDescription}</p>
-                </div>
-              )}
-            </section>
-
-            {report.data && (
-              <section className="mt-10 rounded-3xl border border-amber-200/15 bg-amber-200/[0.04] p-6 sm:p-8">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-xs uppercase tracking-[0.2em] text-amber-100/55">
-                    {report.data.content.placeholder ? "Technical fixture report" : "Deterministic evidence report"}
-                  </p>
-                  <span className="rounded-full border border-amber-200/15 px-3 py-1 text-[10px] uppercase tracking-wider text-amber-100/55">
-                    {report.data.content.placeholder ? "Phase 1 placeholder" : "Observed evidence"}
-                  </span>
-                </div>
-                <h2 className="mt-4 text-2xl font-medium">{report.data.content.title}</h2>
-                <p className="mt-3 max-w-2xl leading-7 text-harness-muted">{report.data.content.summary}</p>
-                <div className="mt-6 grid gap-3 sm:grid-cols-2">
-                  {report.data.content.findings.map((finding) => (
-                    <article className="rounded-2xl border border-white/10 bg-black/15 p-5" key={finding.title}>
-                      <p className="text-sm font-medium">{finding.title}</p>
-                      <p className="mt-2 text-sm leading-6 text-harness-muted">{finding.explanation}</p>
-                    </article>
-                  ))}
-                  <article className="rounded-2xl border border-white/10 bg-black/15 p-5">
-                    <p className="text-sm font-medium">
-                      {report.data.content.placeholder ? "Confidence not assessed" : "Confidence is limited"}
-                    </p>
-                    <p className="mt-2 text-sm leading-6 text-harness-muted">{report.data.content.confidence.explanation}</p>
-                  </article>
-                </div>
-              </section>
-            )}
-
-            <section className="mt-10">
-              <div className="flex items-end justify-between gap-4">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-white/35">Investigation timeline</p>
-                  <h2 className="mt-2 text-xl font-medium">What the team has observed</h2>
-                </div>
-                <span className="text-xs text-harness-muted">{events.length} event{events.length === 1 ? "" : "s"}</span>
-              </div>
-
-              <div className="relative mt-7 space-y-4 before:absolute before:bottom-5 before:left-[19px] before:top-5 before:w-px before:bg-white/10">
-                {events.map((event) => <TimelineEvent event={event} key={event.id} />)}
-                {events.length === 0 && (
-                  <div className="rounded-2xl border border-dashed border-white/10 p-6 text-sm text-harness-muted">
-                    Restoring persisted investigation events…
-                  </div>
-                )}
-              </div>
-            </section>
-          </>
+          <div className="mt-8">
+            <CaseHero investigation={investigation.data} />
+            <InvestigationFeed
+              connected={connected}
+              events={events}
+              state={investigation.data.state}
+            />
+            {report.data && <InvestigationReportView report={report.data} />}
+          </div>
         )}
       </div>
     </main>
   );
 }
 
-function TimelineEvent({ event }: { event: InvestigationEvent }): JSX.Element {
+function AuroraBackdrop(): JSX.Element {
   return (
-    <article className="relative pl-14">
-      <span className="absolute left-1 top-3 grid h-8 w-8 place-items-center rounded-full border border-emerald-300/20 bg-emerald-300/10 text-emerald-200">✓</span>
-      <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-5">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-xs font-medium uppercase tracking-[0.16em] text-white/40">{event.actor}</span>
-          <time className="text-xs text-white/30">{new Date(event.createdAt).toLocaleTimeString()}</time>
-        </div>
-        <p className="mt-2 text-sm leading-6 text-white/85">{event.message}</p>
-      </div>
-    </article>
+    <div aria-hidden="true" className="pointer-events-none fixed inset-0 overflow-hidden">
+      <div className="absolute -top-40 left-1/2 h-[420px] w-[720px] -translate-x-1/2 animate-aurora-drift rounded-full bg-gradient-to-r from-sky-500/[0.07] via-violet-500/[0.08] to-fuchsia-500/[0.06] blur-3xl" />
+      <div className="absolute right-[-180px] top-1/3 h-[380px] w-[380px] animate-aurora-drift rounded-full bg-violet-500/[0.05] blur-3xl [animation-delay:-8s]" />
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/15 to-transparent" />
+    </div>
   );
 }
