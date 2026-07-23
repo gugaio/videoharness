@@ -21,6 +21,8 @@ export type SafeTextResponse = {
   text: string;
 };
 
+export type SafeBinaryResponse = Omit<SafeTextResponse, "text">;
+
 export class SafeHttpClient {
   private readonly resolver: DnsResolver;
   private readonly timeoutMs: number;
@@ -43,6 +45,11 @@ export class SafeHttpClient {
   }
 
   async getText(value: string): Promise<SafeTextResponse> {
+    const response = await this.getBytes(value);
+    return { ...response, text: new TextDecoder("utf-8", { fatal: false }).decode(response.bytes) };
+  }
+
+  async getBytes(value: string): Promise<SafeBinaryResponse> {
     const requestedUrl = parseStreamUrl(value).toString();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -66,7 +73,7 @@ export class SafeHttpClient {
     currentValue: string,
     redirectCount: number,
     signal: AbortSignal,
-  ): Promise<SafeTextResponse> {
+  ): Promise<SafeBinaryResponse> {
     const url = parseStreamUrl(currentValue);
     const addresses = await raceWithAbort(this.resolveAndValidate(url.hostname), signal);
     const target = addresses[0]!;
@@ -99,7 +106,7 @@ export class SafeHttpClient {
       response.destroy();
       throw new StreamCollectionError(
         "STREAM_RESPONSE_TOO_LARGE",
-        "The stream manifest exceeds the allowed response size",
+        "The stream response exceeds the allowed response size",
         false,
       );
     }
@@ -112,7 +119,6 @@ export class SafeHttpClient {
       statusCode,
       ...(contentType ? { contentType } : {}),
       bytes,
-      text: new TextDecoder("utf-8", { fatal: false }).decode(bytes),
     };
   }
 
@@ -243,7 +249,7 @@ function readLimited(
         response.destroy();
         finish(() => reject(new StreamCollectionError(
           "STREAM_RESPONSE_TOO_LARGE",
-          "The stream manifest exceeds the allowed response size",
+          "The stream response exceeds the allowed response size",
           false,
         )));
         return;

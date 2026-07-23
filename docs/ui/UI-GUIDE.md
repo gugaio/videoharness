@@ -93,9 +93,9 @@ O report deve funcionar como pagina compartilhavel e como documento de engenhari
 - A fixture da Fase 1 possui hierarquia visual propria e rotulo explicito de
   placeholder tecnico.
 - Confidence permanece `not_assessed`; a UI nao inventa root cause ou evidencia.
-- Reports da Fase 2 sao identificados como `Deterministic manifest report` e
-  `Observed evidence`, mantendo confidence `limited` enquanto segmentos e media
-  ainda nao foram analisados.
+- Reports da Fase 2 sao identificados como `Deterministic evidence report` e
+  `Observed evidence`. A amostra de media adiciona findings de codecs/tracks sem
+  apresentar a selecao limitada como causa raiz; confidence permanece `limited`.
 - Masters HLS exibem um finding adicional com a variant representativa selecionada
   e o numero real de manifests preservados; a regra de selecao nao e apresentada
   como root cause.

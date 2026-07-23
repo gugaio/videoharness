@@ -97,7 +97,7 @@ export function InvestigationPage(): JSX.Element {
               <section className="mt-10 rounded-3xl border border-amber-200/15 bg-amber-200/[0.04] p-6 sm:p-8">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="text-xs uppercase tracking-[0.2em] text-amber-100/55">
-                    {report.data.content.placeholder ? "Technical fixture report" : "Deterministic manifest report"}
+                    {report.data.content.placeholder ? "Technical fixture report" : "Deterministic evidence report"}
                   </p>
                   <span className="rounded-full border border-amber-200/15 px-3 py-1 text-[10px] uppercase tracking-wider text-amber-100/55">
                     {report.data.content.placeholder ? "Phase 1 placeholder" : "Observed evidence"}

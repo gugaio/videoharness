@@ -25,7 +25,10 @@ redirects automaticamente e nao oferecia a protecao SSRF exigida pelo produto.
 - Adaptacoes: removidos fetch, FFprobe, clone, filesystem e conceitos de origin;
   parsing passou a ser funcao pura; URLs derivadas usam exclusivamente o
   `SafeHttpClient`; a amostragem seleciona maior `BANDWIDTH` com desempate pela
-  ordem da master e no maximo uma rendition de audio `DEFAULT` vinculada.
+  ordem da master e no maximo uma rendition de audio `DEFAULT` vinculada. Em
+  2026-07-22 o parser local passou a extrair `EXT-X-MAP`, `EXT-X-BYTERANGE`,
+  `EXT-X-KEY` e descritores de segmentos; o adapter de FFprobe foi escrito e
+  mantido neste repositorio, sem importar o runtime do VHS.
 
 O Video Harness mantem essa copia autonomamente durante o MVP. Nao existe
 dependencia de runtime nem sincronizacao automatica com o VHS.

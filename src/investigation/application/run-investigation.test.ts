@@ -82,7 +82,7 @@ describe("investigation worker", () => {
       claimedJob.id,
       "worker-test",
       expect.any(String),
-      expect.objectContaining({ placeholder: false, generatedBy: "deterministic-manifest-v2" }),
+      expect.objectContaining({ placeholder: false, generatedBy: "deterministic-media-v1" }),
       expect.objectContaining({ type: "investigation.report_ready" }),
     );
     expect(repository.fail).not.toHaveBeenCalled();

@@ -94,6 +94,19 @@ const EvidenceBundleV2Schema = z.object({
     logicalKey: z.string().min(1),
     kind: z.enum(["init-segment", "media-segment"]),
     sizeBytes: z.number().int().nonnegative(),
+    sourceManifestLogicalKey: z.string().min(1).optional(),
+    sequence: z.number().int().nonnegative().optional(),
+    declaredDuration: z.number().nonnegative().optional(),
+    probe: z.object({
+      format: z.string().optional(),
+      duration: z.number().nonnegative().optional(),
+      tracks: z.array(z.object({
+        kind: z.enum(["video", "audio", "other"]), codec: z.string().optional(), duration: z.number().nonnegative().optional(),
+        firstPts: z.number().optional(), lastPts: z.number().optional(), width: z.number().int().nonnegative().optional(),
+        height: z.number().int().nonnegative().optional(), frameRate: z.string().optional(), sampleRate: z.number().int().nonnegative().optional(),
+        channels: z.number().int().nonnegative().optional(),
+      })),
+    }).optional(),
   })),
   hls: z.object({
     variants: z.array(z.object({
@@ -178,10 +191,16 @@ const ManifestReportContentV2Schema = ManifestReportContentBaseSchema.extend({
   generatedBy: z.literal("deterministic-manifest-v2"),
 });
 
+const MediaReportContentSchema = ManifestReportContentBaseSchema.extend({
+  evidence: EvidenceBundleV2Schema,
+  generatedBy: z.literal("deterministic-media-v1"),
+});
+
 export const InvestigationReportContentSchema = z.union([
   PhaseOneReportContentSchema,
   ManifestReportContentV1Schema,
   ManifestReportContentV2Schema,
+  MediaReportContentSchema,
 ]);
 
 export const InvestigationReportSchema = z.object({

@@ -21,14 +21,12 @@ Substituir o pipeline placeholder por coleta e analise real de streams.
 - [x] Parsing profundo de variants e renditions HLS.
 - [x] Selecao limitada de uma variant e uma rendition de audio vinculada.
 - [x] Coleta protegida e persistencia dos manifests HLS derivados.
+- [x] Amostragem limitada de init/media segments HLS e FFprobe estruturado local.
 
 ## Proxima fatia recomendada
 
-1. Extrair URLs de init/media segments da variant HLS selecionada.
-2. Baixar uma amostra pequena com limite total de bytes e quantidade.
-3. Executar FFprobe com binario/argumentos estruturados e timeout.
-4. Produzir evidence de codecs, tracks, duracao e timestamps.
-5. Aprofundar representations DASH somente depois da fatia HLS ponta a ponta.
+1. Validar a coleta HLS em streams reais com MPEG-TS, CMAF e audio separado.
+2. Aprofundar representations DASH somente depois da fatia HLS ponta a ponta.
 
 ## Definition of Done
 
@@ -59,3 +57,14 @@ Substituir o pipeline placeholder por coleta e analise real de streams.
   invariante real.
 - Nomes baseados somente na etapa do pipeline, como `Collected` ou `Promoted`, nao
   fazem parte da arquitetura da fase.
+
+## Amostragem HLS implementada
+
+- No maximo um media segment por variant/rendition selecionada e seu init segment
+  quando declarado por `EXT-X-MAP`.
+- Cada resposta e limitada a 8 MiB por padrao e a soma da amostra a 16 MiB;
+  ambos os limites sao configuraveis pelo worker.
+- FFprobe recebe somente arquivo temporario local, usa argumentos estruturados,
+  timeout e limite de output. O arquivo e removido no fim do probe.
+- Streams com criptografia declarada ou byte ranges sao preservados como uma
+  limitacao explicita nesta primeira fatia; nao ha download de chaves.

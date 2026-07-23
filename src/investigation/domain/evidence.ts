@@ -87,6 +87,25 @@ export type EvidenceBundleV2 = {
     logicalKey: string;
     kind: "init-segment" | "media-segment";
     sizeBytes: number;
+    sourceManifestLogicalKey?: string;
+    sequence?: number;
+    declaredDuration?: number;
+    probe?: {
+      format?: string;
+      duration?: number;
+      tracks: Array<{
+        kind: "video" | "audio" | "other";
+        codec?: string;
+        duration?: number;
+        firstPts?: number;
+        lastPts?: number;
+        width?: number;
+        height?: number;
+        frameRate?: string;
+        sampleRate?: number;
+        channels?: number;
+      }>;
+    };
   }>;
   hls?: {
     variants: HlsVariantEvidence[];

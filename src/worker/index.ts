@@ -2,6 +2,8 @@ import { loadConfig } from "../config.js";
 import { createDatabasePool } from "../database/client.js";
 import { logger } from "../infra/logger.js";
 import { FilesystemArtifactStore } from "../investigation/adapters/filesystem-artifact-store.js";
+import { FfprobeMediaProbe } from "../investigation/adapters/ffprobe-media-probe.js";
+import { HttpMediaSampleCollector } from "../investigation/adapters/http-media-sample-collector.js";
 import { HttpManifestCollector } from "../investigation/adapters/http-manifest-collector.js";
 import { PostgresInvestigationJobRepository } from "../investigation/adapters/postgres-investigation-job.js";
 import { createInvestigationWorker } from "../investigation/application/run-investigation.js";
@@ -15,10 +17,17 @@ const collector = new HttpManifestCollector(new SafeHttpClient({
   timeoutMs: config.streamTimeoutMs,
   maxBytes: config.manifestMaxBytes,
 }));
+const mediaCollector = new HttpMediaSampleCollector(new SafeHttpClient({
+  timeoutMs: config.streamTimeoutMs,
+  maxBytes: config.mediaSampleMaxBytes,
+}), { maxTotalBytes: config.mediaSampleMaxTotalBytes });
+const mediaProbe = new FfprobeMediaProbe({ dataDirectory: config.dataDir, timeoutMs: config.ffprobeTimeoutMs });
 const worker = createInvestigationWorker({
   repository,
   artifactStore,
   collector,
+  mediaCollector,
+  mediaProbe,
   workerId: config.workerId,
   leaseMs: config.workerLeaseMs,
 });
@@ -39,6 +48,9 @@ logger.info("worker.started", {
   leaseMs: config.workerLeaseMs,
   streamTimeoutMs: config.streamTimeoutMs,
   manifestMaxBytes: config.manifestMaxBytes,
+  mediaSampleMaxBytes: config.mediaSampleMaxBytes,
+  mediaSampleMaxTotalBytes: config.mediaSampleMaxTotalBytes,
+  ffprobeTimeoutMs: config.ffprobeTimeoutMs,
 });
 
 while (!shutdownRequested) {

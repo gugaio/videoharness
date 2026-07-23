@@ -126,7 +126,11 @@ manifests, media samples, observations e limitations. Reports anteriores com
 Para masters HLS, o bundle inclui `hls.variants`, `hls.renditions` e
 `hls.selection`. `manifests` pode conter os logical keys `manifest/root`,
 `manifest/variant/0` e `manifest/rendition/audio/0`. A selecao atual usa maior
-bandwidth e no maximo uma rendition de audio vinculada; nenhum segmento e baixado.
+bandwidth e no maximo uma rendition de audio vinculada. O report mais recente usa
+`generatedBy=deterministic-media-v1`: alem dos manifests, `mediaSamples` pode
+trazer init/media artifacts, sequencia, duracao declarada e o resultado
+estruturado do FFprobe (container, tracks, codecs e timestamps). A amostra e
+limitada e nao representa uma simulacao completa de playback.
 
 Falhas de coleta podem encerrar a investigation com codigos como:
 

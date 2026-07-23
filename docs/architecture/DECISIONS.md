@@ -172,3 +172,21 @@ Consequencia:
 - O pipeline fica mais direto e o ponto de enriquecimento permanece explicito.
 - Novos tipos por etapa exigem uma justificativa concreta de fronteira ou
   invariante, nao apenas conveniencia nominal.
+
+## 2026-07-22 - Amostra HLS local antes do FFprobe
+
+Decisao:
+
+- O worker baixa no maximo um segmento de cada playlist HLS selecionada e o init
+  segment associado, quando existir.
+- FFprobe recebe somente bytes gravados temporariamente no workspace isolado da
+  investigation; URLs externas nunca sao passadas ao processo.
+- Criptografia declarada e byte ranges permanecem como limitacoes da primeira
+  fatia, em vez de buscar chaves ou baixar ranges sem uma policy dedicada.
+
+Motivo:
+
+- A amostra produz codecs, tracks e timestamps observados com custo e superficie
+  de rede previsiveis.
+- Separar a rede protegida do processo de midia evita abrir uma segunda fronteira
+  de SSRF no FFprobe.

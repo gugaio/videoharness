@@ -9,6 +9,7 @@ import {
 import type { ArtifactStore } from "../ports/artifact-store.js";
 import type { InvestigationJobRepository } from "../ports/investigation-job.js";
 import type { ManifestCollector } from "../ports/manifest-collector.js";
+import type { MediaProbe, MediaSampleCollector } from "../ports/media-sample-collector.js";
 import {
   buildManifestEvidence,
   buildManifestReport,
@@ -22,6 +23,8 @@ export function createInvestigationWorker(input: {
   repository: InvestigationJobRepository;
   collector: ManifestCollector;
   artifactStore: ArtifactStore;
+  mediaCollector?: MediaSampleCollector;
+  mediaProbe?: MediaProbe;
   workerId: string;
   leaseMs: number;
   heartbeatMs?: number;
@@ -60,6 +63,24 @@ export function createInvestigationWorker(input: {
           buildValidatingTransition(job),
         );
         const collection = await input.collector.collect(job.investigation.sourceUrl);
+        if (input.mediaCollector && input.mediaProbe) {
+          const collectedSamples = await input.mediaCollector.collect(collection);
+          collection.mediaSamples = collectedSamples.samples;
+          collection.mediaLimitations = collectedSamples.limitations;
+          for (const sample of collection.mediaSamples.filter((entry) => entry.kind === "media-segment")) {
+            const init = collection.mediaSamples.find((entry) =>
+              entry.kind === "init-segment" && entry.sourceManifestLogicalKey === sample.sourceManifestLogicalKey);
+            try {
+              sample.probe = await input.mediaProbe.probe({
+                investigationId: job.investigation.id,
+                sample,
+                ...(init ? { initBytes: init.content.bytes } : {}),
+              });
+            } catch (error) {
+              collection.mediaLimitations.push(`FFprobe could not inspect ${sample.logicalKey}: ${formatProbeFailure(error)}`);
+            }
+          }
+        }
         if (leaseLost) throw new JobLeaseLostError();
 
         for (const manifest of collection.manifests) {
@@ -77,13 +98,25 @@ export function createInvestigationWorker(input: {
             sizeBytes: stored.sizeBytes,
           };
         }
+        for (const sample of collection.mediaSamples ?? []) {
+          const artifactId = randomUUID();
+          const stored = await input.artifactStore.put({
+            investigationId: job.investigation.id,
+            artifactId,
+            extension: "bin",
+            content: sample.content.bytes,
+          });
+          uncommittedStorageKeys.add(stored.storageKey);
+          sample.artifact = { id: artifactId, storageKey: stored.storageKey, sizeBytes: stored.sizeBytes };
+        }
         const evidence = buildManifestEvidence(collection);
         const rootManifest = evidence.manifests[0]!;
         const recorded = await input.repository.recordEvidenceBatch(
           job.id,
           input.workerId,
           input.leaseMs,
-          collection.manifests.map((manifest) => {
+          [
+            ...collection.manifests.map((manifest) => {
             if (!manifest.artifact) throw new Error(`Manifest ${manifest.logicalKey} has no artifact`);
             return {
               id: manifest.artifact.id,
@@ -93,16 +126,28 @@ export function createInvestigationWorker(input: {
               ...(manifest.source.contentType ? { contentType: manifest.source.contentType } : {}),
               sizeBytes: manifest.artifact.sizeBytes,
             };
-          }),
+            }),
+            ...(collection.mediaSamples ?? []).map((sample) => {
+              if (!sample.artifact) throw new Error(`Media sample ${sample.logicalKey} has no artifact`);
+              return {
+                id: sample.artifact.id,
+                logicalKey: sample.logicalKey,
+                kind: sample.kind,
+                storageKey: sample.artifact.storageKey,
+                sizeBytes: sample.artifact.sizeBytes,
+              };
+            }),
+          ],
           evidence,
           {
             type: "investigation.evidence_found",
             actor: "Media Agent",
-            message: `${evidence.manifests.length} ${evidence.source.protocol.toUpperCase()} manifest${evidence.manifests.length === 1 ? "" : "s"} collected and preserved as evidence.`,
+            message: `${evidence.manifests.length} ${evidence.source.protocol.toUpperCase()} manifest${evidence.manifests.length === 1 ? "" : "s"} and ${evidence.mediaSamples.length} media sample${evidence.mediaSamples.length === 1 ? "" : "s"} preserved as evidence.`,
             payload: {
               state: "collecting",
               artifactIds: evidence.manifests.map((manifest) => manifest.artifactId),
               logicalKeys: evidence.manifests.map((manifest) => manifest.logicalKey),
+              mediaSampleCount: evidence.mediaSamples.length,
               protocol: evidence.source.protocol,
               manifestKind: rootManifest.kind,
               sizeBytes: rootManifest.sizeBytes,
@@ -136,7 +181,7 @@ export function createInvestigationWorker(input: {
           {
             type: "investigation.report_ready",
             actor: "Investigator",
-            message: "The deterministic manifest report is ready.",
+            message: "The deterministic media evidence report is ready.",
             payload: { state: "completed", placeholder: false, protocol: evidence.source.protocol },
           },
         );
@@ -212,4 +257,8 @@ function classifyFailure(error: unknown): { code: string; message: string; retry
     message: error instanceof Error ? error.message : "Unknown worker failure",
     retryable: true,
   };
+}
+
+function formatProbeFailure(error: unknown): string {
+  return error instanceof Error ? error.message.replace(/\s+/g, " ").slice(0, 320) : "Unknown probe failure";
 }

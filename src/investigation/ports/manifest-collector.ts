@@ -1,5 +1,6 @@
 import type { HlsManifestSelection } from "../../stream-tools/hls-manifest.js";
 import type { ManifestInspection } from "../../stream-tools/manifest.js";
+import type { MediaSample } from "./media-sample-collector.js";
 
 export type Manifest = {
   logicalKey: string;
@@ -24,6 +25,8 @@ export type Manifest = {
 export type ManifestCollection = {
   manifests: Manifest[];
   hlsSelection?: HlsManifestSelection;
+  mediaSamples?: MediaSample[];
+  mediaLimitations?: string[];
 };
 
 export interface ManifestCollector {

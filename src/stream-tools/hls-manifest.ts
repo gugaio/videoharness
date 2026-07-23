@@ -37,6 +37,27 @@ export type HlsManifestInspection = {
   discontinuitySequence?: number;
   discontinuityCount: number;
   hasEndList: boolean;
+  segments?: HlsSegment[];
+  initSegment?: HlsInitSegment;
+  encryptionMethod?: string;
+};
+
+export type HlsByteRange = { length: number; offset?: number };
+
+export type HlsInitSegment = {
+  uri: string;
+  url?: string;
+  byteRange?: HlsByteRange;
+};
+
+export type HlsSegment = {
+  index: number;
+  sequence?: number;
+  uri: string;
+  url?: string;
+  duration?: number;
+  discontinuity: boolean;
+  byteRange?: HlsByteRange;
 };
 
 export type HlsManifestSelection = {
@@ -56,6 +77,12 @@ export function parseHlsManifest(text: string, baseUrl?: string): HlsManifestIns
   let discontinuitySequence: number | undefined;
   let discontinuityCount = 0;
   let hasEndList = false;
+  const segments: HlsSegment[] = [];
+  let initSegment: HlsInitSegment | undefined;
+  let encryptionMethod: string | undefined;
+  let pendingDuration: number | undefined;
+  let pendingDiscontinuity = false;
+  let pendingByteRange: HlsByteRange | undefined;
 
   for (const line of lines) {
     if (!line) continue;
@@ -85,6 +112,29 @@ export function parseHlsManifest(text: string, baseUrl?: string): HlsManifestIns
     }
     if (line.startsWith("#EXTINF:")) {
       segmentCount += 1;
+      pendingDuration = parseFiniteNumber(line.slice("#EXTINF:".length).split(",")[0]);
+      continue;
+    }
+    if (line.startsWith("#EXT-X-MAP:")) {
+      const attrs = parseAttributeList(line.slice("#EXT-X-MAP:".length));
+      if (attrs.URI) {
+        const byteRange = parseByteRange(attrs.BYTERANGE);
+        const resolved = baseUrl ? resolveReference(baseUrl, attrs.URI) : undefined;
+        initSegment = {
+          uri: attrs.URI,
+          ...(resolved ? { url: resolved } : {}),
+          ...(byteRange ? { byteRange } : {}),
+        };
+      }
+      continue;
+    }
+    if (line.startsWith("#EXT-X-BYTERANGE:")) {
+      pendingByteRange = parseByteRange(line.slice("#EXT-X-BYTERANGE:".length));
+      continue;
+    }
+    if (line.startsWith("#EXT-X-KEY:")) {
+      const method = parseAttributeList(line.slice("#EXT-X-KEY:".length)).METHOD;
+      if (method && method.toUpperCase() !== "NONE") encryptionMethod = method;
       continue;
     }
     if (line.startsWith("#EXT-X-TARGETDURATION:")) {
@@ -101,6 +151,7 @@ export function parseHlsManifest(text: string, baseUrl?: string): HlsManifestIns
     }
     if (line === "#EXT-X-DISCONTINUITY") {
       discontinuityCount += 1;
+      pendingDiscontinuity = true;
       continue;
     }
     if (line === "#EXT-X-ENDLIST") {
@@ -125,7 +176,21 @@ export function parseHlsManifest(text: string, baseUrl?: string): HlsManifestIns
         ...(pendingVariant["CLOSED-CAPTIONS"] ? { closedCaptions: pendingVariant["CLOSED-CAPTIONS"] } : {}),
       });
       pendingVariant = undefined;
+      continue;
     }
+    const resolved = baseUrl ? resolveReference(baseUrl, line) : undefined;
+    segments.push({
+      index: segments.length,
+      ...(mediaSequence !== undefined ? { sequence: mediaSequence + segments.length } : {}),
+      uri: line,
+      ...(resolved ? { url: resolved } : {}),
+      ...(pendingDuration !== undefined ? { duration: pendingDuration } : {}),
+      discontinuity: pendingDiscontinuity,
+      ...(pendingByteRange ? { byteRange: pendingByteRange } : {}),
+    });
+    pendingDuration = undefined;
+    pendingDiscontinuity = false;
+    pendingByteRange = undefined;
   }
 
   return {
@@ -138,6 +203,9 @@ export function parseHlsManifest(text: string, baseUrl?: string): HlsManifestIns
     ...(discontinuitySequence !== undefined ? { discontinuitySequence } : {}),
     discontinuityCount,
     hasEndList,
+    ...(segments.length > 0 ? { segments } : {}),
+    ...(initSegment ? { initSegment } : {}),
+    ...(encryptionMethod ? { encryptionMethod } : {}),
   };
 }
 
@@ -211,6 +279,18 @@ function parseFiniteNumber(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseByteRange(value: string | undefined): HlsByteRange | undefined {
+  if (!value) return undefined;
+  const match = value.trim().match(/^(\d+)(?:@(\d+))?$/);
+  if (!match) return undefined;
+  const length = Number(match[1]);
+  const offset = match[2] === undefined ? undefined : Number(match[2]);
+  if (!Number.isSafeInteger(length) || length < 1 || (offset !== undefined && (!Number.isSafeInteger(offset) || offset < 0))) {
+    return undefined;
+  }
+  return { length, ...(offset === undefined ? {} : { offset }) };
 }
 
 function optionalNumber<Key extends string>(key: Key, value: string | undefined): Partial<Record<Key, number>> {

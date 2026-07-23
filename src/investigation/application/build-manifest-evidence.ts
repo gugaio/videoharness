@@ -5,6 +5,7 @@ import type {
   Manifest,
   ManifestCollection,
 } from "../ports/manifest-collector.js";
+import type { MediaSample } from "../ports/media-sample-collector.js";
 
 export function buildManifestEvidence(collection: ManifestCollection): EvidenceBundleV2 {
   const root = collection.manifests.find((manifest) => manifest.role === "root");
@@ -33,6 +34,14 @@ export function buildManifestEvidence(collection: ManifestCollection): EvidenceB
       message: `Linked audio rendition ${collection.hlsSelection.audioRendition.index} selected for bounded investigation.`,
     });
   }
+  const avOffset = findAvOffset(collection.mediaSamples ?? []);
+  if (avOffset !== undefined) {
+    observations.push({
+      code: "AV_INITIAL_TIMESTAMP_OFFSET",
+      severity: Math.abs(avOffset) > 0.1 ? "warning" : "info",
+      message: `Sampled audio starts ${formatOffset(avOffset)} relative to sampled video.`,
+    });
+  }
 
   return {
     schemaVersion: 2,
@@ -45,7 +54,7 @@ export function buildManifestEvidence(collection: ManifestCollection): EvidenceB
       ...(root.source.contentType ? { contentType: root.source.contentType } : {}),
     },
     manifests: collection.manifests.map(toManifestEvidence),
-    mediaSamples: [],
+    mediaSamples: (collection.mediaSamples ?? []).map(toMediaSampleEvidence),
     ...(rootHls ? {
       hls: {
         variants: rootHls.variants,
@@ -64,15 +73,19 @@ export function buildManifestEvidence(collection: ManifestCollection): EvidenceB
       },
     } : {}),
     observations,
-    limitations: root.inspection.protocol === "hls" && root.inspection.kind === "master"
-      ? [
+    limitations: [
+      ...(root.inspection.protocol === "hls" && root.inspection.kind === "master"
+        ? [
           "One representative HLS variant and at most one linked audio rendition were selected deterministically.",
-          "Segments, codecs, timestamps and playback behavior were not analyzed yet.",
         ]
-      : [
+        : [
           "Only the submitted manifest was collected in this investigation phase.",
-          "Segments, codecs, timestamps and playback behavior were not analyzed yet.",
-        ],
+        ]),
+      ...(collection.mediaSamples?.length
+        ? ["The media inspection is a bounded sample, not a full playback simulation."]
+        : ["Segments, codecs, timestamps and playback behavior were not analyzed yet."]),
+      ...(collection.mediaLimitations ?? []),
+    ],
   };
 }
 
@@ -86,10 +99,10 @@ export function buildManifestReport(
     : undefined;
   return {
     placeholder: false,
-    title: `${evidence.source.protocol.toUpperCase()} manifest collected`,
-    summary: `${evidence.manifests.length} ${evidence.source.protocol.toUpperCase()} manifest${
-      evidence.manifests.length === 1 ? " was" : "s were"
-    } fetched through the protected network boundary and preserved as evidence.`,
+    title: `${evidence.source.protocol.toUpperCase()} media evidence collected`,
+    summary: `${evidence.manifests.length} ${evidence.source.protocol.toUpperCase()} manifest artifact${
+      evidence.manifests.length === 1 ? "" : "s"
+    } and ${evidence.mediaSamples.length} bounded media sample artifact${evidence.mediaSamples.length === 1 ? "" : "s"} were fetched through the protected network boundary and preserved as evidence.`,
     ...(job.investigation.problemDescription
       ? { problemReported: job.investigation.problemDescription }
       : {}),
@@ -106,6 +119,16 @@ export function buildManifestReport(
           selectedVariant.bandwidth !== undefined ? ` (${selectedVariant.bandwidth} bps)` : ""
         }${selectedVariant.resolution ? `, ${selectedVariant.resolution}` : ""}.`,
       }] : []),
+      ...(evidence.mediaSamples.filter((sample) => sample.probe).map((sample) => ({
+        title: `Media sample ${sample.logicalKey}`,
+        status: "observed" as const,
+        explanation: describeProbe(sample),
+      }))),
+      ...(evidence.observations.filter((observation) => observation.code === "AV_INITIAL_TIMESTAMP_OFFSET").map((observation) => ({
+        title: "Initial A/V timestamp offset",
+        status: "observed" as const,
+        explanation: observation.message,
+      }))),
       {
         title: "Current analysis boundary",
         status: "limitation",
@@ -114,11 +137,43 @@ export function buildManifestReport(
     ],
     confidence: {
       level: "limited",
-      explanation: "The manifest format is directly observed, but root-cause confidence requires segment and media evidence.",
+      explanation: "The manifest and a bounded media sample are directly observed, but root-cause confidence requires broader playback and delivery evidence.",
     },
     evidence,
-    generatedBy: "deterministic-manifest-v2",
+    generatedBy: "deterministic-media-v1",
   };
+}
+
+function toMediaSampleEvidence(sample: MediaSample): EvidenceBundleV2["mediaSamples"][number] {
+  if (!sample.artifact) throw new Error(`Media sample ${sample.logicalKey} has not been stored as an artifact`);
+  return {
+    artifactId: sample.artifact.id,
+    logicalKey: sample.logicalKey,
+    kind: sample.kind,
+    sizeBytes: sample.artifact.sizeBytes,
+    sourceManifestLogicalKey: sample.sourceManifestLogicalKey,
+    ...(sample.sequence === undefined ? {} : { sequence: sample.sequence }),
+    ...(sample.declaredDuration === undefined ? {} : { declaredDuration: sample.declaredDuration }),
+    ...(sample.probe ? { probe: sample.probe } : {}),
+  };
+}
+
+function describeProbe(sample: EvidenceBundleV2["mediaSamples"][number]): string {
+  const tracks = sample.probe?.tracks ?? [];
+  const description = tracks.map((track) => `${track.kind}${track.codec ? ` ${track.codec}` : ""}`).join(", ");
+  return `${sample.kind} ${sample.sizeBytes} bytes${sample.probe?.format ? ` (${sample.probe.format})` : ""}; tracks: ${description || "none detected"}.`;
+}
+
+function findAvOffset(samples: MediaSample[]): number | undefined {
+  const video = samples.flatMap((sample) => sample.probe?.tracks ?? []).find((track) => track.kind === "video" && track.firstPts !== undefined);
+  const audio = samples.flatMap((sample) => sample.probe?.tracks ?? []).find((track) => track.kind === "audio" && track.firstPts !== undefined);
+  if (video?.firstPts === undefined || audio?.firstPts === undefined) return undefined;
+  return audio.firstPts - video.firstPts;
+}
+
+function formatOffset(offset: number): string {
+  const milliseconds = Math.round(Math.abs(offset) * 1_000);
+  return `${milliseconds} ms ${offset >= 0 ? "after" : "before"}`;
 }
 
 function toManifestEvidence(manifest: Manifest): ManifestEvidence {

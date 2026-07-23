@@ -36,8 +36,10 @@ Indice de onboarding para humanos e agentes.
   `EvidenceBundle` v2 orientado a multiplos manifests e media samples.
 - Masters HLS agora expoem variants/renditions, selecionam uma variant por maior
   bandwidth e preservam seu media manifest e uma rendition de audio vinculada.
-- Proximo passo: baixar uma amostra pequena de segmentos da variant selecionada e
-  executar FFprobe estruturado.
+- A primeira amostra de media HLS ja baixa no maximo um segmento por playlist
+  selecionada, preserva init segments quando necessarios e executa FFprobe local.
+- Proximo passo: aprofundar representations DASH depois de validar a amostra HLS
+  em mais streams reais.
 
 ## Referencias locais
 

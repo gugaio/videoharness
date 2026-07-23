@@ -85,5 +85,22 @@ describe("HLS manifest parsing and bounded selection", () => {
       discontinuityCount: 1,
       hasEndList: true,
     });
+    expect(result.segments).toEqual([
+      expect.objectContaining({ index: 0, sequence: 42, uri: "42.ts", duration: 6, discontinuity: false }),
+      expect.objectContaining({ index: 1, sequence: 43, uri: "43.ts", duration: 5.5, discontinuity: true }),
+    ]);
+  });
+
+  it("extracts a CMAF init segment and declared encryption", () => {
+    const result = parseHlsManifest([
+      "#EXTM3U",
+      '#EXT-X-MAP:URI="init.mp4"',
+      '#EXT-X-KEY:METHOD=AES-128,URI="key.bin"',
+      "#EXTINF:4,",
+      "part.m4s",
+    ].join("\n"), "https://example.test/live/media.m3u8");
+
+    expect(result.initSegment).toMatchObject({ uri: "init.mp4", url: "https://example.test/live/init.mp4" });
+    expect(result.encryptionMethod).toBe("AES-128");
   });
 });

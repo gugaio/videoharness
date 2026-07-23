@@ -36,6 +36,7 @@ type ManifestEvidenceReportBase = {
 export type ManifestEvidenceReportContent = ManifestEvidenceReportBase & (
   | { evidence: EvidenceBundleV1; generatedBy: "deterministic-manifest-v1" }
   | { evidence: EvidenceBundleV2; generatedBy: "deterministic-manifest-v2" }
+  | { evidence: EvidenceBundleV2; generatedBy: "deterministic-media-v1" }
 );
 
 export type InvestigationReportContent =

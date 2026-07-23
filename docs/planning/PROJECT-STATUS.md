@@ -8,7 +8,7 @@ Ultima atualizacao: **2026-07-22**
 - Estado: **em andamento**.
 - Repositorio: novo e independente.
 - Runtime: API, worker, UI e PostgreSQL executaveis.
-- Objetivo imediato: amostrar segmentos HLS e extrair evidencia com FFprobe.
+- Objetivo imediato: validar a amostra HLS em streams reais e aprofundar DASH.
 
 ## Fases
 
@@ -53,6 +53,10 @@ Ultima atualizacao: **2026-07-22**
 - Parser HLS profundo com variants, renditions e estrutura de media playlist.
 - Coleta limitada de uma variant e uma rendition de audio, com revalidacao SSRF em
   cada URI derivada e persistencia atomica dos manifests relacionados.
+- Amostragem protegida de um media segment por playlist HLS selecionada, com init
+  segment CMAF quando aplicavel, limite por resposta e limite agregado.
+- FFprobe local com timeout, argumentos estruturados, output limitado e limpeza
+  de workspace; codecs, tracks, duracao e timestamps entram no evidence bundle.
 
 ## Checklist da Fase 1
 
@@ -75,14 +79,57 @@ Ultima atualizacao: **2026-07-22**
 - [x] Extrair estrutura profunda de variants/renditions HLS.
 - [x] Coletar manifests HLS derivados com amostragem limitada.
 - [ ] Extrair representations DASH.
-- [ ] Coletar e analisar uma amostra limitada de segmentos HLS.
+- [x] Coletar e analisar uma amostra limitada de segmentos HLS.
 
 ## Proximo passo recomendado
 
-Extrair os primeiros segmentos da variant HLS selecionada, impor limites agregados
-e executar FFprobe estruturado sobre a amostra local.
+Validar a coleta HLS em streams reais MPEG-TS/CMAF e, depois, extrair
+representations DASH com o mesmo limite e modelo de evidencia.
 
 ## Registro de atualizacoes
+
+### 2026-07-22 - Amostra HLS e FFprobe estruturado
+
+Fase impactada: 2.
+
+Entrega:
+
+- Media playlists agora descrevem segmentos, sequencias, duracoes, discontinuity,
+  `EXT-X-MAP`, byte ranges e criptografia declarada.
+- Worker coleta no maximo um segmento por variant/rendition selecionada e seu init
+  segment, pela mesma fronteira SSRF usada para manifests.
+- A amostra possui limite de 8 MiB por resposta e 16 MiB agregado por padrao.
+- FFprobe processa somente arquivo temporario local, com timeout e output limitado;
+  container, tracks, codecs e timestamps sao persistidos no Evidence Bundle v2.
+- Artifacts de manifests e media samples entram no mesmo lote idempotente. A UI
+  passou a identificar o report como evidencia deterministica.
+- Criptografia e byte ranges sao limitations explicitas nesta fatia, sem buscar
+  chaves nem executar decriptacao.
+
+Arquivos-chave:
+
+- `src/investigation/adapters/http-media-sample-collector.ts`
+- `src/investigation/adapters/ffprobe-media-probe.ts`
+- `src/investigation/application/run-investigation.ts`
+- `src/stream-tools/hls-manifest.ts`
+
+Checklist de validacao:
+
+- [x] `npm run check`;
+- [x] `npm test` - 62 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build`;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- Ainda falta smoke contra stream HLS publico e fixtures reais para atraso A/V.
+- DASH continua com deteccao superficial.
+
+Proximo passo recomendado:
+
+- Executar smoke MPEG-TS/CMAF e iniciar parsing de representations DASH.
 
 ### 2026-07-22 - Parsing profundo e manifests derivados HLS
 
