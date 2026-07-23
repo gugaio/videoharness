@@ -149,6 +149,41 @@ const EvidenceBundleV2Schema = z.object({
   limitations: z.array(z.string()),
 });
 
+const PlaybackTelemetrySchema = z.object({
+  engine: z.enum(["hls.js", "native-hls"]),
+  startedAt: z.string().datetime(),
+  finishedAt: z.string().datetime(),
+  requestedDurationMs: z.number().int().min(5_000).max(60_000),
+  playedMs: z.number().int().min(0).max(120_000),
+  startupTimeMs: z.number().int().min(0).max(60_000).optional(),
+  stalls: z.number().int().min(0).max(100),
+  stallDurationMs: z.number().int().min(0).max(120_000),
+  fragmentsLoaded: z.number().int().min(0).max(1_000),
+  qualitySwitches: z.number().int().min(0).max(200),
+  droppedFrames: z.number().int().min(0).max(1_000_000).optional(),
+  errors: z.array(z.object({
+    type: z.string().trim().min(1).max(80), detail: z.string().trim().min(1).max(160), fatal: z.boolean(), atMs: z.number().int().min(0).max(120_000),
+  })).max(30),
+  limitations: z.array(z.string().trim().min(1).max(240)).max(12),
+});
+
+const PlaybackSessionEvidenceSchema = PlaybackTelemetrySchema.extend({ id: z.string().uuid() });
+const EvidenceBundleV3Schema = EvidenceBundleV2Schema.extend({
+  schemaVersion: z.literal(3),
+  playbackSessions: z.array(PlaybackSessionEvidenceSchema).min(1).max(5),
+});
+
+export const CreatePlaybackSessionRequestSchema = z.object({
+  requestedDurationMs: z.number().int().min(5_000).max(60_000).default(30_000),
+});
+export const CompletePlaybackSessionRequestSchema = PlaybackTelemetrySchema;
+
+export const PlaybackSessionSchema = z.object({
+  id: z.string().uuid(), investigationId: z.string().uuid(), status: z.enum(["running", "completed", "failed", "expired"]),
+  requestedDurationMs: z.number().int(), engine: z.enum(["hls.js", "native-hls"]).optional(), artifactId: z.string().uuid().optional(),
+  createdAt: z.string().datetime(), finishedAt: z.string().datetime().optional(), errorCode: z.string().optional(), errorMessage: z.string().optional(),
+});
+
 const PhaseOneReportContentSchema = z.object({
   placeholder: z.literal(true),
   title: z.string().min(1),
@@ -202,12 +237,17 @@ const MediaReportContentSchema = ManifestReportContentBaseSchema.extend({
   evidence: EvidenceBundleV2Schema,
   generatedBy: z.literal("deterministic-media-v1"),
 });
+const PlaybackReportContentSchema = ManifestReportContentBaseSchema.extend({
+  evidence: EvidenceBundleV3Schema,
+  generatedBy: z.literal("deterministic-playback-v1"),
+});
 
 export const InvestigationReportContentSchema = z.union([
   PhaseOneReportContentSchema,
   ManifestReportContentV1Schema,
   ManifestReportContentV2Schema,
   MediaReportContentSchema,
+  PlaybackReportContentSchema,
 ]);
 
 export const InvestigationReportSchema = z.object({

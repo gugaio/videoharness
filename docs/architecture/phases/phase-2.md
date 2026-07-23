@@ -25,11 +25,12 @@ Substituir o pipeline placeholder por coleta e analise real de HLS MPEG-TS.
 - [x] Tres posicoes deterministicas por playlist: inicio, meio e fim.
 - [x] Media playlist submetida diretamente e amostrada a partir do root.
 - [x] Compose local acessa `localhost` do host por um alias SSRF restrito.
+- [x] Evidencia complementar opcional de playback browser e `EvidenceBundle` v3.
 
 ## Proxima fatia recomendada
 
-1. Validar HLS MPEG-TS com fixtures e smoke real.
-2. Integrar especialistas Pi e Lead Investigator sobre a evidencia coletada.
+1. Validar HLS MPEG-TS com fixtures e smoke real que habilite CORS.
+2. Ampliar probes deterministicas apenas por ferramentas tipadas e limitadas.
 
 ## Definition of Done
 

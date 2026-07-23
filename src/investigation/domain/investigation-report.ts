@@ -1,4 +1,4 @@
-import type { EvidenceBundleV1, EvidenceBundleV2 } from "./evidence.js";
+import type { EvidenceBundleV1, EvidenceBundleV2, EvidenceBundleV3 } from "./evidence.js";
 import type { AiInvestigationResult } from "../ports/investigation-ai.js";
 
 export type PhaseOnePlaceholderReportContent = {
@@ -39,6 +39,7 @@ export type ManifestEvidenceReportContent = ManifestEvidenceReportBase & (
   | { evidence: EvidenceBundleV1; generatedBy: "deterministic-manifest-v1" }
   | { evidence: EvidenceBundleV2; generatedBy: "deterministic-manifest-v2" }
   | { evidence: EvidenceBundleV2; generatedBy: "deterministic-media-v1" }
+  | { evidence: EvidenceBundleV3; generatedBy: "deterministic-playback-v1" }
 );
 
 export type InvestigationReportContent =

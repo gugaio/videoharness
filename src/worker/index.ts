@@ -8,6 +8,7 @@ import { PiInvestigationAI } from "../investigation/adapters/pi-investigation-ai
 import { HttpManifestCollector } from "../investigation/adapters/http-manifest-collector.js";
 import { PostgresInvestigationJobRepository } from "../investigation/adapters/postgres-investigation-job.js";
 import { createInvestigationWorker } from "../investigation/application/run-investigation.js";
+import { runNextPlaybackReview } from "../investigation/application/run-playback-review.js";
 import { SafeHttpClient } from "../stream-tools/safe-http-client.js";
 
 const config = loadConfig();
@@ -74,7 +75,7 @@ logger.info("worker.started", {
 
 while (!shutdownRequested) {
   try {
-    const processed = await worker.runNext();
+    const processed = await worker.runNext() || await runNextPlaybackReview({ pool, workerId: config.workerId, leaseMs: config.workerLeaseMs, ai });
     if (!processed) await delay(config.workerPollMs);
   } catch (error) {
     logger.warn("worker.poll_failed", {

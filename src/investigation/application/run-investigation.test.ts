@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StreamCollectionError } from "../../stream-tools/errors.js";
 import type { InvestigationJobRepository } from "../ports/investigation-job.js";
+import type { InvestigationAI } from "../ports/investigation-ai.js";
 import { createInvestigationWorker } from "./run-investigation.js";
 
 const claimedJob = {
@@ -286,6 +287,68 @@ describe("investigation worker", () => {
 
     expect(artifactStore.remove).toHaveBeenCalledWith("artifacts/case/previous.m3u8");
     expect(artifactStore.remove).not.toHaveBeenCalledWith("artifacts/case/manifest.m3u8");
+    expect(repository.complete).toHaveBeenCalledOnce();
+  });
+
+  it("publishes real per-agent progress events while the AI analysis runs", async () => {
+    const repository = createRepository();
+    const ai: InvestigationAI = {
+      investigate: async (input) => {
+        await input.onProgress?.({ agent: "timeline-playback", stage: "started", completed: 0, total: 4 });
+        await input.onProgress?.({ agent: "timeline-playback", stage: "completed", completed: 1, total: 4 });
+        await input.onProgress?.({
+          agent: "container-encoding",
+          stage: "failed",
+          completed: 2,
+          total: 4,
+          limitation: "The AI analysis timed out after retry.",
+        });
+        return {
+          available: true,
+          findings: [],
+          recommendations: [],
+          limitations: [],
+          agents: [
+            { id: "timeline-playback", state: "completed" },
+            { id: "container-encoding", state: "failed" },
+            { id: "manifest-delivery", state: "completed" },
+            { id: "lead-investigator", state: "completed" },
+          ],
+        };
+      },
+    };
+    const worker = createInvestigationWorker({
+      repository, collector, artifactStore, ai, workerId: "worker-test", leaseMs: 30_000,
+    });
+
+    await expect(worker.runNext()).resolves.toBe(true);
+
+    const events = vi.mocked(repository.transition).mock.calls.map((call) => call[3].event);
+    const progressEvents = events.filter((event) => event.payload.stage === "ai_agent");
+    expect(progressEvents).toEqual([
+      {
+        type: "investigation.observation",
+        actor: "timeline-playback",
+        message: "Timeline & Playback analysis started.",
+        payload: { state: "analyzing", stage: "ai_agent", agent: "timeline-playback", agentStage: "started", completed: 0, total: 4 },
+      },
+      {
+        type: "investigation.observation",
+        actor: "timeline-playback",
+        message: "Timeline & Playback analysis complete.",
+        payload: { state: "analyzing", stage: "ai_agent", agent: "timeline-playback", agentStage: "completed", completed: 1, total: 4 },
+      },
+      {
+        type: "investigation.observation",
+        actor: "container-encoding",
+        message: "Container & Encoding analysis could not complete: The AI analysis timed out after retry.",
+        payload: { state: "analyzing", stage: "ai_agent", agent: "container-encoding", agentStage: "failed", completed: 2, total: 4 },
+      },
+    ]);
+    const aiSpecialistsIndex = events.findIndex((event) => event.payload.stage === "ai_specialists");
+    const aiCompleteIndex = events.findIndex((event) => event.payload.stage === "ai_complete");
+    expect(aiSpecialistsIndex).toBeGreaterThan(-1);
+    expect(aiCompleteIndex).toBeGreaterThan(aiSpecialistsIndex + progressEvents.length);
     expect(repository.complete).toHaveBeenCalledOnce();
   });
 

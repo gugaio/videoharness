@@ -1,6 +1,6 @@
 # API - Video Harness Space
 
-Status: health, criacao, consulta, SSE e report de investigacao implementados.
+Status: health, criacao, consulta, SSE, report e validacao opcional de playback implementados.
 
 Prefixo inicial: `/v1`.
 
@@ -13,6 +13,9 @@ flowchart TD
     Client --> Detail[GET /v1/investigations/:id]
     Client --> Events[GET /v1/investigations/:id/events - SSE]
     Client --> Report[GET /v1/investigations/:id/report]
+    Client --> Playback[POST /v1/investigations/:id/playback-sessions]
+    Playback --> Review[worker playback_synthesis]
+    Review --> Report
     Client --> Share[GET /v1/reports/shared/:token]
 ```
 
@@ -25,6 +28,10 @@ flowchart TD
 | Implementado | GET | `/v1/investigations/:id` | Estado atual e metadados do caso |
 | Implementado | GET | `/v1/investigations/:id/events` | Historico e stream SSE da timeline |
 | Implementado | GET | `/v1/investigations/:id/report` | Report final do caso |
+| Implementado | POST | `/v1/investigations/:id/playback-sessions` | Iniciar validacao explicita no navegador |
+| Implementado | GET | `/v1/investigations/:id/playback-sessions/latest` | Ultima validacao do caso |
+| Implementado | POST | `/v1/investigations/:id/playback-sessions/:sessionId/complete` | Persistir telemetria e enfileirar revisao |
+| Implementado | POST | `/v1/investigations/:id/playback-sessions/:sessionId/fail` | Encerrar tentativa sem mudar o report |
 | Planejado | GET | `/v1/reports/shared/:token` | Report compartilhado por token |
 
 ## Criar investigacao
@@ -102,6 +109,32 @@ data: { ...InvestigationEvent }
 
 O payload contem `id`, `investigationId`, `type`, `actor`, `message`, `payload` e
 `createdAt`. A API envia `ping` a cada 15 segundos quando nao ha atividade.
+`investigation.playback_completed` informa a revisao pendente e
+`investigation.report_updated` informa que ela terminou; o caso permanece
+`completed` durante esse processo.
+
+### Progresso da analise de IA
+
+Enquanto o caso esta em `analyzing`, o worker publica uma observacao por etapa
+real de cada agente de IA. O `actor` e o identificador do agente
+(`timeline-playback`, `container-encoding`, `manifest-delivery` ou
+`lead-investigator`) e o payload tem a forma:
+
+```json
+{
+  "state": "analyzing",
+  "stage": "ai_agent",
+  "agent": "timeline-playback",
+  "agentStage": "started",
+  "completed": 0,
+  "total": 4
+}
+```
+
+`agentStage` pode ser `started`, `completed` ou `failed`. `completed` e `total`
+contam o conjunto conhecido e limitado de runs (tres especialistas mais o Lead);
+nao sao estimativa. Em `failed`, a `message` carrega a limitacao publica da
+falha, sem conteudo de prompt ou raciocinio.
 
 ## Consultar investigacao
 
@@ -136,6 +169,20 @@ Quando `VIDEO_HARNESS_AI_API_KEY` esta configurada, o mesmo report pode incluir
 `content.ai`, com findings, recomendacoes e execucoes dos especialistas Pi. Todo
 finding de IA referencia apenas IDs presentes na evidencia serializada; sem chave
 o report deterministico continua sendo concluido com a limitacao correspondente.
+
+## Validacao de playback no navegador
+
+Disponivel apenas apos o primeiro report e iniciada por acao explicita.
+`POST /v1/investigations/:id/playback-sessions` aceita opcionalmente
+`{ "requestedDurationMs": 30000 }` (5 a 60 segundos) e devolve a sessao e a URL
+original. O browser toca a origem diretamente com hls.js (ou HLS nativo) e envia
+tempos, stalls, fragmentos, qualidade, frames descartados, erros HLS limitados e
+limitations para `/complete`.
+
+Nao sao enviados comandos, URLs derivadas, headers, bytes de midia ou logs do
+console. A origem precisa habilitar CORS para a pagina. A telemetria vira artifact
+e um job `playback_synthesis` revisa o report sem bloquear ou substituir o report
+inicial em caso de falha.
 
 Falhas de coleta podem encerrar a investigation com codigos como:
 

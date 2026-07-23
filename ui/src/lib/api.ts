@@ -191,11 +191,24 @@ const MediaReportContentSchema = ManifestReportContentBaseSchema.extend({
   generatedBy: z.literal("deterministic-media-v1"),
 });
 
+const PlaybackSessionSchema = z.object({
+  id: z.string().uuid(), investigationId: z.string().uuid(), status: z.enum(["running", "completed", "failed", "expired"]),
+  requestedDurationMs: z.number().int(), engine: z.enum(["hls.js", "native-hls"]).optional(), artifactId: z.string().uuid().optional(),
+  createdAt: z.string(), finishedAt: z.string().optional(), errorCode: z.string().optional(), errorMessage: z.string().optional(),
+});
+
+const PlaybackReportContentSchema = ManifestReportContentBaseSchema.extend({
+  evidence: EvidenceBundleV2Schema.extend({ schemaVersion: z.literal(3), playbackSessions: z.array(z.object({
+    id: z.string().uuid(), engine: z.enum(["hls.js", "native-hls"]), startedAt: z.string(), finishedAt: z.string(), requestedDurationMs: z.number().int(), playedMs: z.number().int(), startupTimeMs: z.number().int().optional(), stalls: z.number().int(), stallDurationMs: z.number().int(), fragmentsLoaded: z.number().int(), qualitySwitches: z.number().int(), droppedFrames: z.number().int().optional(), errors: z.array(z.object({ type: z.string(), detail: z.string(), fatal: z.boolean(), atMs: z.number().int() })), limitations: z.array(z.string()),
+  })).min(1) }),
+  generatedBy: z.literal("deterministic-playback-v1"),
+});
+
 const InvestigationReportSchema = z.object({
   id: z.string().uuid(),
   investigationId: z.string().uuid(),
   schemaVersion: z.number().int().positive(),
-  content: z.union([PhaseOneReportContentSchema, ManifestReportContentV1Schema, ManifestReportContentV2Schema, MediaReportContentSchema]),
+  content: z.union([PhaseOneReportContentSchema, ManifestReportContentV1Schema, ManifestReportContentV2Schema, MediaReportContentSchema, PlaybackReportContentSchema]),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -245,4 +258,20 @@ export async function getInvestigationReport(id: string): Promise<InvestigationR
   const response = await fetch(`/v1/investigations/${encodeURIComponent(id)}/report`);
   const result = await parseResponse(response, z.object({ report: InvestigationReportSchema }));
   return result.report;
+}
+
+export type PlaybackTelemetry = {
+  engine: "hls.js" | "native-hls"; startedAt: string; finishedAt: string; requestedDurationMs: number; playedMs: number; startupTimeMs?: number; stalls: number; stallDurationMs: number; fragmentsLoaded: number; qualitySwitches: number; droppedFrames?: number; errors: Array<{ type: string; detail: string; fatal: boolean; atMs: number }>; limitations: string[];
+};
+export async function startPlaybackSession(id: string, requestedDurationMs = 30_000): Promise<{ session: z.infer<typeof PlaybackSessionSchema>; sourceUrl: string }> {
+  const response = await fetch(`/v1/investigations/${encodeURIComponent(id)}/playback-sessions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestedDurationMs }) });
+  return parseResponse(response, z.object({ session: PlaybackSessionSchema, sourceUrl: z.string().url() }));
+}
+export async function completePlaybackSession(id: string, sessionId: string, telemetry: PlaybackTelemetry): Promise<void> {
+  const response = await fetch(`/v1/investigations/${encodeURIComponent(id)}/playback-sessions/${encodeURIComponent(sessionId)}/complete`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(telemetry) });
+  await parseResponse(response, z.object({ session: PlaybackSessionSchema }));
+}
+export async function failPlaybackSession(id: string, sessionId: string, code: string, message: string): Promise<void> {
+  const response = await fetch(`/v1/investigations/${encodeURIComponent(id)}/playback-sessions/${encodeURIComponent(sessionId)}/fail`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, message }) });
+  await parseResponse(response, z.object({ session: PlaybackSessionSchema }));
 }

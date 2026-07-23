@@ -97,6 +97,85 @@ recomendacoes, mantendo findings tecnicos e limitacoes auditaveis.
 
 ## Registro de atualizacoes
 
+### 2026-07-23 - Progresso real da equipe de IA na timeline
+
+Fases impactadas: 3 e 4.
+
+Entrega:
+
+- O port `InvestigationAI` aceita `onProgress` com lifecycle real e limitado dos
+  quatro runs de IA (`started`, `completed`, `failed`, mais `completed`/`total`
+  contados, nunca estimados).
+- O adapter Pi emite progresso por especialista e pelo Lead; falha do callback
+  nao derruba a analise e e registrada em log seguro.
+- O worker publica cada etapa como `investigation.observation` com
+  `actor` = identificador do agente e payload `stage: "ai_agent"`, serializadas
+  para preservar a ordem dos event IDs; falhas carregam a limitacao publica.
+- A tela do caso substitui os ~30 s estaticos de "Aia is working" por um
+  checklist vivo de Pip, Coda, Mara e Lead (waiting/analyzing/done/failed) com
+  contador "N of 4"; eventos `started` alimentam so o checklist e conclusoes
+  viram posts com a persona do especialista.
+
+Arquivos-chave:
+
+- `src/investigation/ports/investigation-ai.ts`
+- `src/investigation/adapters/pi-investigation-ai.ts`
+- `src/investigation/application/run-investigation.ts`
+- `ui/src/components/InvestigationFeed.tsx`
+- `docs/api.md`
+- `docs/ui/UI-GUIDE.md`
+
+Checklist de validacao:
+
+- [x] `npm run check`;
+- [x] `npm test` - 76 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build`;
+- [x] `git diff --check`;
+- [x] Compose reconstruido e saudavel;
+- [x] smoke real HLS (`test-streams.mux.dev`): investigation
+  `fa8feaed-c754-45e2-a084-90dee96c045c` concluida com os 8 eventos `ai_agent`
+  ordenados (3 started, 3 completed, lead started/completed), contador 0-4 de 4
+  e report com os quatro agentes `completed` e confidence `0.62`.
+
+Pendencias:
+
+- A revisao pos-playback continua sem eventos de progresso intermediarios
+  (decisao de escopo; o report atual segue visivel durante ela).
+
+Proximo passo recomendado:
+
+- Reorganizar a UI do report para apresentar primeiro conclusao, confianca e
+  recomendacoes, mantendo findings tecnicos e limitacoes auditaveis.
+
+### 2026-07-23 - Playback browser e revisao de report
+
+Fases impactadas: 3 e 4.
+
+Entrega:
+
+- Sessao de playback persistida e endpoints para iniciar, concluir, falhar e ler
+  a ultima tentativa.
+- Player hls.js opt-in na pagina do caso, com limites de duracao e mensagem clara
+  para falhas de CORS.
+- Worker revisa o report apos telemetria e publica `investigation.report_updated`.
+- Tools Pi restritas a fatos de samples preservados.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 72 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build`;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- Cobrir endpoints e job de playback com testes dedicados e fazer smoke test em
+  Compose com uma origem HLS que habilite CORS.
+
+
 ### 2026-07-23 - HLS localhost e media playlist direta
 
 Fases impactadas: 2 e 3.

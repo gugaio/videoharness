@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { Investigation, InvestigationEvent } from "../lib/api";
 import { formatTime } from "../lib/format";
-import { AgentAvatar, hueStyle, personaForActor, type AgentPersona } from "./agents";
+import { AgentAvatar, hueStyle, personaForActor, personaForSpecialist, type AgentPersona } from "./agents";
 
 const WORKING_COPY: Record<string, { actor: string; message: string }> = {
   queued: { actor: "system", message: "Case is queued. An agent will claim it in a moment…" },
@@ -10,6 +10,44 @@ const WORKING_COPY: Record<string, { actor: string; message: string }> = {
   analyzing: { actor: "AI Investigation Team", message: "Specialists are correlating the deterministic evidence…" },
   synthesizing: { actor: "Investigator", message: "Putting the final report together…" },
 };
+
+const AI_AGENT_ORDER = ["timeline-playback", "container-encoding", "manifest-delivery", "lead-investigator"] as const;
+
+type AiAgentStage = "started" | "completed" | "failed";
+
+interface AiTeamProgress {
+  stages: Partial<Record<(typeof AI_AGENT_ORDER)[number], AiAgentStage>>;
+  completed: number;
+  total: number;
+}
+
+/** Real per-agent lifecycle derived from persisted pipeline events; never an estimate. */
+function deriveAiTeamProgress(events: InvestigationEvent[]): AiTeamProgress | undefined {
+  const stages: AiTeamProgress["stages"] = {};
+  let completed: number = 0;
+  let total: number = AI_AGENT_ORDER.length;
+  let seen = false;
+  for (const event of events) {
+    if (event.type !== "investigation.observation" || event.payload.stage !== "ai_agent") continue;
+    const agent = typeof event.payload.agent === "string" ? event.payload.agent : "";
+    const agentStage = event.payload.agentStage;
+    if (!(AI_AGENT_ORDER as readonly string[]).includes(agent)) continue;
+    if (agentStage !== "started" && agentStage !== "completed" && agentStage !== "failed") continue;
+    stages[agent as (typeof AI_AGENT_ORDER)[number]] = agentStage;
+    seen = true;
+    if (typeof event.payload.completed === "number") completed = event.payload.completed;
+    if (typeof event.payload.total === "number") total = event.payload.total;
+  }
+  return seen ? { stages, completed, total } : undefined;
+}
+
+function isAiAgentStart(event: InvestigationEvent): boolean {
+  return (
+    event.type === "investigation.observation" &&
+    event.payload.stage === "ai_agent" &&
+    event.payload.agentStage === "started"
+  );
+}
 
 export function InvestigationFeed(props: {
   events: InvestigationEvent[];
@@ -28,6 +66,8 @@ export function InvestigationFeed(props: {
     }
     return [...seen.values()];
   }, [events]);
+
+  const aiProgress = useMemo(() => deriveAiTeamProgress(events), [events]);
 
   useEffect(() => {
     const nearBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 480;
@@ -68,14 +108,14 @@ export function InvestigationFeed(props: {
             Restoring the persisted investigation feed…
           </div>
         )}
-        {events.map((event, index) =>
+        {events.filter((event) => !isAiAgentStart(event)).map((event, index) =>
           isMilestone(event) ? (
             <Milestone event={event} key={event.id} stagger={staggerDelay(index)} />
           ) : (
             <FeedPost event={event} key={event.id} stagger={staggerDelay(index)} />
           ),
         )}
-        {active && <WorkingCard state={state} />}
+        {active && <WorkingCard aiProgress={aiProgress} state={state} />}
       </div>
       <div ref={feedEndRef} />
     </section>
@@ -168,7 +208,8 @@ function EvidenceChips({ payload }: { payload: Record<string, unknown> }): JSX.E
   );
 }
 
-function WorkingCard({ state }: { state: Investigation["state"] }): JSX.Element {
+function WorkingCard({ state, aiProgress }: { state: Investigation["state"]; aiProgress?: AiTeamProgress }): JSX.Element {
+  if (state === "analyzing" && aiProgress) return <AiTeamWorkingCard progress={aiProgress} />;
   const copy = WORKING_COPY[state] ?? WORKING_COPY.queued;
   const persona = personaForActor(copy.actor);
   return (
@@ -189,6 +230,76 @@ function WorkingCard({ state }: { state: Investigation["state"] }): JSX.Element 
       </div>
     </article>
   );
+}
+
+function AiTeamWorkingCard({ progress }: { progress: AiTeamProgress }): JSX.Element {
+  const persona = personaForActor("AI Investigation Team");
+  return (
+    <article className="animate-fade-up rounded-2xl border border-dashed border-fuchsia-300/25 bg-fuchsia-300/[0.04] p-5">
+      <div className="flex items-center gap-4">
+        <AgentAvatar active persona={persona} />
+        <div className="flex-1">
+          <p className="text-sm font-medium text-white/75">
+            {persona.name} is coordinating the AI team
+            <span className="ml-2 inline-flex items-end gap-1 align-baseline">
+              <TypingDot delay="0ms" />
+              <TypingDot delay="150ms" />
+              <TypingDot delay="300ms" />
+            </span>
+          </p>
+          <p className="mt-1 text-sm text-white/45">
+            {progress.completed} of {progress.total} analyses complete — each specialist reviews the evidence independently.
+          </p>
+        </div>
+      </div>
+      <ul className="mt-4 space-y-2.5 border-t border-white/[0.06] pt-4">
+        {AI_AGENT_ORDER.map((agentId) => {
+          const agent = personaForSpecialist(agentId);
+          const stage = progress.stages[agentId];
+          return (
+            <li className="flex items-center gap-3" key={agentId}>
+              <AgentAvatar active={stage === "started"} persona={agent} size="sm" />
+              <span className="text-sm font-medium text-white/80">{agent.name}</span>
+              <span className="truncate text-xs text-white/35">{agent.role}</span>
+              <AgentStageBadge stage={stage} />
+            </li>
+          );
+        })}
+      </ul>
+    </article>
+  );
+}
+
+function AgentStageBadge({ stage }: { stage?: AiAgentStage }): JSX.Element {
+  if (stage === "completed") {
+    return (
+      <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-emerald-300">
+        <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24">
+          <path d="m5 12.5 4.5 4.5L19 7.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" />
+        </svg>
+        Done
+      </span>
+    );
+  }
+  if (stage === "failed") {
+    return (
+      <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-rose-300">
+        <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24">
+          <path d="m7 7 10 10M17 7 7 17" stroke="currentColor" strokeLinecap="round" strokeWidth="2.2" />
+        </svg>
+        Failed
+      </span>
+    );
+  }
+  if (stage === "started") {
+    return (
+      <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-fuchsia-200">
+        <span className="h-1.5 w-1.5 animate-pulse-dot rounded-full bg-fuchsia-300" />
+        Analyzing
+      </span>
+    );
+  }
+  return <span className="ml-auto shrink-0 text-xs text-white/30">Waiting</span>;
 }
 
 function TypingDot({ delay }: { delay: string }): JSX.Element {

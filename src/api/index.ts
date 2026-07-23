@@ -6,6 +6,7 @@ import { PostgresInvestigationIntake } from "../investigation/adapters/postgres-
 import { createStartInvestigation } from "../investigation/application/start-investigation.js";
 import { PostgresInvestigationQuery } from "../investigation/adapters/postgres-investigation-query.js";
 import { createInvestigationQueries } from "../investigation/application/investigation-queries.js";
+import { PostgresPlaybackSessions } from "../investigation/adapters/postgres-playback-session.js";
 
 const config = loadConfig();
 const pool = createDatabasePool(config.databaseUrl);
@@ -14,6 +15,7 @@ const server = buildApiServer({
   database: createDatabaseHealth(pool),
   startInvestigation: createStartInvestigation(new PostgresInvestigationIntake(pool)),
   investigationQueries: createInvestigationQueries(investigationQuery),
+  playbackSessions: new PostgresPlaybackSessions(pool),
   version: process.env.npm_package_version ?? "0.1.0",
 });
 

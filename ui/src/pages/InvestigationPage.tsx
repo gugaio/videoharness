@@ -1,9 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { CaseHero } from "../components/CaseHero";
 import { InvestigationFeed } from "../components/InvestigationFeed";
 import { InvestigationReportView } from "../components/InvestigationReport";
+import { PlaybackValidation } from "../components/PlaybackValidation";
 import {
   getInvestigation,
   getInvestigationReport,
@@ -15,6 +16,7 @@ export function InvestigationPage(): JSX.Element {
   const { investigationId = "" } = useParams();
   const [events, setEvents] = useState<InvestigationEvent[]>([]);
   const [connected, setConnected] = useState(false);
+  const queryClient = useQueryClient();
   const investigation = useQuery({
     queryKey: ["investigation", investigationId],
     queryFn: () => getInvestigation(investigationId),
@@ -43,12 +45,15 @@ export function InvestigationPage(): JSX.Element {
           if (current.some((event) => event.id === parsed.data.id)) return current;
           return [...current, parsed.data].sort((left, right) => Number(left.id) - Number(right.id));
         });
+        if (parsed.data.type === "investigation.report_updated" || parsed.data.type === "investigation.report_ready") {
+          void queryClient.invalidateQueries({ queryKey: ["investigation-report", investigationId] });
+        }
       } catch {
         // Ignore malformed transport events; persisted events remain available on reconnect.
       }
     });
     return () => source.close();
-  }, [investigationId]);
+  }, [investigationId, queryClient]);
 
   return (
     <main className="relative min-h-screen bg-harness-bg text-harness-text">
@@ -89,6 +94,7 @@ export function InvestigationPage(): JSX.Element {
               state={investigation.data.state}
             />
             {report.data && <InvestigationReportView report={report.data} />}
+            {report.data && <PlaybackValidation investigationId={investigationId} />}
           </div>
         )}
       </div>

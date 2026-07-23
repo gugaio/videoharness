@@ -65,6 +65,11 @@ Somente Investigate e interativo.
 - Estado do caso atualizado enquanto o worker executa.
 - Conclusao e report fixture apresentados sem esconder que a analise real ainda
   nao foi executada.
+- Durante `analyzing`, o card de trabalho mostra o checklist vivo da equipe de IA
+  (Pip, Coda, Mara e Lead) com estados reais waiting/analyzing/done/failed
+  derivados dos eventos `ai_agent`, alem do contador "N of 4 analyses complete".
+  Eventos `started` alimentam somente o checklist; conclusoes e falhas viram
+  posts na timeline com a persona do especialista.
 
 Proibido:
 
@@ -126,3 +131,9 @@ O report deve funcionar como pagina compartilhavel e como documento de engenhari
 
 Mudancas de direcao, novos estados ou alteracoes relevantes no fluxo principal
 devem ser registradas aqui e no status da fase ativa.
+# Playback validation
+
+Depois do report, a pagina oferece uma validacao opcional e explicitamente
+acionada. O video tem controles nativos, CTA unico e comunica que a origem HLS
+precisa permitir CORS. Enquanto a revisao assincrona ocorre, o report atual segue
+visivel; ao receber SSE ele atualiza sem recarregar a pagina.

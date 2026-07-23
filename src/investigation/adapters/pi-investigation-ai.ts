@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
-import { Agent } from "@earendil-works/pi-agent-core";
+import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
 import { getModel, streamSimple } from "@earendil-works/pi-ai/compat";
+import { Type } from "typebox";
 import { z } from "zod";
 import { logger } from "../../infra/logger.js";
-import type { EvidenceBundleV2 } from "../domain/evidence.js";
-import type { AiAgentRun, AiFinding, AiInvestigationResult, InvestigationAI } from "../ports/investigation-ai.js";
+import type { EvidenceBundleV2, EvidenceBundleV3 } from "../domain/evidence.js";
+import type { AiAgentProgress, AiAgentRun, AiFinding, AiInvestigationResult, InvestigationAI } from "../ports/investigation-ai.js";
 
 const LIMITED_CONFIDENCE = 0.2;
 const ConfidenceSchema = z.preprocess(normalizeConfidence, z.number().min(0).max(1));
@@ -54,7 +55,8 @@ export class PiInvestigationAI implements InvestigationAI {
   async investigate(input: {
     investigationId: string;
     problemDescription?: string;
-    evidence: EvidenceBundleV2;
+    evidence: EvidenceBundleV2 | EvidenceBundleV3;
+    onProgress?: (update: AiAgentProgress) => Promise<void>;
   }): Promise<AiInvestigationResult> {
     if (!this.config.apiKey) return unavailableResult();
     const evidenceIds = new Set(buildEvidenceIndex(input.evidence).map((item) => item.id));
@@ -64,7 +66,21 @@ export class PiInvestigationAI implements InvestigationAI {
       evidenceIndex: buildEvidenceIndex(input.evidence),
     });
     const agentRuns: AiAgentRun[] = [];
+    const totalRuns = profiles.length + 1;
+    const reportProgress = async (update: Pick<AiAgentProgress, "agent" | "stage" | "limitation">): Promise<void> => {
+      if (!input.onProgress) return;
+      try {
+        await input.onProgress({ ...update, completed: agentRuns.length, total: totalRuns });
+      } catch (error) {
+        logger.warn("ai.progress_callback_failed", {
+          investigationId: input.investigationId,
+          agentId: update.agent,
+          errorType: error instanceof Error ? error.name : "unknown",
+        });
+      }
+    };
     const specialistOutputs: Array<SuccessfulSpecialist | undefined> = await Promise.all(profiles.map(async (profile) => {
+      await reportProgress({ agent: profile.id, stage: "started" });
       try {
         const output = await this.runStructured(
           input.investigationId,
@@ -72,16 +88,21 @@ export class PiInvestigationAI implements InvestigationAI {
           specialistPrompt(profile.label, profile.focus),
           packet,
           parseSpecialistOutput,
+          createEvidenceTools(input.evidence),
         );
         agentRuns.push({ id: profile.id, state: "completed", summary: output.summary });
+        await reportProgress({ agent: profile.id, stage: "completed" });
         return { id: profile.id, output: filterSpecialist(output, evidenceIds) } as SuccessfulSpecialist;
       } catch (error) {
-        agentRuns.push({ id: profile.id, state: "failed", limitation: publicError(error) });
+        const limitation = publicError(error);
+        agentRuns.push({ id: profile.id, state: "failed", limitation });
+        await reportProgress({ agent: profile.id, stage: "failed", limitation });
         return undefined;
       }
     }));
     const completed = specialistOutputs.filter((item): item is SuccessfulSpecialist => item !== undefined);
     if (completed.length === 0) return { available: true, findings: [], recommendations: [], limitations: ["All AI specialists failed; deterministic evidence remains available."], agents: agentRuns };
+    await reportProgress({ agent: "lead-investigator", stage: "started" });
     try {
       const lead = await this.runStructured(
         input.investigationId,
@@ -89,15 +110,19 @@ export class PiInvestigationAI implements InvestigationAI {
         leadPrompt(),
         JSON.stringify({ packet: JSON.parse(packet), specialists: completed }),
         parseLeadOutput,
+        createEvidenceTools(input.evidence),
       );
       const filtered = filterSpecialist(lead, evidenceIds);
       agentRuns.push({ id: "lead-investigator", state: "completed", summary: lead.summary });
+      await reportProgress({ agent: "lead-investigator", stage: "completed" });
       return {
         available: true, summary: lead.summary, likelyCause: lead.likelyCause, confidence: capConfidence(lead.confidence, filtered.findings),
         findings: filtered.findings, recommendations: lead.recommendations.slice(0, 6), limitations: filtered.limitations, agents: agentRuns,
       };
     } catch (error) {
-      agentRuns.push({ id: "lead-investigator", state: "failed", limitation: publicError(error) });
+      const limitation = publicError(error);
+      agentRuns.push({ id: "lead-investigator", state: "failed", limitation });
+      await reportProgress({ agent: "lead-investigator", stage: "failed", limitation });
       const findings = completed.flatMap((item) => item.output.findings);
       return { available: true, findings, recommendations: [], limitations: ["Lead synthesis failed; specialist findings are shown directly."], agents: agentRuns };
     }
@@ -109,12 +134,13 @@ export class PiInvestigationAI implements InvestigationAI {
     attempt: number,
     systemPrompt: string,
     prompt: string,
+    tools: AgentTool[],
   ): Promise<unknown> {
     const discovered = getModel(this.config.provider as never, this.config.model);
     const model = discovered ? { ...discovered, baseUrl: normalizeBaseUrl(this.config.apiUrl) } : undefined;
     if (!model) throw new Error("Configured Pi model is unavailable");
     const agent = new Agent({
-      initialState: { systemPrompt, model, thinkingLevel: "low", tools: [], messages: [] },
+      initialState: { systemPrompt, model, thinkingLevel: "low", tools, messages: [] },
       streamFn: streamSimple,
       getApiKey: () => this.config.apiKey!,
       onResponse: (response) => {
@@ -177,6 +203,7 @@ export class PiInvestigationAI implements InvestigationAI {
     systemPrompt: string,
     prompt: string,
     parse: (value: unknown) => T,
+    tools: AgentTool[],
   ): Promise<T> {
     let lastError: unknown;
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -198,6 +225,7 @@ export class PiInvestigationAI implements InvestigationAI {
           attempt + 1,
           systemPrompt,
           `${prompt}${retryInstruction}`,
+          tools,
         ));
         logger.info("ai.agent_attempt_completed", {
           investigationId,
@@ -224,6 +252,7 @@ export class PiInvestigationAI implements InvestigationAI {
 function specialistPrompt(label: string, focus: string): string {
   return `You are the ${label} specialist for an HLS MPEG-TS investigation. ${focus}
 Use only evidence IDs present in the supplied evidenceIndex. Do not invent measurements or causal facts.
+When a preserved sample needs closer inspection, you may call inspect_preserved_sample with its exact logical key. This tool only returns stored probe facts; do not request URLs, commands or arbitrary files.
 Return exactly one JSON object without markdown:
 {"summary":"string","findings":[{"title":"string","severity":"info|warning|error","explanation":"string","evidenceIds":["exact evidence ID"],"confidence":0.5}],"limitations":["string"]}
 Every confidence MUST be a finite JSON number between 0 and 1, never a string, null, NaN or Infinity. When confidence cannot be assessed, use 0.2 and explain why in limitations. Findings may be empty when the evidence does not support a claim.`;
@@ -231,6 +260,7 @@ Every confidence MUST be a finite JSON number between 0 and 1, never a string, n
 function leadPrompt(): string {
   return `You are the Lead Investigator. Synthesize the specialist reports and deterministic HLS MPEG-TS evidence.
 State that the result is inconclusive when evidence is insufficient. Every finding must cite exact IDs present in evidenceIndex.
+You may inspect an already preserved sample through inspect_preserved_sample; it cannot fetch or execute anything.
 Return exactly one JSON object without markdown:
 {"summary":"string","likelyCause":"string","confidence":0.5,"findings":[{"title":"string","severity":"info|warning|error","explanation":"string","evidenceIds":["exact evidence ID"],"confidence":0.5}],"recommendations":["string"],"limitations":["string"]}
 Every confidence MUST be a finite JSON number between 0 and 1, never a string, null, NaN or Infinity. When confidence cannot be assessed, use 0.2.`;
@@ -266,15 +296,36 @@ function parseFindings(values: unknown[]): AiFinding[] {
     return parsed.success ? [parsed.data] : [];
   });
 }
-function buildEvidenceIndex(evidence: EvidenceBundleV2): Array<{ id: string; summary: string }> {
+function buildEvidenceIndex(evidence: EvidenceBundleV2 | EvidenceBundleV3): Array<{ id: string; summary: string }> {
   return [
     ...evidence.manifests.map((item) => ({ id: `manifest:${item.logicalKey}`, summary: `${item.kind} ${item.logicalKey}` })),
     ...evidence.mediaSamples.map((item) => ({ id: `sample:${item.logicalKey}`, summary: `${item.kind} ${item.logicalKey}` })),
     ...evidence.observations.map((item, index) => ({ id: `observation:${index}`, summary: item.message })),
   ];
 }
-function sanitizeEvidence(evidence: EvidenceBundleV2): object {
-  return { protocol: evidence.source.protocol, manifests: evidence.manifests.map(({ requestedUrl: _requestedUrl, finalUrl: _finalUrl, ...item }) => item), mediaSamples: evidence.mediaSamples, observations: evidence.observations, limitations: evidence.limitations, hls: evidence.hls };
+function sanitizeEvidence(evidence: EvidenceBundleV2 | EvidenceBundleV3): object {
+  return { protocol: evidence.source.protocol, manifests: evidence.manifests.map(({ requestedUrl: _requestedUrl, finalUrl: _finalUrl, ...item }) => item), mediaSamples: evidence.mediaSamples, observations: evidence.observations, limitations: evidence.limitations, hls: evidence.hls, ...(evidence.schemaVersion === 3 ? { playbackSessions: evidence.playbackSessions } : {}) };
+}
+/**
+ * The model can request only a re-rendering of facts already preserved in the
+ * evidence packet. It cannot pass commands, paths, URLs, or media bytes.
+ */
+function createEvidenceTools(evidence: EvidenceBundleV2 | EvidenceBundleV3): AgentTool[] {
+  const samples = new Map(evidence.mediaSamples.map((sample) => [sample.logicalKey, sample]));
+  return [{
+    name: "inspect_preserved_sample",
+    label: "Inspect preserved media sample",
+    description: "Return the deterministic probe facts for one sample logical key from the evidence index. No network or media process is started.",
+    parameters: Type.Object({ logicalKey: Type.String({ minLength: 1, maxLength: 180 }) }),
+    executionMode: "sequential",
+    execute: async (_toolCallId, params) => {
+      const logicalKey = (params as { logicalKey: string }).logicalKey;
+      const sample = samples.get(logicalKey);
+      if (!sample) throw new Error("The requested sample is not part of this investigation evidence");
+      const result = { logicalKey: sample.logicalKey, kind: sample.kind, sizeBytes: sample.sizeBytes, declaredDuration: sample.declaredDuration, sequence: sample.sequence, probe: sample.probe };
+      return { content: [{ type: "text", text: JSON.stringify(result) }], details: { logicalKey: sample.logicalKey } };
+    },
+  }];
 }
 function filterSpecialist(output: SpecialistOutput, valid: Set<string>): SpecialistOutput {
   return { ...output, findings: output.findings.map((finding) => ({ ...finding, evidenceIds: finding.evidenceIds.filter((id) => valid.has(id)) })).filter((finding) => finding.evidenceIds.length > 0), limitations: output.limitations.slice(0, 8) };

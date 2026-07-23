@@ -218,3 +218,18 @@ Consequencia:
   do host aceita conexoes pelo gateway Docker.
 - Deploys e execucoes fora do Compose so permitem localhost quando
   `VIDEO_HARNESS_STREAM_LOCALHOST_ALIAS` e configurada explicitamente.
+# 2026-07-23 - Playback browser opcional como evidencia complementar
+
+O MVP usa hls.js no browser da pessoa para validar comportamento de playback, e
+nao VLC no servidor. A sessao e explicita, dura no maximo 60 segundos e persiste
+somente telemetria estruturada e limitada. A coleta deterministica do worker
+continua sendo a fonte dos fatos de transporte e container; playback complementa
+o report sem prender o job inicial. CORS e responsabilidade da origem do stream;
+nao adicionamos proxy de media neste MVP por ampliar a superficie SSRF e de
+reescrita de manifests.
+
+# 2026-07-23 - Ferramentas Pi sem shell ou rede livre
+
+Agentes Pi podem solicitar `inspect_preserved_sample`, limitada aos logical keys
+dos samples ja preservados e ao resultado deterministico de probe. O modelo nao
+recebe ferramenta de shell, arquivo, URL, argumentos de ffprobe ou download.

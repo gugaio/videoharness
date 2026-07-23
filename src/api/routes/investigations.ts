@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
-import { StartInvestigationRequestSchema } from "../../contracts/investigation.js";
+import { CompletePlaybackSessionRequestSchema, CreatePlaybackSessionRequestSchema, StartInvestigationRequestSchema } from "../../contracts/investigation.js";
+import type { PostgresPlaybackSessions } from "../../investigation/adapters/postgres-playback-session.js";
 import type { StartInvestigation } from "../../investigation/application/start-investigation.js";
 import type { InvestigationQueries } from "../../investigation/application/investigation-queries.js";
 import type { InvestigationEvent } from "../../investigation/domain/investigation-event.js";
@@ -8,7 +9,7 @@ import { ApiError } from "../errors.js";
 
 export function registerInvestigationRoutes(
   server: FastifyInstance,
-  dependencies: { startInvestigation: StartInvestigation; queries: InvestigationQueries },
+  dependencies: { startInvestigation: StartInvestigation; queries: InvestigationQueries; playbackSessions?: PostgresPlaybackSessions },
 ): void {
   server.post<{ Body: unknown }>("/v1/investigations", async (request, reply) => {
     const parsed = StartInvestigationRequestSchema.safeParse(request.body);
@@ -54,6 +55,46 @@ export function registerInvestigationRoutes(
     const report = await dependencies.queries.getReport(id);
     if (!report) throw new ApiError(404, "REPORT_NOT_READY", "Investigation report is not ready");
     return { report };
+  });
+
+  server.post<{ Params: { id: string }; Body: unknown }>("/v1/investigations/:id/playback-sessions", async (request, reply) => {
+    if (!dependencies.playbackSessions) throw new ApiError(503, "PLAYBACK_UNAVAILABLE", "Playback validation is not configured");
+    const id = parseInvestigationId(request.params.id);
+    const parsed = CreatePlaybackSessionRequestSchema.safeParse(request.body ?? {});
+    if (!parsed.success) throw new ApiError(400, "INVALID_PLAYBACK_SESSION", "Playback duration must be between 5 and 60 seconds");
+    const investigation = await dependencies.queries.getInvestigation(id);
+    if (!investigation) throw new ApiError(404, "INVESTIGATION_NOT_FOUND", "Investigation not found");
+    if (investigation.state !== "completed") throw new ApiError(409, "REPORT_NOT_READY", "Playback validation is available after the initial report");
+    const session = await dependencies.playbackSessions.create(id, parsed.data.requestedDurationMs);
+    return reply.status(201).send({ session, sourceUrl: investigation.sourceUrl });
+  });
+
+  server.get<{ Params: { id: string } }>("/v1/investigations/:id/playback-sessions/latest", async (request) => {
+    if (!dependencies.playbackSessions) throw new ApiError(503, "PLAYBACK_UNAVAILABLE", "Playback validation is not configured");
+    const id = parseInvestigationId(request.params.id);
+    const investigation = await dependencies.queries.getInvestigation(id);
+    if (!investigation) throw new ApiError(404, "INVESTIGATION_NOT_FOUND", "Investigation not found");
+    return { session: await dependencies.playbackSessions.latest(id) };
+  });
+
+  server.post<{ Params: { id: string; sessionId: string }; Body: unknown }>("/v1/investigations/:id/playback-sessions/:sessionId/complete", async (request) => {
+    if (!dependencies.playbackSessions) throw new ApiError(503, "PLAYBACK_UNAVAILABLE", "Playback validation is not configured");
+    const id = parseInvestigationId(request.params.id);
+    const parsed = CompletePlaybackSessionRequestSchema.safeParse(request.body);
+    if (!parsed.success) throw new ApiError(400, "INVALID_PLAYBACK_TELEMETRY", "Playback telemetry did not meet the safety limits");
+    const session = await dependencies.playbackSessions.complete(id, request.params.sessionId, parsed.data);
+    if (!session) throw new ApiError(409, "PLAYBACK_SESSION_NOT_RUNNING", "Playback session is not active");
+    return { session };
+  });
+
+  server.post<{ Params: { id: string; sessionId: string }; Body: { code?: unknown; message?: unknown } }>("/v1/investigations/:id/playback-sessions/:sessionId/fail", async (request) => {
+    if (!dependencies.playbackSessions) throw new ApiError(503, "PLAYBACK_UNAVAILABLE", "Playback validation is not configured");
+    const id = parseInvestigationId(request.params.id);
+    const code = typeof request.body?.code === "string" ? request.body.code.slice(0, 80) : "PLAYBACK_FAILED";
+    const message = typeof request.body?.message === "string" ? request.body.message.slice(0, 240) : "Browser playback did not complete";
+    const session = await dependencies.playbackSessions.fail(id, request.params.sessionId, code, message);
+    if (!session) throw new ApiError(409, "PLAYBACK_SESSION_NOT_RUNNING", "Playback session is not active");
+    return { session };
   });
 
   server.get<{ Params: { id: string } }>("/v1/investigations/:id/events", async (request, reply) => {

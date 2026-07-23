@@ -10,7 +10,12 @@ import type { ArtifactStore } from "../ports/artifact-store.js";
 import type { InvestigationJobRepository } from "../ports/investigation-job.js";
 import type { ManifestCollector } from "../ports/manifest-collector.js";
 import type { MediaProbe, MediaSampleCollector } from "../ports/media-sample-collector.js";
-import type { AiInvestigationResult, InvestigationAI } from "../ports/investigation-ai.js";
+import type {
+  AiAgentProgress,
+  AiAgentRun,
+  AiInvestigationResult,
+  InvestigationAI,
+} from "../ports/investigation-ai.js";
 import {
   buildManifestEvidence,
   buildManifestReport,
@@ -177,10 +182,20 @@ export function createInvestigationWorker(input: {
               payload: { state: "analyzing", stage: "ai_specialists" },
             },
           });
+          let progressChain: Promise<void> = Promise.resolve();
+          const onProgress = (update: AiAgentProgress): Promise<void> => {
+            progressChain = progressChain.then(() =>
+              input.repository.transition(job.id, input.workerId, input.leaseMs, {
+                state: "analyzing",
+                event: buildAiAgentProgressEvent(update),
+              }));
+            return progressChain;
+          };
           aiResult = await input.ai.investigate({
             investigationId: job.investigation.id,
             ...(job.investigation.problemDescription ? { problemDescription: job.investigation.problemDescription } : {}),
             evidence,
+            onProgress,
           });
           await input.repository.transition(job.id, input.workerId, input.leaseMs, {
             state: "analyzing",
@@ -271,6 +286,35 @@ function buildSynthesizingTransition(): InvestigationTransition {
       actor: "Investigator",
       message: "Preparing a report from the collected manifest evidence.",
       payload: { state: "synthesizing" },
+    },
+  };
+}
+
+const AI_AGENT_LABELS: Record<AiAgentRun["id"], string> = {
+  "timeline-playback": "Timeline & Playback",
+  "container-encoding": "Container & Encoding",
+  "manifest-delivery": "Manifest & Delivery",
+  "lead-investigator": "Lead Investigator",
+};
+
+function buildAiAgentProgressEvent(update: AiAgentProgress): InvestigationTransition["event"] {
+  const label = AI_AGENT_LABELS[update.agent];
+  const message = update.stage === "started"
+    ? `${label} analysis started.`
+    : update.stage === "completed"
+      ? `${label} analysis complete.`
+      : `${label} analysis could not complete${update.limitation ? `: ${update.limitation}` : "."}`;
+  return {
+    type: "investigation.observation",
+    actor: update.agent,
+    message,
+    payload: {
+      state: "analyzing",
+      stage: "ai_agent",
+      agent: update.agent,
+      agentStage: update.stage,
+      completed: update.completed,
+      total: update.total,
     },
   };
 }

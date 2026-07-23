@@ -1,4 +1,4 @@
-import type { EvidenceBundleV2 } from "../domain/evidence.js";
+import type { EvidenceBundleV2, EvidenceBundleV3 } from "../domain/evidence.js";
 
 export type AiFinding = {
   title: string;
@@ -26,10 +26,23 @@ export type AiInvestigationResult = {
   agents: AiAgentRun[];
 };
 
+/**
+ * Real lifecycle progress of one AI agent run. `completed`/`total` count the
+ * bounded, known set of agent runs (specialists plus Lead), never an estimate.
+ */
+export type AiAgentProgress = {
+  agent: AiAgentRun["id"];
+  stage: "started" | "completed" | "failed";
+  completed: number;
+  total: number;
+  limitation?: string;
+};
+
 export interface InvestigationAI {
   investigate(input: {
     investigationId: string;
     problemDescription?: string;
-    evidence: EvidenceBundleV2;
+    evidence: EvidenceBundleV2 | EvidenceBundleV3;
+    onProgress?: (update: AiAgentProgress) => Promise<void>;
   }): Promise<AiInvestigationResult>;
 }

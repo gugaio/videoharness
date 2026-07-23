@@ -123,4 +123,26 @@ export type EvidenceBundleV2 = {
   limitations: string[];
 };
 
-export type EvidenceBundle = EvidenceBundleV1 | EvidenceBundleV2;
+export type PlaybackSessionEvidence = {
+  id: string;
+  engine: "hls.js" | "native-hls";
+  startedAt: string;
+  finishedAt: string;
+  requestedDurationMs: number;
+  playedMs: number;
+  startupTimeMs?: number | undefined;
+  stalls: number;
+  stallDurationMs: number;
+  fragmentsLoaded: number;
+  qualitySwitches: number;
+  droppedFrames?: number | undefined;
+  errors: Array<{ type: string; detail: string; fatal: boolean; atMs: number }>;
+  limitations: string[];
+};
+
+export type EvidenceBundleV3 = Omit<EvidenceBundleV2, "schemaVersion"> & {
+  schemaVersion: 3;
+  playbackSessions: PlaybackSessionEvidence[];
+};
+
+export type EvidenceBundle = EvidenceBundleV1 | EvidenceBundleV2 | EvidenceBundleV3;

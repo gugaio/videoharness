@@ -3,6 +3,7 @@ import type { HealthResponse } from "../contracts/health.js";
 import type { DatabaseHealth } from "../database/client.js";
 import type { StartInvestigation } from "../investigation/application/start-investigation.js";
 import type { InvestigationQueries } from "../investigation/application/investigation-queries.js";
+import type { PostgresPlaybackSessions } from "../investigation/adapters/postgres-playback-session.js";
 import { ApiError } from "./errors.js";
 import { registerInvestigationRoutes } from "./routes/investigations.js";
 
@@ -10,6 +11,7 @@ export type ApiServerDependencies = {
   database: DatabaseHealth;
   startInvestigation: StartInvestigation;
   investigationQueries: InvestigationQueries;
+  playbackSessions?: PostgresPlaybackSessions;
   version?: string;
 };
 
@@ -62,6 +64,7 @@ export function buildApiServer(dependencies: ApiServerDependencies): FastifyInst
   registerInvestigationRoutes(server, {
     startInvestigation: dependencies.startInvestigation,
     queries: dependencies.investigationQueries,
+    ...(dependencies.playbackSessions ? { playbackSessions: dependencies.playbackSessions } : {}),
   });
 
   return server;
