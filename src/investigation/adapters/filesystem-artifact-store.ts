@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import type { ArtifactStore, StoredArtifact } from "../ports/artifact-store.js";
 
 const SAFE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -30,13 +31,22 @@ export class FilesystemArtifactStore implements ArtifactStore {
       await fs.rm(temporary, { force: true }).catch(() => undefined);
       throw error;
     }
-    return { storageKey, sizeBytes: input.content.byteLength };
+    return { storageKey, sizeBytes: input.content.byteLength, sha256: createHash("sha256").update(input.content).digest("hex") };
   }
 
   async remove(storageKey: string): Promise<void> {
+    const destination = this.resolve(storageKey);
+    await fs.rm(destination, { force: true });
+  }
+
+  async read(storageKey: string): Promise<Uint8Array> {
+    return fs.readFile(this.resolve(storageKey));
+  }
+
+  private resolve(storageKey: string): string {
     const destination = path.resolve(this.dataDirectory, storageKey);
     const artifactRoot = `${path.resolve(this.dataDirectory, "artifacts")}${path.sep}`;
     if (!destination.startsWith(artifactRoot)) throw new Error("Artifact storage key is invalid");
-    await fs.rm(destination, { force: true });
+    return destination;
   }
 }

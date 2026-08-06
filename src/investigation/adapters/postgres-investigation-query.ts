@@ -3,7 +3,7 @@ import { InvestigationReportContentSchema } from "../../contracts/investigation.
 import type { InvestigationEvent } from "../domain/investigation-event.js";
 import type { InvestigationReport, InvestigationReportContent } from "../domain/investigation-report.js";
 import type { Investigation } from "../domain/investigation.js";
-import type { InvestigationQueryRepository } from "../ports/investigation-query.js";
+import type { InvestigationArtifact, InvestigationQueryRepository } from "../ports/investigation-query.js";
 
 type InvestigationRow = {
   id: string;
@@ -33,6 +33,7 @@ type InvestigationReportRow = {
   created_at: Date;
   updated_at: Date;
 };
+type ArtifactRow = { id: string; logical_key: string; kind: string; storage_key: string; content_type: string | null; size_bytes: number | null; created_at: Date };
 
 function toInvestigation(row: InvestigationRow): Investigation {
   return {
@@ -98,4 +99,16 @@ export class PostgresInvestigationQuery implements InvestigationQueryRepository 
         }
       : null;
   }
+
+  async listArtifacts(investigationId: string): Promise<InvestigationArtifact[]> {
+    const result = await this.pool.query<ArtifactRow>(`SELECT id, logical_key, kind, storage_key, content_type, size_bytes, created_at FROM artifacts WHERE investigation_id=$1 ORDER BY logical_key`, [investigationId]);
+    return result.rows.map(toArtifact);
+  }
+
+  async findArtifact(investigationId: string, artifactId: string): Promise<InvestigationArtifact | null> {
+    const result = await this.pool.query<ArtifactRow>(`SELECT id, logical_key, kind, storage_key, content_type, size_bytes, created_at FROM artifacts WHERE investigation_id=$1 AND id=$2`, [investigationId, artifactId]);
+    return result.rows[0] ? toArtifact(result.rows[0]) : null;
+  }
 }
+
+function toArtifact(row: ArtifactRow): InvestigationArtifact { return { id: row.id, logicalKey: row.logical_key, kind: row.kind, storageKey: row.storage_key, ...(row.content_type ? { contentType: row.content_type } : {}), ...(row.size_bytes === null ? {} : { sizeBytes: row.size_bytes }), createdAt: row.created_at.toISOString() }; }

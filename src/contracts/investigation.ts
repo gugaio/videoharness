@@ -60,6 +60,7 @@ const EvidenceBundleV1Schema = z.object({
     artifactId: z.string().uuid(),
     kind: z.enum(["master", "media", "mpd"]),
     sizeBytes: z.number().int().nonnegative(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     variantCount: z.number().int().nonnegative().optional(),
     segmentCount: z.number().int().nonnegative().optional(),
     representationCount: z.number().int().nonnegative().optional(),
@@ -80,6 +81,7 @@ const EvidenceBundleV2Schema = z.object({
     finalUrl: z.string().url(),
     kind: z.enum(["master", "media", "mpd"]),
     sizeBytes: z.number().int().nonnegative(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     variantCount: z.number().int().nonnegative().optional(),
     segmentCount: z.number().int().nonnegative().optional(),
     representationCount: z.number().int().nonnegative().optional(),
@@ -98,6 +100,9 @@ const EvidenceBundleV2Schema = z.object({
     sampleIndex: z.number().int().nonnegative().optional(),
     sequence: z.number().int().nonnegative().optional(),
     declaredDuration: z.number().nonnegative().optional(),
+    representationId: z.string().optional(), periodIndex: z.number().int().nonnegative().optional(), adaptationSetIndex: z.number().int().nonnegative().optional(),
+    presentationStartSeconds: z.number().optional(), presentationEndSeconds: z.number().optional(),
+    source: z.object({ url: z.string().url(), sha256: z.string().regex(/^[a-f0-9]{64}$/), observedHashes: z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1).max(3).optional(), httpStatus: z.number().int(), contentLength: z.number().int().nonnegative().optional() }).optional(),
     probe: z.object({
       format: z.string().optional(),
       duration: z.number().nonnegative().optional(),
@@ -107,6 +112,7 @@ const EvidenceBundleV2Schema = z.object({
         height: z.number().int().nonnegative().optional(), frameRate: z.string().optional(), sampleRate: z.number().int().nonnegative().optional(),
         channels: z.number().int().nonnegative().optional(),
       })),
+      fmp4: z.unknown().optional(),
     }).optional(),
   })),
   hls: z.object({
@@ -145,6 +151,8 @@ const EvidenceBundleV2Schema = z.object({
       audioRenditionLogicalKey: z.string().optional(),
     }).optional(),
   }).optional(),
+  reportedContext: z.object({ approximateTimeSeconds: z.number().nonnegative().optional(), reportsVideoFreeze: z.boolean(), reportsAudioContinues: z.boolean(), reportsAbrSwitch: z.boolean(), reportsFourKToFullHd: z.boolean(), uncertainties: z.array(z.string()) }).optional(),
+  dash: z.object({ type: z.enum(["static", "dynamic"]), representations: z.array(z.object({ id: z.string(), periodIndex: z.number().int().nonnegative(), adaptationSetIndex: z.number().int().nonnegative(), contentType: z.enum(["video", "audio", "unknown"]), codecs: z.string().optional(), bandwidth: z.number().nonnegative().optional(), width: z.number().int().nonnegative().optional(), height: z.number().int().nonnegative().optional(), frameRate: z.string().optional(), timescale: z.number().positive(), segmentAlignment: z.boolean().optional(), bitstreamSwitching: z.boolean().optional(), segmentCount: z.number().int().nonnegative() })), limitations: z.array(z.string()), analysis: z.unknown().optional() }).optional(),
   observations: z.array(EvidenceObservationSchema),
   limitations: z.array(z.string()),
 });

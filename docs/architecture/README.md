@@ -16,15 +16,19 @@ flowchart LR
     Worker --> AI[AI provider]
     Worker --> FS[(Local artifacts)]
     API --> FS
+    Device[Device/player] -->|opaque playback URL| Delivery[Record data plane]
+    Delivery --> FS
+    Delivery --> DB
 ```
 
 No deploy inicial, web, API, worker, PostgreSQL e Caddy executam no mesmo VPS por
-Docker Compose.
+Docker Compose. Em Record R1, control plane e data plane compartilham o runtime
+Fastify; nenhuma porta ou processo e criado por recording.
 
 ## Arquitetura hexagonal leve
 
-O objetivo e proteger o fluxo de investigacao de detalhes externos, nao maximizar
-o numero de interfaces.
+O objetivo e proteger os fluxos de investigacao e Record de detalhes externos,
+nao maximizar o numero de interfaces.
 
 ### Application core
 
@@ -34,7 +38,12 @@ Casos de uso esperados:
 - `runInvestigation`;
 - `getInvestigation`;
 - `streamInvestigationEvents`;
-- `getReport`.
+- `getReport`;
+- `startRecording`;
+- `runRecording`;
+- `createPlaybackRun`;
+- `serveRecordedResource`;
+- `finishPlaybackRun`.
 
 ### Ports iniciais
 
@@ -43,7 +52,10 @@ Casos de uso esperados:
 - `InvestigationEventRepository`;
 - `ManifestCollector`;
 - `InvestigationAI`;
-- `ArtifactStore`.
+- `ArtifactStore`;
+- `RecordingRepository`;
+- `RecordingJobRepository`;
+- `RecordingStore`.
 
 ### Adapters
 
@@ -52,7 +64,9 @@ Casos de uso esperados:
 - PostgreSQL;
 - stream tools internos;
 - provider de IA;
-- filesystem local.
+- filesystem local;
+- rotas de delivery para recursos gravados;
+- shaper deterministico e journal PostgreSQL de requests.
 
 Nao criar ports para logger, IDs, factories ou helpers sem uma necessidade de teste
 ou troca concreta.
@@ -94,6 +108,38 @@ sequenceDiagram
     A-->>W: persisted events
 ```
 
+## Fluxo Record HLS VOD
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant A as Fastify control plane
+    participant D as PostgreSQL
+    participant K as Worker
+    participant O as HLS origin
+    participant F as Recording storage
+    participant P as Device/player
+    participant S as Fastify data plane
+
+    U->>A: POST /v1/recordings
+    A->>D: recording + job + event
+    K->>D: claim recording job
+    K->>O: protected manifests and media requests
+    K->>F: stage full supported ladder
+    K->>D: publish resources + recording ready
+    U->>A: POST /playback-runs with network profile
+    A->>D: run + token hash
+    A-->>U: opaque playback URL
+    P->>S: master, variants and chunks
+    S->>F: registered local resource
+    S-->>P: paced bytes under shared run budget
+    S->>D: request facts + ABR transitions
+    U->>A: inspect or finish run
+```
+
+`Recording` e uma origem imutavel e reutilizavel. `PlaybackRun` e um experimento
+com token, profile e evidencia proprios. Um run nunca altera os bytes gravados.
+
 ## Estado e persistencia
 
 PostgreSQL e a fonte de verdade para:
@@ -103,9 +149,12 @@ PostgreSQL e a fonte de verdade para:
 - investigation events;
 - artifact metadata;
 - reports.
+- recordings, recording jobs e recording events;
+- recorded resource metadata;
+- playback runs e delivery requests.
 
 O filesystem armazena arquivos, nunca o estado principal do workflow. Cada
-investigacao usa um workspace isolado.
+investigacao ou recording usa um workspace isolado.
 
 ## Jobs
 
@@ -121,6 +170,10 @@ investigacao usa um workspace isolado.
 - Transicoes renovam o lease e persistem estado + evento atomicamente.
 - Conclusao persiste report, investigation, job e evento na mesma transacao.
 
+Record usa `recording_jobs` porque a tabela `jobs` atual exige
+`investigation_id`. O contrato pequeno de claim, lease, heartbeat e retry e
+repetido sem transformar jobs em uma abstracao polimorfica prematura.
+
 ## Eventos
 
 - Append-only por investigacao.
@@ -132,6 +185,10 @@ investigacao usa um workspace isolado.
   SSE. Essa solucao e suficiente para um unico VPS e evita infraestrutura extra.
 - O cursor e o ID persistido do evento; `Last-Event-ID` impede replay duplicado.
 
+Record possui `recording_events` append-only e a mesma semantica de replay SSE.
+Delivery requests nao entram nessa timeline: formam um journal proprio, paginado
+e limitado ao playback run.
+
 ## Storage
 
 Layout alvo:
@@ -140,6 +197,8 @@ Layout alvo:
 .video-harness-data/
   workspaces/<investigationId>/
   artifacts/<investigationId>/
+  recording-workspaces/<recordingId>/
+  recordings/<recordingId>/
 ```
 
 Temporary files sao removidos ao final. Manifestos, evidencias selecionadas,
@@ -150,6 +209,10 @@ como `manifest/root` ou `manifest/variant/0`. Um novo retry grava arquivos com
 storage keys novos, substitui metadados do mesmo artifact logico em uma transacao
 e somente entao remove os arquivos superados. Um lote que falha antes do commit
 remove apenas os arquivos ainda nao registrados.
+
+Recordings usam staging e publish atomico no mesmo filesystem. O data plane serve
+somente logical paths presentes em `recorded_resources`; paths do device nunca
+viram URL externa nem provocam fetch sob demanda.
 
 ## Estrutura de codigo alvo
 
@@ -163,12 +226,38 @@ src/
     ports/
     adapters/
   stream-tools/
+  record/
+    domain/
+    application/
+    ports/
+    adapters/
+    stream-tools/
   database/
   ai/
   infra/
 ui/
 prompts/
 ```
+
+## Record HLS VOD e simulacao ABR
+
+- O clone materializa toda a ladder suportada dentro de uma janela limitada.
+- Cada URI derivada passa pela mesma protecao SSRF, DNS/IP pinning, redirect,
+  timeout e limite de bytes usada na investigacao.
+- A janela e validada entre variants antes da publicacao; misalignment que torne
+  o playback incorreto bloqueia o recording ou aparece como limitacao explicita.
+- Cada playback run recebe token opaco armazenado como hash e URL unica com
+  `Cache-Control: no-store`.
+- Throughput e compartilhado por video, audio e demais respostas concorrentes do
+  run. Latencia e aplicada por request e bytes sao enviados progressivamente.
+- O clock do profile comeca no primeiro request de media.
+- Requests persistem variant, bitrate, resolucao, sequence, stage, bytes e tempos.
+- Troca ABR observada significa mudanca de variant nos requests. Decode/render
+  permanece `not_measured` sem telemetria do device.
+- HLS VOD clear/MPEG-TS e Record R1; DASH VOD clear/fMP4 e Record R2.
+
+O plano completo esta em
+`docs/planning/RECORD-ABR-IMPLEMENTATION-PLAN.md`.
 
 ## Fronteira de rede para streams
 
@@ -195,7 +284,12 @@ prompts/
   `DEFAULT=YES`, depois `AUTOSELECT=YES` e por fim a ordem da master.
 - O lote e limitado a root + uma variant + uma rendition de audio.
 - A playlist media selecionada, ou o root quando ele ja e uma media playlist, tem
-  segmentos de inicio, meio e fim amostrados.
+  seus segmentos coletados conforme o modo configurado por
+  `VIDEO_HARNESS_MEDIA_SAMPLE_MODE`:
+  - `full` (padrao): baixa todos os segmentos ate o budget agregado. Para VOD curto
+    materializa o conteudo inteiro; em streams longas o budget limita a cobertura
+    ao inicio.
+  - `sample`: baixa somente os segmentos de inicio, meio e fim.
 - Subtitles e outras variants permanecem somente como descritores ate uma
   hipotese justificar coleta adicional.
 
@@ -207,3 +301,5 @@ prompts/
 - `phases/phase-3.md` - investigacao assistida por IA.
 - `phases/phase-4.md` - experiencia premium.
 - `phases/phase-5.md` - hardening e validacao.
+- `phases/phase-record-hls-vod.md` - fase ativa de Record R1.
+- `phases/phase-record-dash-vod.md` - extensao planejada Record R2.

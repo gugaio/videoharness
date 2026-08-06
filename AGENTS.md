@@ -4,11 +4,13 @@ Instrucoes obrigatorias para qualquer agente que atuar neste repositorio.
 
 ## Missao
 
-Construir o Video Harness Space (VHS) como um workspace de investigacao de
-video streaming assistido por IA. O MVP valida um unico fluxo:
+Construir o Video Harness Space (VHS) como um workspace de investigacao e
+experimentacao reproduzivel de video streaming. A validacao atual cobre dois
+fluxos focados:
 
 ```text
 URL + problema relatado -> investigacao visivel -> relatorio excelente
+URL HLS VOD -> recording limitado -> URL controlada -> evidencia de troca ABR
 ```
 
 Quando houver conflito entre adicionar funcionalidade e preservar simplicidade,
@@ -23,8 +25,10 @@ No inicio de cada sessao:
 3. Ler `docs/planning/PROJECT-VISION.md` se precisar de contexto de produto.
 4. Ler `docs/architecture/README.md`.
 5. Ler a fase ativa indicada no status em `docs/architecture/phases/`.
-6. Ler `docs/ui/UI-GUIDE.md` quando a tarefa afetar experiencia ou frontend.
-7. Ler `docs/api.md` quando a tarefa afetar contratos HTTP ou SSE.
+6. Ler `docs/planning/RECORD-ABR-IMPLEMENTATION-PLAN.md` quando a tarefa afetar
+   Record, origem local, delivery ou ABR.
+7. Ler `docs/ui/UI-GUIDE.md` quando a tarefa afetar experiencia ou frontend.
+8. Ler `docs/api.md` quando a tarefa afetar contratos HTTP ou SSE.
 
 ## Fonte de verdade
 
@@ -53,16 +57,21 @@ Construir somente:
 6. Timeline ao vivo via SSE com reconexao.
 7. Relatorio final bonito e compartilhavel.
 8. Deploy barato em um unico VPS com Docker Compose.
+9. Record HLS VOD limitado com toda a ladder suportada.
+10. Origem HTTP local com URL unica por playback run.
+11. Simulacao deterministica de throughput/latencia para induzir ABR.
+12. Journal de requests e comprovacao de troca no nivel de request.
 
 Nao construir agora:
 
-- Record, Watch ou Replay funcionais;
+- Record live, Watch ou Replay funcionais;
+- DASH Record antes do Definition of Done de HLS VOD;
+- DRM, LL-HLS, perda/reorder de pacotes ou emulacao de device;
 - dashboard generico de operacoes;
 - chat generico;
 - memoria, skills, MCP ou canais;
 - marketplace ou plugins;
 - colaboracao em equipe;
-- simulacao real de dispositivos;
 - microservicos, Redis, Kafka ou Kubernetes.
 
 ## Stack padrao
@@ -117,9 +126,16 @@ Nao trocar a stack sem registrar a decisao em
    midia usam binario e argumentos estruturados.
 8. URLs fornecidas por usuarios exigem protecao contra SSRF, redirects maliciosos,
    redes privadas e downloads sem limite.
-9. Temporary files ficam isolados por investigation ID e devem ser limpos em
-   sucesso ou falha, preservando somente evidencias selecionadas.
+9. Temporary files ficam isolados por investigation ou recording ID e devem ser
+   limpos em sucesso ou falha, preservando somente artifacts/recordings publicados.
 10. Nao incluir segredos, `.env`, artifacts locais ou workspaces no Git.
+11. O data plane de Record serve somente recursos previamente registrados; nunca
+    transforma um path pedido pelo device em fetch sob demanda para a origem.
+12. Perfis de rede sao deterministas e limitados. Video, audio e demais recursos
+    de media compartilham o budget do playback run.
+13. Request de outra variant comprova selecao de rede, nao decode ou render. Essa
+    limitacao deve permanecer explicita na API, UI e resultado.
+14. Tokens de playback sao opacos, armazenados como hash e redigidos de logs.
 
 ## Contratos e documentacao
 

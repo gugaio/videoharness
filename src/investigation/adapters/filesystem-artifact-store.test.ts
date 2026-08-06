@@ -23,10 +23,11 @@ describe("FilesystemArtifactStore", () => {
       content: new TextEncoder().encode("#EXTM3U"),
     });
 
-    expect(stored).toEqual({
+    expect(stored).toMatchObject({
       storageKey: "artifacts/c56a4180-65aa-42ec-a945-5fd21dec0538/8dc67e09-4b25-4fe5-a69a-58f896fb5197.m3u8",
       sizeBytes: 7,
     });
+    expect(stored.sha256).toMatch(/^[a-f0-9]{64}$/);
     await expect(fs.readFile(path.join(directory, stored.storageKey), "utf8")).resolves.toBe("#EXTM3U");
     await store.remove(stored.storageKey);
     await expect(fs.stat(path.join(directory, stored.storageKey))).rejects.toMatchObject({ code: "ENOENT" });

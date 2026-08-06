@@ -21,6 +21,7 @@ import {
   buildManifestEvidence,
   buildManifestReport,
 } from "./build-manifest-evidence.js";
+import { parseReportedContext } from "../../stream-tools/reported-context.js";
 
 export type InvestigationWorker = {
   runNext(): Promise<boolean>;
@@ -72,13 +73,15 @@ export function createInvestigationWorker(input: {
           buildValidatingTransition(job),
         );
         const collection = await input.collector.collect(job.investigation.sourceUrl);
+        collection.reportedContext = parseReportedContext(job.investigation.problemDescription);
         if (input.mediaCollector && input.mediaProbe) {
           const collectedSamples = await input.mediaCollector.collect(collection);
           collection.mediaSamples = collectedSamples.samples;
           collection.mediaLimitations = collectedSamples.limitations;
           for (const sample of collection.mediaSamples.filter((entry) => entry.kind === "media-segment")) {
             const init = collection.mediaSamples.find((entry) =>
-              entry.kind === "init-segment" && entry.sourceManifestLogicalKey === sample.sourceManifestLogicalKey);
+              entry.kind === "init-segment" && entry.sourceManifestLogicalKey === sample.sourceManifestLogicalKey
+                && entry.representationId === sample.representationId);
             try {
               sample.probe = await input.mediaProbe.probe({
                 investigationId: job.investigation.id,
@@ -90,7 +93,7 @@ export function createInvestigationWorker(input: {
             }
           }
         }
-        if (input.labWorkspace) {
+        if (input.labWorkspace && collection.manifests[0]?.inspection.protocol === "hls") {
           await input.labWorkspace.prepare(job.investigation.id, collection);
         }
         if (leaseLost) throw new JobLeaseLostError();
@@ -108,6 +111,7 @@ export function createInvestigationWorker(input: {
             id: artifactId,
             storageKey: stored.storageKey,
             sizeBytes: stored.sizeBytes,
+            ...(stored.sha256 ? { sha256: stored.sha256 } : {}),
           };
         }
         for (const sample of collection.mediaSamples ?? []) {
@@ -119,7 +123,7 @@ export function createInvestigationWorker(input: {
             content: sample.content.bytes,
           });
           uncommittedStorageKeys.add(stored.storageKey);
-          sample.artifact = { id: artifactId, storageKey: stored.storageKey, sizeBytes: stored.sizeBytes };
+          sample.artifact = { id: artifactId, storageKey: stored.storageKey, sizeBytes: stored.sizeBytes, ...(stored.sha256 ? { sha256: stored.sha256 } : {}) };
         }
         const evidence = buildManifestEvidence(collection);
         const rootManifest = evidence.manifests[0]!;

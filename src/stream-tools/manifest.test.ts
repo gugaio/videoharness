@@ -23,7 +23,7 @@ describe("inspectManifest", () => {
       segmentCount: 2,
     });
     expect(inspectManifest("<?xml version=\"1.0\"?><MPD><Period><Representation/><Representation /></Period></MPD>"))
-      .toEqual({ protocol: "dash", kind: "mpd", representationCount: 2 });
+      .toMatchObject({ protocol: "dash", kind: "mpd", representationCount: 2 });
   });
 
   it("rejects content that is not a supported manifest", () => {

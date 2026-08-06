@@ -41,6 +41,7 @@ export type ManifestEvidence = ManifestCounts & {
   finalUrl: string;
   kind: ManifestKind;
   sizeBytes: number;
+  sha256?: string;
   targetDuration?: number;
   mediaSequence?: number;
   discontinuitySequence?: number;
@@ -87,10 +88,17 @@ export type EvidenceBundleV2 = {
     logicalKey: string;
     kind: "init-segment" | "media-segment";
     sizeBytes: number;
+    sha256?: string;
     sourceManifestLogicalKey?: string;
     sampleIndex?: number;
     sequence?: number;
     declaredDuration?: number;
+    representationId?: string;
+    periodIndex?: number;
+    adaptationSetIndex?: number;
+    presentationStartSeconds?: number;
+    presentationEndSeconds?: number;
+    source?: { url: string; sha256: string; observedHashes?: string[]; httpStatus: number; contentLength?: number };
     probe?: {
       format?: string;
       duration?: number;
@@ -106,8 +114,37 @@ export type EvidenceBundleV2 = {
         sampleRate?: number;
         channels?: number;
       }>;
+      fmp4?: import("../ports/media-sample-collector.js").MediaProbeResult["fmp4"];
     };
   }>;
+  reportedContext?: {
+    approximateTimeSeconds?: number;
+    reportsVideoFreeze: boolean;
+    reportsAudioContinues: boolean;
+    reportsAbrSwitch: boolean;
+    reportsFourKToFullHd: boolean;
+    uncertainties: string[];
+  };
+  dash?: {
+    type: "static" | "dynamic";
+    representations: Array<{
+      id: string;
+      periodIndex: number;
+      adaptationSetIndex: number;
+      contentType: "video" | "audio" | "unknown";
+      codecs?: string;
+      bandwidth?: number;
+      width?: number;
+      height?: number;
+      frameRate?: string;
+      timescale: number;
+      segmentAlignment?: boolean;
+      bitstreamSwitching?: boolean;
+      segmentCount: number;
+    }>;
+    limitations: string[];
+    analysis?: import("../application/analyze-dash-forensics.js").DashForensicAnalysis;
+  };
   hls?: {
     variants: HlsVariantEvidence[];
     renditions: HlsRenditionEvidence[];

@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { hevcFrameKind, inspectFmp4Fragment, inspectFmp4Init } from "../../stream-tools/isobmff.js";
 import type { MediaProbe, MediaProbeResult, MediaProbeTrack } from "../ports/media-sample-collector.js";
 
 const FfprobeOutputSchema = z.object({
@@ -57,15 +58,47 @@ export class FfprobeMediaProbe implements MediaProbe {
         };
       });
       const duration = finite(parsed.data.format?.duration);
+      const isFragmentedMp4 = Boolean(input.initBytes) || looksLikeIsoBmff(input.sample.content.bytes);
+      const init = input.initBytes && isFragmentedMp4 ? inspectFmp4Init(input.initBytes) : undefined;
+      const fragment = isFragmentedMp4 ? inspectFmp4Fragment(input.sample.content.bytes, init?.nalLengthSize ?? 4) : undefined;
       return {
         ...(parsed.data.format?.format_name ? { format: parsed.data.format.format_name } : {}),
         ...(duration === undefined ? {} : { duration }),
         tracks,
+        ...(fragment ? { fmp4: {
+          ...(init ? { init: {
+            ...(init.fourcc ? { fourcc: init.fourcc } : {}),
+            ...(init.timescale === undefined ? {} : { timescale: init.timescale }),
+            ...(init.nalLengthSize === undefined ? {} : { nalLengthSize: init.nalLengthSize }),
+            ...(init.hevc ? { hevc: init.hevc } : {}),
+            structuralErrors: init.structuralErrors,
+          } } : {}),
+          fragment: {
+            ...(fragment.sequenceNumber === undefined ? {} : { sequenceNumber: fragment.sequenceNumber }),
+            ...(fragment.baseMediaDecodeTime === undefined ? {} : { baseMediaDecodeTime: String(fragment.baseMediaDecodeTime) }),
+            samples: fragment.samples.map((sample) => ({
+              dts: String(sample.dts), pts: String(sample.pts),
+              ...(sample.duration === undefined ? {} : { duration: String(sample.duration) }),
+              ...(sample.size === undefined ? {} : { size: sample.size }),
+              ...(sample.flags === undefined ? {} : { flags: sample.flags }),
+              ...(sample.sync === undefined ? {} : { sync: sample.sync }),
+              ...(sample.compositionOffset === undefined ? {} : { compositionOffset: String(sample.compositionOffset) }),
+              firstFrameKind: hevcFrameKind(sample.nalTypes),
+            })),
+            structuralErrors: fragment.structuralErrors,
+          },
+        } } : {}),
       };
     } finally {
       await fs.rm(file, { force: true }).catch(() => undefined);
     }
   }
+}
+
+function looksLikeIsoBmff(bytes: Uint8Array): boolean {
+  if (bytes.byteLength < 8) return false;
+  const type = String.fromCharCode(...bytes.subarray(4, 8));
+  return type === "styp" || type === "moof" || type === "ftyp";
 }
 
 function finite(value: string | number | undefined): number | undefined {

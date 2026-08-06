@@ -94,6 +94,22 @@ describe("HttpMediaSampleCollector", () => {
     expect(result.samples.map((sample) => sample.sampleIndex)).toEqual([0, 1, 2, 3, 4]);
     expect(requester).toHaveBeenCalledTimes(5);
   });
+
+  it("collects a DASH candidate window and repeats the incident segment for hash evidence", async () => {
+    const requester = vi.fn<PinnedRequester>(async (url) => response(url.pathname));
+    const collector = new HttpMediaSampleCollector(new SafeHttpClient({
+      resolver: async () => [{ address: "93.184.216.34", family: 4 }], requester,
+    }), { maxTotalBytes: 100_000 });
+    const text = `<?xml version="1.0"?><MPD type="static" mediaPresentationDuration="PT12S"><Period duration="PT12S"><AdaptationSet contentType="video" mimeType="video/mp4"><SegmentTemplate timescale="1" media="$RepresentationID$-$Number$.m4s" initialization="$RepresentationID$.mp4" duration="4"/><Representation id="uhd" width="3840" height="2160"/><Representation id="fhd" width="1920" height="1080"/></AdaptationSet><AdaptationSet contentType="audio" mimeType="audio/mp4"><SegmentTemplate timescale="1" media="audio-$Number$.m4s" initialization="audio.mp4" duration="4"/><Representation id="audio"/></AdaptationSet></Period></MPD>`;
+    const result = await collector.collect({
+      manifests: [{ logicalKey: "manifest/root", role: "root", source: { requestedUrl: "https://stream.example/manifest.mpd", finalUrl: "https://stream.example/manifest.mpd", statusCode: 200 }, content: { bytes: new TextEncoder().encode(text) }, inspection: inspectManifest(text, "https://stream.example/manifest.mpd") }],
+      reportedContext: { approximateTimeSeconds: 4, reportsVideoFreeze: true, reportsAudioContinues: true, reportsAbrSwitch: true, reportsFourKToFullHd: true, uncertainties: [] },
+    });
+    expect(result.samples.filter((sample) => sample.kind === "init-segment")).toHaveLength(3);
+    const incident = result.samples.filter((sample) => sample.presentationStartSeconds === 4);
+    expect(incident).toHaveLength(3);
+    expect(incident.every((sample) => sample.source?.observedHashes?.length === 3)).toBe(true);
+  });
 });
 
 function response(body: string): http.IncomingMessage {

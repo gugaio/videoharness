@@ -14,6 +14,8 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "eval:check": "tsc -p tsconfig.evals.json --noEmit",
+    "eval:fixtures": "tsx evals/run-fixtures.ts",
     "start:api": "node dist/api/index.js",
     "start:worker": "node dist/worker/index.js",
     "db:migrate": "tsx src/database/migrate.ts",

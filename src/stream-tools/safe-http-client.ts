@@ -17,6 +17,7 @@ export type SafeTextResponse = {
   finalUrl: string;
   statusCode: number;
   contentType?: string;
+  contentLength?: number;
   bytes: Uint8Array;
   text: string;
 };
@@ -142,6 +143,7 @@ export class SafeHttpClient {
       finalUrl: url.toString(),
       statusCode,
       ...(contentType ? { contentType } : {}),
+      ...(Number.isFinite(declaredLength) && declaredLength > 0 ? { contentLength: declaredLength } : {}),
       bytes,
     };
   }

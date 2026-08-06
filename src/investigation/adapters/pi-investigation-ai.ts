@@ -47,8 +47,8 @@ type AgentId = AiAgentRun["id"];
 
 const profiles = [
   { id: "timeline-playback", label: "Timeline & Playback", focus: "PTS/DTS continuity, A/V alignment, discontinuities and playback impact." },
-  { id: "container-encoding", label: "Container & Encoding", focus: "MPEG-TS container, observed codecs, tracks, durations and keyframe evidence." },
-  { id: "manifest-delivery", label: "Manifest & Delivery", focus: "HLS topology, selection, declared versus observed media properties and limitations." },
+  { id: "container-encoding", label: "Container & Encoding", focus: "Observed container boxes, codecs, initialization configuration, tracks, durations and keyframe evidence." },
+  { id: "manifest-delivery", label: "Manifest & Delivery", focus: "Manifest topology, representation selection, delivery facts and declared versus observed media properties." },
 ] as const;
 
 export class PiInvestigationAI implements InvestigationAI {
@@ -110,7 +110,7 @@ export class PiInvestigationAI implements InvestigationAI {
       const lead = await this.runStructured(
         input.investigationId,
         "lead-investigator",
-        leadPrompt(Boolean(this.config.lab)),
+        leadPrompt(Boolean(this.config.lab) && input.evidence.source.protocol === "hls", input.evidence.source.protocol),
         JSON.stringify({ packet: JSON.parse(packet), specialists: completed }),
         parseLeadOutput,
         createEvidenceTools(input.evidence, this.config.lab, input.investigationId, this.config.shellRunRecorder),
@@ -253,15 +253,15 @@ export class PiInvestigationAI implements InvestigationAI {
 }
 
 function specialistPrompt(label: string, focus: string): string {
-  return `You are the ${label} specialist for an HLS MPEG-TS investigation. ${focus}
+  return `You are the ${label} specialist for a streaming media investigation. ${focus}
 Use only evidence IDs present in the supplied evidenceIndex. Do not invent measurements or causal facts.
 When a preserved sample needs closer inspection, you may call inspect_preserved_sample with its exact logical key. This tool only returns stored probe facts; do not request URLs, commands or arbitrary files.
 Return exactly one JSON object without markdown:
 {"summary":"string","findings":[{"title":"string","severity":"info|warning|error","explanation":"string","evidenceIds":["exact evidence ID"],"confidence":0.5}],"limitations":["string"]}
 Every confidence MUST be a finite JSON number between 0 and 1, never a string, null, NaN or Infinity. When confidence cannot be assessed, use 0.2 and explain why in limitations. Findings may be empty when the evidence does not support a claim.`;
 }
-function leadPrompt(hasLab: boolean): string {
-  return `You are the Lead Investigator. Synthesize the specialist reports and deterministic HLS MPEG-TS evidence.
+function leadPrompt(hasLab: boolean, protocol: "hls" | "dash" = "hls"): string {
+  return `You are the Lead Investigator. Synthesize the specialist reports and deterministic ${protocol.toUpperCase()} evidence.
 The initial packet is a starting point, not a stopping condition. If it does not confirm or rule out the reported symptom, you MUST use the available investigation tools to obtain a relevant additional measurement before returning an inconclusive result. Do not merely list an unmeasured cause as a possibility.
 Every finding must cite exact IDs present in evidenceIndex.
 You may inspect an already preserved sample through inspect_preserved_sample; it cannot fetch or execute anything.
@@ -309,7 +309,7 @@ function buildEvidenceIndex(evidence: EvidenceBundleV2 | EvidenceBundleV3): Arra
   ];
 }
 function sanitizeEvidence(evidence: EvidenceBundleV2 | EvidenceBundleV3): object {
-  return { protocol: evidence.source.protocol, manifests: evidence.manifests.map(({ requestedUrl: _requestedUrl, finalUrl: _finalUrl, ...item }) => item), mediaSamples: evidence.mediaSamples, observations: evidence.observations, limitations: evidence.limitations, hls: evidence.hls, ...(evidence.schemaVersion === 3 ? { playbackSessions: evidence.playbackSessions } : {}) };
+  return { protocol: evidence.source.protocol, manifests: evidence.manifests.map(({ requestedUrl: _requestedUrl, finalUrl: _finalUrl, ...item }) => item), mediaSamples: evidence.mediaSamples, observations: evidence.observations, limitations: evidence.limitations, hls: evidence.hls, reportedContext: evidence.reportedContext, dash: evidence.dash, ...(evidence.schemaVersion === 3 ? { playbackSessions: evidence.playbackSessions } : {}) };
 }
 /** Specialists inspect saved facts; only the Lead receives the separate lab shell. */
 function createEvidenceTools(
@@ -380,6 +380,7 @@ async function collectRequiredSymptomMeasurements(
   lab?: InvestigationLab,
   shellRunRecorder?: ShellRunRecorder,
 ): Promise<void> {
+  if (input.evidence.source.protocol !== "hls") return;
   if (!lab || !requiresFreezeDetection(input.problemDescription)) return;
   try {
     const result = await lab.execute({ investigationId: input.investigationId, command: FREEZE_DETECTION_COMMAND, timeoutMs: 120_000 });

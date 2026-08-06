@@ -67,6 +67,7 @@ const EvidenceBundleV1Schema = z.object({
     artifactId: z.string().uuid(),
     kind: z.enum(["master", "media", "mpd"]),
     sizeBytes: z.number().int().nonnegative(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     variantCount: z.number().int().nonnegative().optional(),
     segmentCount: z.number().int().nonnegative().optional(),
     representationCount: z.number().int().nonnegative().optional(),
@@ -87,6 +88,7 @@ const EvidenceBundleV2Schema = z.object({
     finalUrl: z.string().url(),
     kind: z.enum(["master", "media", "mpd"]),
     sizeBytes: z.number().int().nonnegative(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     variantCount: z.number().int().nonnegative().optional(),
     segmentCount: z.number().int().nonnegative().optional(),
     representationCount: z.number().int().nonnegative().optional(),
@@ -105,6 +107,9 @@ const EvidenceBundleV2Schema = z.object({
     sampleIndex: z.number().int().nonnegative().optional(),
     sequence: z.number().int().nonnegative().optional(),
     declaredDuration: z.number().nonnegative().optional(),
+    representationId: z.string().optional(), periodIndex: z.number().int().nonnegative().optional(), adaptationSetIndex: z.number().int().nonnegative().optional(),
+    presentationStartSeconds: z.number().optional(), presentationEndSeconds: z.number().optional(),
+    source: z.object({ url: z.string().url(), sha256: z.string().regex(/^[a-f0-9]{64}$/), observedHashes: z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1).max(3).optional(), httpStatus: z.number().int(), contentLength: z.number().int().nonnegative().optional() }).optional(),
     probe: z.object({
       format: z.string().optional(), duration: z.number().nonnegative().optional(),
       tracks: z.array(z.object({
@@ -112,6 +117,7 @@ const EvidenceBundleV2Schema = z.object({
         firstPts: z.number().optional(), lastPts: z.number().optional(), width: z.number().int().nonnegative().optional(),
         height: z.number().int().nonnegative().optional(), frameRate: z.string().optional(), sampleRate: z.number().int().nonnegative().optional(), channels: z.number().int().nonnegative().optional(),
       })),
+      fmp4: z.unknown().optional(),
     }).optional(),
   })),
   hls: z.object({
@@ -150,6 +156,8 @@ const EvidenceBundleV2Schema = z.object({
       audioRenditionLogicalKey: z.string().optional(),
     }).optional(),
   }).optional(),
+  reportedContext: z.object({ approximateTimeSeconds: z.number().nonnegative().optional(), reportsVideoFreeze: z.boolean(), reportsAudioContinues: z.boolean(), reportsAbrSwitch: z.boolean(), reportsFourKToFullHd: z.boolean(), uncertainties: z.array(z.string()) }).optional(),
+  dash: z.object({ type: z.enum(["static", "dynamic"]), representations: z.array(z.object({ id: z.string(), periodIndex: z.number().int().nonnegative(), adaptationSetIndex: z.number().int().nonnegative(), contentType: z.enum(["video", "audio", "unknown"]), codecs: z.string().optional(), bandwidth: z.number().nonnegative().optional(), width: z.number().int().nonnegative().optional(), height: z.number().int().nonnegative().optional(), frameRate: z.string().optional(), timescale: z.number().positive(), segmentAlignment: z.boolean().optional(), bitstreamSwitching: z.boolean().optional(), segmentCount: z.number().int().nonnegative() })), limitations: z.array(z.string()), analysis: z.unknown().optional() }).optional(),
   observations: z.array(EvidenceObservationSchema),
   limitations: z.array(z.string()),
 });
@@ -216,6 +224,21 @@ const InvestigationReportSchema = z.object({
 export type Health = z.infer<typeof HealthSchema>;
 export type Investigation = z.infer<typeof InvestigationSchema>;
 export type InvestigationEvent = z.infer<typeof InvestigationEventSchema>;
+
+const RecordingSchema = z.object({
+  id: z.string().uuid(), sourceUrl: z.string().url(), protocol: z.literal("hls"),
+  state: z.enum(["queued", "validating", "collecting", "ready", "failed"]),
+  requestedDurationSeconds: z.number().int(), requestedStartSeconds: z.number().int(),
+  coverageSeconds: z.number().optional(), totalBytes: z.number().optional(), errorCode: z.string().optional(), errorMessage: z.string().optional(),
+  createdAt: z.string(), updatedAt: z.string(), completedAt: z.string().optional(),
+});
+export const RecordingEventSchema = z.object({ id: z.string().regex(/^\d+$/), recordingId: z.string().uuid(), type: z.string(), actor: z.string(), message: z.string(), payload: z.record(z.string(), z.unknown()), createdAt: z.string() });
+const NetworkProfileSchema = z.object({ schemaVersion: z.literal(1), name: z.string(), stages: z.array(z.object({ afterVideoRequests: z.number(), bandwidthKbps: z.number(), latencyMs: z.number() })) });
+const PlaybackRunSchema = z.object({ id: z.string().uuid(), recordingId: z.string().uuid(), state: z.enum(["created", "active", "completed", "expired", "failed"]), maxDurationSeconds: z.number(), profile: NetworkProfileSchema, createdAt: z.string(), expiresAt: z.string() });
+export type Recording = z.infer<typeof RecordingSchema>;
+export type RecordingEvent = z.infer<typeof RecordingEventSchema>;
+const DeliveryRequestSchema = z.object({ id: z.string(), logicalPath: z.string(), resourceKind: z.string(), targetId: z.string().optional(), mediaSequence: z.number().optional(), variantBandwidth: z.number().optional(), variantResolution: z.string().optional(), stageIndex: z.number(), bandwidthKbps: z.number(), latencyMs: z.number(), bytesSent: z.number(), statusCode: z.number(), startedAt: z.string(), completedAt: z.string() });
+export type DeliveryRequest = z.infer<typeof DeliveryRequestSchema>;
 export type InvestigationReport = z.infer<typeof InvestigationReportSchema>;
 
 export async function getHealth(): Promise<Health> {
@@ -246,6 +269,23 @@ export async function startInvestigation(input: {
     body: JSON.stringify(input),
   });
   return parseResponse(response, z.object({ investigation: InvestigationSchema, replayed: z.boolean() }));
+}
+
+export async function startRecording(input: { url: string; durationSeconds: number; startSeconds: number }): Promise<{ recording: Recording; replayed: boolean }> {
+  const response = await fetch("/v1/recordings", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify(input) });
+  return parseResponse(response, z.object({ recording: RecordingSchema, replayed: z.boolean() }));
+}
+export async function getRecording(id: string): Promise<Recording> {
+  const response = await fetch(`/v1/recordings/${encodeURIComponent(id)}`);
+  return (await parseResponse(response, z.object({ recording: RecordingSchema }))).recording;
+}
+export async function createRecordingPlaybackRun(id: string): Promise<{ run: z.infer<typeof PlaybackRunSchema>; playbackUrl: string }> {
+  const response = await fetch(`/v1/recordings/${encodeURIComponent(id)}/playback-runs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profile: { schemaVersion: 1, name: "Good → constrained → recovery", stages: [{ afterVideoRequests: 0, bandwidthKbps: 12000, latencyMs: 30 }, { afterVideoRequests: 3, bandwidthKbps: 1200, latencyMs: 200 }, { afterVideoRequests: 8, bandwidthKbps: 12000, latencyMs: 30 }] } }) });
+  return parseResponse(response, z.object({ run: PlaybackRunSchema, playbackUrl: z.string() }));
+}
+export async function getRecordingRequests(recordingId: string, runId: string): Promise<DeliveryRequest[]> {
+  const response = await fetch(`/v1/recordings/${encodeURIComponent(recordingId)}/playback-runs/${encodeURIComponent(runId)}/requests?limit=10`);
+  return (await parseResponse(response, z.object({ requests: z.array(DeliveryRequestSchema) }))).requests;
 }
 
 export async function getInvestigation(id: string): Promise<Investigation> {

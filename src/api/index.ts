@@ -7,6 +7,14 @@ import { createStartInvestigation } from "../investigation/application/start-inv
 import { PostgresInvestigationQuery } from "../investigation/adapters/postgres-investigation-query.js";
 import { createInvestigationQueries } from "../investigation/application/investigation-queries.js";
 import { PostgresPlaybackSessions } from "../investigation/adapters/postgres-playback-session.js";
+import { FilesystemArtifactStore } from "../investigation/adapters/filesystem-artifact-store.js";
+import { PostgresRecordingIntake } from "../record/adapters/postgres-recording-intake.js";
+import { createStartRecording } from "../record/application/start-recording.js";
+import { PostgresRecordingQuery } from "../record/adapters/postgres-recording-query.js";
+import { createRecordingQueries } from "../record/application/recording-queries.js";
+import { PostgresPlaybackRuns } from "../record/adapters/postgres-playback-run.js";
+import { createPlaybackRun } from "../record/application/playback-runs.js";
+import { FilesystemRecordingStore } from "../record/adapters/filesystem-recording-store.js";
 
 const config = loadConfig();
 const pool = createDatabasePool(config.databaseUrl);
@@ -16,6 +24,12 @@ const server = buildApiServer({
   startInvestigation: createStartInvestigation(new PostgresInvestigationIntake(pool)),
   investigationQueries: createInvestigationQueries(investigationQuery),
   playbackSessions: new PostgresPlaybackSessions(pool),
+  artifactStore: new FilesystemArtifactStore(config.dataDir),
+  startRecording: createStartRecording(new PostgresRecordingIntake(pool)),
+  recordingQueries: createRecordingQueries(new PostgresRecordingQuery(pool)),
+  createPlaybackRun: createPlaybackRun(new PostgresPlaybackRuns(pool)),
+  playbackRuns: new PostgresPlaybackRuns(pool),
+  recordingStore: new FilesystemRecordingStore(config.dataDir),
   version: process.env.npm_package_version ?? "0.1.0",
 });
 

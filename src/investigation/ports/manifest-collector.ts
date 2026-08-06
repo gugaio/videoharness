@@ -1,6 +1,7 @@
 import type { HlsManifestSelection } from "../../stream-tools/hls-manifest.js";
 import type { ManifestInspection } from "../../stream-tools/manifest.js";
 import type { MediaSample } from "./media-sample-collector.js";
+import type { ReportedContext } from "../../stream-tools/reported-context.js";
 
 export type Manifest = {
   logicalKey: string;
@@ -19,6 +20,7 @@ export type Manifest = {
     id: string;
     storageKey: string;
     sizeBytes: number;
+    sha256?: string;
   };
 };
 
@@ -27,6 +29,7 @@ export type ManifestCollection = {
   hlsSelection?: HlsManifestSelection;
   mediaSamples?: MediaSample[];
   mediaLimitations?: string[];
+  reportedContext?: ReportedContext;
 };
 
 export interface ManifestCollector {

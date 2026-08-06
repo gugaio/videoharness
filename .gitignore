@@ -11,10 +11,11 @@ ui/node_modules/
 .video-harness-data/
 workspaces/
 artifacts/
+evals/.generated/
+.eval-dist/
 
 *.log
 *.tsbuildinfo
 .DS_Store
 .idea/
 .vscode/
-

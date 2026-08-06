@@ -7,12 +7,14 @@ import type {
 } from "../ports/manifest-collector.js";
 import type { MediaSample } from "../ports/media-sample-collector.js";
 import type { AiInvestigationResult } from "../ports/investigation-ai.js";
+import { analyzeDashForensics } from "./analyze-dash-forensics.js";
 
 export function buildManifestEvidence(collection: ManifestCollection): EvidenceBundleV2 {
   const root = collection.manifests.find((manifest) => manifest.role === "root");
   if (!root) throw new Error("Manifest collection has no root manifest");
   requireArtifact(root);
   const rootHls = root.inspection.hls;
+  const rootDash = root.inspection.dash;
   const variant = collection.manifests.find((manifest) => manifest.role === "variant");
   const audio = collection.manifests.find((manifest) =>
     manifest.logicalKey === "manifest/rendition/audio/0");
@@ -56,6 +58,27 @@ export function buildManifestEvidence(collection: ManifestCollection): EvidenceB
     },
     manifests: collection.manifests.map(toManifestEvidence),
     mediaSamples: (collection.mediaSamples ?? []).map(toMediaSampleEvidence),
+    ...(collection.reportedContext ? { reportedContext: collection.reportedContext } : {}),
+    ...(rootDash ? { dash: {
+      type: rootDash.type,
+      representations: rootDash.representations.map((representation) => ({
+        id: representation.id,
+        periodIndex: representation.periodIndex,
+        adaptationSetIndex: representation.adaptationSetIndex,
+        contentType: representation.contentType,
+        ...(representation.codecs ? { codecs: representation.codecs } : {}),
+        ...(representation.bandwidth === undefined ? {} : { bandwidth: representation.bandwidth }),
+        ...(representation.width === undefined ? {} : { width: representation.width }),
+        ...(representation.height === undefined ? {} : { height: representation.height }),
+        ...(representation.frameRate ? { frameRate: representation.frameRate } : {}),
+        timescale: representation.timescale,
+        ...(representation.segmentAlignment === undefined ? {} : { segmentAlignment: representation.segmentAlignment }),
+        ...(representation.bitstreamSwitching === undefined ? {} : { bitstreamSwitching: representation.bitstreamSwitching }),
+        segmentCount: representation.segments.length,
+      })),
+      limitations: rootDash.limitations,
+      analysis: analyzeDashForensics(rootDash, collection.mediaSamples ?? [], collection.reportedContext),
+    } } : {}),
     ...(rootHls ? {
       hls: {
         variants: rootHls.variants,
@@ -103,9 +126,13 @@ export function buildManifestReport(
   const selectedVariant = evidence.hls?.selection
     ? evidence.hls.variants.find((variant) => variant.index === evidence.hls?.selection?.variantIndex)
     : undefined;
+  const dashAnalysis = evidence.dash?.analysis;
+  const candidateBoundary = dashAnalysis?.boundaries.find((boundary) =>
+    boundary.sourceRepresentationId === dashAnalysis.candidate?.sourceRepresentationId
+      && boundary.destinationRepresentationId === dashAnalysis.candidate?.destinationRepresentationId);
   return {
     placeholder: false,
-    title: `${evidence.source.protocol.toUpperCase()} media evidence collected`,
+    title: evidence.dash ? "DASH representation-boundary evidence collected" : `${evidence.source.protocol.toUpperCase()} media evidence collected`,
     summary: `${evidence.manifests.length} ${evidence.source.protocol.toUpperCase()} manifest artifact${
       evidence.manifests.length === 1 ? "" : "s"
     } and ${evidence.mediaSamples.length} bounded media sample artifact${evidence.mediaSamples.length === 1 ? "" : "s"} were fetched through the protected network boundary and preserved as evidence.`,
@@ -124,6 +151,16 @@ export function buildManifestReport(
         explanation: `Variant ${selectedVariant.index} selected by highest bandwidth${
           selectedVariant.bandwidth !== undefined ? ` (${selectedVariant.bandwidth} bps)` : ""
         }${selectedVariant.resolution ? `, ${selectedVariant.resolution}` : ""}.`,
+      }] : []),
+      ...(evidence.dash ? [{
+        title: "DASH representation ladder",
+        status: "observed" as const,
+        explanation: `${evidence.dash.representations.filter((representation) => representation.contentType === "video").length} video and ${evidence.dash.representations.filter((representation) => representation.contentType === "audio").length} audio representations were expanded from the MPD.`,
+      }] : []),
+      ...(candidateBoundary ? [{
+        title: "Candidate representation boundary",
+        status: candidateBoundary.classification === "continuous" ? "observed" as const : "limitation" as const,
+        explanation: `${candidateBoundary.sourceRepresentationId} → ${candidateBoundary.destinationRepresentationId}: ${candidateBoundary.classification}${candidateBoundary.firstFrameKind ? `; first destination frame ${candidateBoundary.firstFrameKind}` : ""}${candidateBoundary.initCompatible === false ? "; init configuration differs" : ""}.${candidateBoundary.reasons.length ? ` ${candidateBoundary.reasons.join(" ")}` : ""}`,
       }] : []),
       ...(evidence.mediaSamples.filter((sample) => sample.probe).map((sample) => ({
         title: `Media sample ${sample.logicalKey}`,
@@ -146,7 +183,9 @@ export function buildManifestReport(
       level: "limited",
       explanation: ai?.likelyCause
         ? `AI synthesis: ${ai.likelyCause}`
-        : "The manifest and a bounded media sample are directly observed, but root-cause confidence requires broader playback and delivery evidence.",
+        : evidence.dash
+          ? "The reported symptom prioritized a candidate DASH boundary. The media facts are observed, but the actual player switch and device buffer state are not available in this investigation."
+          : "The manifest and a bounded media sample are directly observed, but root-cause confidence requires broader playback and delivery evidence.",
     },
     evidence,
     ...(ai ? { ai } : {}),
@@ -161,10 +200,17 @@ function toMediaSampleEvidence(sample: MediaSample): EvidenceBundleV2["mediaSamp
     logicalKey: sample.logicalKey,
     kind: sample.kind,
     sizeBytes: sample.artifact.sizeBytes,
+    ...(sample.artifact.sha256 ? { sha256: sample.artifact.sha256 } : {}),
     sourceManifestLogicalKey: sample.sourceManifestLogicalKey,
     ...(sample.sampleIndex === undefined ? {} : { sampleIndex: sample.sampleIndex }),
     ...(sample.sequence === undefined ? {} : { sequence: sample.sequence }),
     ...(sample.declaredDuration === undefined ? {} : { declaredDuration: sample.declaredDuration }),
+    ...(sample.representationId === undefined ? {} : { representationId: sample.representationId }),
+    ...(sample.periodIndex === undefined ? {} : { periodIndex: sample.periodIndex }),
+    ...(sample.adaptationSetIndex === undefined ? {} : { adaptationSetIndex: sample.adaptationSetIndex }),
+    ...(sample.presentationStartSeconds === undefined ? {} : { presentationStartSeconds: sample.presentationStartSeconds }),
+    ...(sample.presentationEndSeconds === undefined ? {} : { presentationEndSeconds: sample.presentationEndSeconds }),
+    ...(sample.source ? { source: sample.source } : {}),
     ...(sample.probe ? { probe: sample.probe } : {}),
   };
 }
@@ -201,6 +247,7 @@ function toManifestEvidence(manifest: Manifest): ManifestEvidence {
     finalUrl: manifest.source.finalUrl,
     kind: inspection.kind,
     sizeBytes: manifest.artifact.sizeBytes,
+    ...(manifest.artifact.sha256 ? { sha256: manifest.artifact.sha256 } : {}),
     ...(inspection.variantCount !== undefined ? { variantCount: inspection.variantCount } : {}),
     ...(inspection.segmentCount !== undefined ? { segmentCount: inspection.segmentCount } : {}),
     ...(inspection.representationCount !== undefined

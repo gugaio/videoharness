@@ -55,12 +55,14 @@ function PlaceholderReport({ content }: { content: Extract<ReportContent, { plac
 
 function EvidenceReport({ content, createdAt }: { content: EvidenceContent; createdAt: string }): JSX.Element {
   const ai = content.ai?.available ? content.ai : undefined;
+  const dashEvidence = getDashEvidence(content.evidence);
   const attentionFindings = ai?.findings.filter((finding) => finding.severity !== "info") ?? [];
   const observedFindings = ai?.findings.filter((finding) => finding.severity === "info") ?? [];
 
   return (
     <div className="mt-4 space-y-8">
       <VerdictCard ai={ai} content={content} createdAt={createdAt} />
+      {dashEvidence && <DashForensics evidence={dashEvidence.evidence} reported={dashEvidence.reported} />}
       {ai && ai.recommendations.length > 0 && <Recommendations recommendations={ai.recommendations} />}
       {ai && ai.findings.length > 0 && (
         <Findings attention={attentionFindings} observed={observedFindings} />
@@ -71,6 +73,47 @@ function EvidenceReport({ content, createdAt }: { content: EvidenceContent; crea
     </div>
   );
 }
+
+type DashEvidence = { type: "static" | "dynamic"; representations: Array<{ id: string; contentType: "video" | "audio" | "unknown"; width?: number; height?: number; bandwidth?: number; codecs?: string; segmentCount: number }>; limitations: string[]; analysis?: unknown };
+type ReportedEvidence = { approximateTimeSeconds?: number };
+function DashForensics({ evidence, reported }: { evidence: DashEvidence; reported?: ReportedEvidence }): JSX.Element {
+  const analysis = asDashAnalysis(evidence.analysis);
+  return (
+    <section className="animate-fade-up rounded-3xl border border-sky-300/15 bg-sky-300/[0.035] p-6 sm:p-7">
+      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-200/70">DASH forensic boundary</p>
+      <h3 className="mt-2 text-lg font-semibold tracking-tight">Candidate switching evidence</h3>
+      <p className="mt-2 text-sm leading-6 text-harness-muted">
+        {reported?.approximateTimeSeconds !== undefined
+          ? `The user-reported time (${formatSeconds(reported.approximateTimeSeconds)}) selected the primary window. It is a hypothesis, not player telemetry.`
+          : "No precise incident time was available in the report. These are representative candidate boundaries, not a recorded player switch."}
+      </p>
+      <div className="mt-5 overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead className="text-xs uppercase tracking-wide text-white/40"><tr><th className="pb-3 pr-4">Representation</th><th className="pb-3 pr-4">Resolution</th><th className="pb-3 pr-4">Bandwidth</th><th className="pb-3 pr-4">Codec</th><th className="pb-3">Segments</th></tr></thead><tbody>{evidence.representations.filter((entry) => entry.contentType === "video").map((entry) => <tr className="border-t border-white/[0.07] text-white/75" key={entry.id}><td className="py-3 pr-4 font-mono text-xs">{entry.id}</td><td className="py-3 pr-4">{entry.width && entry.height ? `${entry.width}×${entry.height}` : "—"}</td><td className="py-3 pr-4">{entry.bandwidth ? `${Math.round(entry.bandwidth / 1000)} kbps` : "—"}</td><td className="py-3 pr-4">{entry.codecs ?? "—"}</td><td className="py-3">{entry.segmentCount}</td></tr>)}</tbody></table></div>
+      {analysis && <div className="mt-6 grid gap-3 lg:grid-cols-2">{analysis.matrix.map((entry) => <article className="rounded-2xl border border-white/[0.08] bg-black/20 p-4" key={entry.sequence}><div className="flex items-center justify-between gap-3"><p className="font-mono text-xs text-white/80">{entry.sequence}</p><span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${entry.structuralResult === "pass" ? "bg-emerald-300/15 text-emerald-200" : entry.structuralResult === "fail" ? "bg-rose-300/15 text-rose-200" : "bg-amber-300/15 text-amber-100"}`}>{entry.structuralResult}</span></div><p className="mt-2 text-sm leading-6 text-harness-muted">{entry.interpretation}</p><p className="mt-2 text-xs text-white/35">Decoder sequence: not run — structural evidence only.</p></article>)}</div>}
+      {evidence.limitations.length > 0 && <p className="mt-5 text-xs leading-5 text-white/40">{evidence.limitations.join(" ")}</p>}
+    </section>
+  );
+}
+
+function getDashEvidence(evidence: unknown): { evidence: DashEvidence; reported?: ReportedEvidence } | undefined {
+  if (!evidence || typeof evidence !== "object") return undefined;
+  const candidate = evidence as { dash?: unknown; reportedContext?: unknown };
+  const dash = candidate.dash;
+  if (!dash || typeof dash !== "object" || !Array.isArray((dash as { representations?: unknown }).representations)) return undefined;
+  const typed = dash as DashEvidence;
+  return { evidence: typed, ...(candidate.reportedContext && typeof candidate.reportedContext === "object" ? { reported: candidate.reportedContext as ReportedEvidence } : {}) };
+}
+
+type DashAnalysis = { matrix: Array<{ sequence: string; structuralResult: "pass" | "warning" | "fail" | "indeterminate"; interpretation: string }> };
+function asDashAnalysis(value: unknown): DashAnalysis | undefined {
+  if (!value || typeof value !== "object" || !Array.isArray((value as { matrix?: unknown }).matrix)) return undefined;
+  const matrix = (value as { matrix: unknown[] }).matrix.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const item = entry as { sequence?: unknown; structuralResult?: unknown; interpretation?: unknown };
+    return typeof item.sequence === "string" && typeof item.interpretation === "string" && ["pass", "warning", "fail", "indeterminate"].includes(String(item.structuralResult)) ? [{ sequence: item.sequence, structuralResult: item.structuralResult as DashAnalysis["matrix"][number]["structuralResult"], interpretation: item.interpretation }] : [];
+  });
+  return { matrix };
+}
+function formatSeconds(value: number): string { const hours = Math.floor(value / 3600); const minutes = Math.floor((value % 3600) / 60); const seconds = Math.floor(value % 60); return hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}` : `${minutes}:${String(seconds).padStart(2, "0")}`; }
 
 function VerdictCard({
   content,

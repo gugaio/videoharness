@@ -6,12 +6,28 @@ import type { InvestigationQueries } from "../investigation/application/investig
 import type { PostgresPlaybackSessions } from "../investigation/adapters/postgres-playback-session.js";
 import { ApiError } from "./errors.js";
 import { registerInvestigationRoutes } from "./routes/investigations.js";
+import type { ArtifactStore } from "../investigation/ports/artifact-store.js";
+import type { StartRecording } from "../record/application/start-recording.js";
+import type { RecordingQueries } from "../record/application/recording-queries.js";
+import { registerRecordingRoutes } from "./routes/recordings.js";
+import type { CreatePlaybackRun } from "../record/application/playback-runs.js";
+import type { PlaybackRunRepository } from "../record/ports/playback-run.js";
+import { FilesystemRecordingStore } from "../record/adapters/filesystem-recording-store.js";
+import { registerStreamRoutes } from "./routes/streams.js";
+import type { SharedNetworkShaper } from "../record/application/network-shaper.js";
 
 export type ApiServerDependencies = {
   database: DatabaseHealth;
   startInvestigation: StartInvestigation;
   investigationQueries: InvestigationQueries;
   playbackSessions?: PostgresPlaybackSessions;
+  artifactStore?: ArtifactStore;
+  startRecording?: StartRecording;
+  recordingQueries?: RecordingQueries;
+  createPlaybackRun?: CreatePlaybackRun;
+  playbackRuns?: PlaybackRunRepository;
+  recordingStore?: FilesystemRecordingStore;
+  networkShaper?: SharedNetworkShaper;
   version?: string;
 };
 
@@ -65,7 +81,12 @@ export function buildApiServer(dependencies: ApiServerDependencies): FastifyInst
     startInvestigation: dependencies.startInvestigation,
     queries: dependencies.investigationQueries,
     ...(dependencies.playbackSessions ? { playbackSessions: dependencies.playbackSessions } : {}),
+    ...(dependencies.artifactStore ? { artifactStore: dependencies.artifactStore } : {}),
   });
+  if (dependencies.startRecording && dependencies.recordingQueries) {
+    registerRecordingRoutes(server, { startRecording: dependencies.startRecording, queries: dependencies.recordingQueries, ...(dependencies.createPlaybackRun ? { createPlaybackRun: dependencies.createPlaybackRun } : {}), ...(dependencies.playbackRuns ? { playbackRuns: dependencies.playbackRuns } : {}) });
+  }
+  if (dependencies.playbackRuns && dependencies.recordingStore) registerStreamRoutes(server, { runs: dependencies.playbackRuns, store: dependencies.recordingStore, ...(dependencies.networkShaper ? { shaper: dependencies.networkShaper } : {}) });
 
   return server;
 }

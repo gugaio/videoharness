@@ -1,14 +1,17 @@
 # Project Status - Video Harness Space
 
-Ultima atualizacao: **2026-07-23**
+Ultima atualizacao: **2026-08-05**
 
 ## Resumo
 
-- Fase ativa: **Fase 2 - HLS MPEG-TS + Investigacao Assistida**.
+- Fase ativa: **Record R1 - HLS VOD + Simulacao ABR**.
 - Estado: **em andamento**.
 - Repositorio: novo e independente.
 - Runtime: API, worker, UI e PostgreSQL executaveis.
-- Objetivo imediato: validar HLS MPEG-TS e os agentes Pi de ponta a ponta.
+- Objetivo imediato: implementar o Slice 5 de Record: journal persistido de
+  requests e inferencia de transicoes ABR.
+- Investigate permanece funcional; sua proxima reorganizacao visual esta pausada.
+- DASH VOD esta planejado para Record R2, depois do DoD de HLS VOD.
 
 ## Fases
 
@@ -20,6 +23,8 @@ Ultima atualizacao: **2026-07-23**
 | 3 | Em andamento | Investigacao assistida por IA e report estruturado |
 | 4 | Planejada | UX premium e experiencia end-to-end |
 | 5 | Planejada | Hardening, deploy e validacao com usuarios |
+| Record R1 | Em andamento | HLS VOD, origem controlada e evidencia ABR por requests |
+| Record R2 | Planejada | DASH VOD sobre a fronteira comprovada em R1 |
 
 ## Entregue
 
@@ -66,6 +71,25 @@ Ultima atualizacao: **2026-07-23**
   preservando o bloqueio SSRF para IPs e redirects privados.
 - Media playlists submetidas diretamente agora amostram segmentos de inicio, meio
   e fim a partir do root.
+- Suite local de evals gera fixtures HLS MPEG-TS temporarios com FFmpeg; nenhum
+  binario de video e versionado no Git.
+- Perfil forense DASH inicial expande MPDs estaticos, coleta a janela candidata
+  de representations e inspeciona fMP4/HEVC de forma deterministica.
+- Mudanca de escopo Record aprovada: Recording imutavel, PlaybackRun experimental,
+  shaping compartilhado e evidencia ABR no nivel de request.
+- Plano executavel de Record R1 e sequencia DASH R2 documentados.
+- Slice 1 interno de Record: migration, dominio, intake idempotente, queries,
+  SSE registravel, worker recuperavel e storage de staging com publish atomico.
+- Slice 2 de Record: clone HLS VOD clear/MPEG-TS com ladder e audio vinculados,
+  janela limitada, recursos registrados e intake habilitado na composicao.
+- Slice 3 de Record: playback run com token hash e data plane GET que serve
+  exclusivamente recursos registrados, sem origin fetch.
+- Slice 4 de Record: profile v1 persistido e token bucket compartilhado por run
+  com latencia por stage e emissao progressiva sob backpressure do stream.
+- Slice 6 inicial de Record: homepage ativa e fluxo dedicado de intake, status,
+  SSE e criacao/copia da URL de playback.
+- Slice 5 inicial de Record: journal persistido de delivery e painel dos ultimos
+  10 requests por playback run.
 
 ## Checklist da Fase 1
 
@@ -78,7 +102,7 @@ Ultima atualizacao: **2026-07-23**
 - [x] Exibir timeline persistida.
 - [x] Exibir report placeholder.
 
-## Pendencias da fase ativa
+## Pendencias da linha Investigate
 
 - [x] Definir schema versionado do evidence bundle.
 - [x] Criar port deterministico de coleta.
@@ -87,15 +111,502 @@ Ultima atualizacao: **2026-07-23**
 - [x] Persistir o primeiro manifest como artifact.
 - [x] Extrair estrutura profunda de variants/renditions HLS.
 - [x] Coletar manifests HLS derivados com amostragem limitada.
-- [ ] Extrair representations DASH (pos-MVP HLS MPEG-TS).
+- [x] Extrair representations DASH para a forense de Investigate; materializacao
+  DASH para Record permanece em R2.
 - [x] Coletar e analisar uma amostra limitada de segmentos HLS.
+
+## Checklist Record R1
+
+- [x] Aprovar HLS VOD antes de DASH VOD.
+- [x] Separar Recording imutavel de PlaybackRun experimental.
+- [x] Definir profile v1 e semantica de evidencia ABR.
+- [x] Documentar endpoints, UX, arquitetura, riscos e Definition of Done.
+- [x] Criar migrations, dominio e schemas Zod de Record.
+- [x] Implementar intake idempotente, job recuperavel e SSE registravel.
+- [x] Implementar storage com staging e publish atomico.
+- [x] Importar/adaptar clone HLS VOD multi-variant do VHS.
+- [x] Implementar data plane por token e recursos registrados.
+- [x] Implementar shaping compartilhado com backpressure.
+- [ ] Persistir journal e derivar transicoes ABR.
+- [ ] Entregar UX Record e smoke em device/player externo (UX inicial entregue;
+  smoke e journal ABR ainda pendentes).
 
 ## Proximo passo recomendado
 
-Reorganizar a UI do report para apresentar primeiro conclusao, confianca e
-recomendacoes, mantendo findings tecnicos e limitacoes auditaveis.
+Implementar o Slice 5 de Record R1: journal persistido de delivery requests e
+inferencia ABR observada/sustentada.
 
 ## Registro de atualizacoes
+
+### 2026-08-05 - Plano Record HLS VOD e simulacao ABR
+
+Fases impactadas: Record R1, Record R2, 4 e 5.
+
+Entrega:
+
+- Record passou a integrar a validacao atual do produto, sem depender do playback
+  browser existente.
+- HLS VOD clear/MPEG-TS foi definido como primeiro corte; DASH VOD ficou ordenado
+  depois do Definition of Done de R1.
+- Recording imutavel foi separado de PlaybackRun, permitindo repetir profiles
+  sobre os mesmos bytes.
+- Profile v1 usa stages deterministas por quantidade de requests de video,
+  throughput compartilhado e latencia por request.
+- Request journal distingue troca observada, sustentada, ausente e inconclusiva,
+  sem alegar decode/render.
+- Contratos planejados, UX, arquitetura, import do VHS, slices, riscos e DoD foram
+  documentados.
+
+Arquivos-chave:
+
+- `AGENTS.md`;
+- `docs/planning/RECORD-ABR-IMPLEMENTATION-PLAN.md`;
+- `docs/architecture/phases/phase-record-hls-vod.md`;
+- `docs/architecture/phases/phase-record-dash-vod.md`;
+- `docs/api.md`;
+- `docs/ui/UI-GUIDE.md`.
+
+Validacoes:
+
+- [ ] `npm run check` - nao necessario para mudanca somente documental;
+- [ ] `npm test` - nao necessario para mudanca somente documental;
+- [ ] `npm --prefix ui run check` - nao necessario para mudanca somente documental;
+- [ ] `npm --prefix ui run build` - nao necessario para mudanca somente documental;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- Nenhum codigo, migration ou endpoint Record foi implementado ainda.
+- Reavaliar budgets somente com metricas dos primeiros fixtures e smokes; os
+  defaults/hard caps iniciais ja estao registrados no plano.
+
+Proximo passo recomendado:
+
+- Implementar o Slice 1 persistente descrito no plano Record.
+
+### 2026-08-05 - Fundacao persistente de Record R1
+
+Fases impactadas: Record R1.
+
+Entrega:
+
+- Adicionadas as tabelas `recordings`, `recording_jobs`, `recording_events` e
+  `recorded_resources` na migration 006.
+- Recording HLS possui contrato Zod, intake idempotente por assinatura, consulta
+  persistida e timeline SSE com replay por `Last-Event-ID`.
+- Worker generico de Record usa claim concorrente, lease/heartbeat, retry e
+  estados reais `queued -> validating -> collecting -> ready`.
+- O storage cria workspace isolado por UUID e so publica apos rename atomico;
+  falha apos publicacao remove o destino antes de reagendar.
+- As rotas Record sao opt-in na API. A composicao de producao permanece sem
+  `startRecording` ate existir materializador HLS, impedindo jobs inviaveis.
+
+Arquivos-chave:
+
+- `src/database/migrations/006_recordings.sql`;
+- `src/record/`;
+- `src/api/routes/recordings.ts`;
+- `src/api/server.ts`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test -- --run src/record src/api/server.test.ts` - 13 testes;
+- [x] `npm test` - 89 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - aviso conhecido de bundle acima de 500 kB;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- Nenhum materializador HLS foi conectado ainda; portanto nao ha endpoint Record
+  publico ativo, URL local de playback, clone de segmentos ou simulacao ABR.
+
+Proximo passo recomendado:
+
+- Implementar o Slice 2 e conectar a composicao somente apos o clone HLS VOD
+  conseguir produzir um recording auto-contido.
+
+### 2026-08-06 - Clone HLS VOD auto-contido de Record R1
+
+Fases impactadas: Record R1.
+
+Entrega:
+
+- `HlsVodMaterializer` clona master HLS VOD clear/MPEG-TS com duas a oito
+  variants fetchable e renditions de audio vinculadas.
+- A janela solicitada e reconstruida em playlists locais; segmentos, manifests,
+  hash, content type, tamanho e metadados de timeline entram em
+  `recorded_resources` na mesma transacao que marca o recording como `ready`.
+- O clone usa `SafeHttpClient` em todos os manifests e chunks, preservando SSRF,
+  redirect, timeout, limite de 64 MiB por resposta e 1 GiB agregado.
+- Live, criptografia, fMP4/`EXT-X-MAP` e byte ranges sao recusados antes de
+  qualquer publish. Falha remove o staging ou a publicacao parcial.
+- API e worker passaram a compor Record de producao; `POST /v1/recordings` agora
+  cria jobs executaveis.
+
+Arquivos-chave:
+
+- `src/record/adapters/hls-vod-materializer.ts`;
+- `src/record/adapters/postgres-recording-job.ts`;
+- `src/worker/index.ts`;
+- `src/api/index.ts`;
+- `src/config.ts`;
+- `src/record/README.md`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 93 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - aviso conhecido de bundle acima de 500 kB;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- O data plane ainda nao serve os recursos locais e nao existe playback token,
+  network profile, pacing ou journal ABR.
+- Subtitles nao fazem parte do primeiro clone, embora audio vinculado seja
+  preservado.
+
+Proximo passo recomendado:
+
+- Implementar o Slice 3: criar playback run/token e servir somente
+  `recorded_resources` pelo data plane, sem origin fetch.
+
+### 2026-08-06 - Data plane local com token opaco de Record R1
+
+Fases impactadas: Record R1.
+
+Entrega:
+
+- Migration 007 cria `playback_runs`; tokens tem 256 bits e somente o hash
+  SHA-256 e persistido.
+- Um recording `ready` pode criar um playback run e receber a URL local
+  `/streams/<token>/index.m3u8`.
+- O data plane valida o caminho, resolve token + logical path no PostgreSQL e
+  le apenas o `storage_key` registrado, sem URL ou fetch da origem.
+- O primeiro segmento de video ancora o prazo configurado do run; antes dele ha
+  uma janela limitada de inicializacao. Run vencido retorna `410`.
+
+Arquivos-chave:
+
+- `src/database/migrations/007_playback_runs.sql`;
+- `src/record/adapters/postgres-playback-run.ts`;
+- `src/api/routes/streams.ts`;
+- `src/api/routes/recordings.ts`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test -- --run src/api/server.test.ts src/record` - 19 testes;
+- [x] `npm test` - 95 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - aviso conhecido de bundle acima de 500 kB;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- Ainda nao ha profile, pacing, Range/HEAD/OPTIONS, journal de requests ou
+  inferencia ABR.
+
+Proximo passo recomendado:
+
+- Implementar o Slice 4: shaping compartilhado com backpressure e latencia por
+  stage, mantendo o mesmo token e data plane.
+
+### 2026-08-06 - Shaping reproduzivel por PlaybackRun
+
+Fases impactadas: Record R1.
+
+Entrega:
+
+- Migration 008 persiste o profile v1 no playback run; entrada valida stages
+  ordenados, bandwidth de 128--100.000 Kbps e latencia de 0--5.000 ms.
+- O data plane aplica latencia a cada response e emite mídia em blocos de 16 KiB
+  sob token bucket compartilhado por run; manifests nao consomem throughput.
+- Stages sao decididos pela quantidade de requests de video anteriores, logo um
+  trigger em 3 passa a vigorar no quarto request de video.
+- Antes do journal do Slice 5, esse contador vive apenas no processo da API e
+  nao sobrevive a reinicio; a limitacao esta exposta no contrato.
+
+Arquivos-chave:
+
+- `src/database/migrations/008_playback_profiles.sql`;
+- `src/record/application/network-shaper.ts`;
+- `src/contracts/recording.ts`;
+- `src/api/routes/streams.ts`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test -- --run src/record src/api/server.test.ts` - 21 testes;
+- [x] `npm test` - 97 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - aviso conhecido de bundle acima de 500 kB;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- Journal persistido, request facts, Range/HEAD/OPTIONS e inferencia ABR ainda
+  nao foram implementados.
+
+Proximo passo recomendado:
+
+- Implementar o Slice 5: persistir requests e derivar switches observados e
+  sustentados a partir de variants requisitadas.
+
+### 2026-08-06 - UX Record habilitada
+
+Fases impactadas: Record R1 e 4.
+
+Entrega:
+
+- O card Record deixou de exibir `Coming soon`: agora abre `/record`.
+- Intake dedicado envia HLS VOD, duracao da janela e navega imediatamente para
+  `/recordings/:id`.
+- A pagina da gravacao consome SSE persistido, mostra estado/cobertura/bytes e,
+  quando pronta, cria o preset ABR e copia a URL opaca para o device.
+
+Arquivos-chave:
+
+- `ui/src/pages/HomePage.tsx`;
+- `ui/src/pages/RecordPage.tsx`;
+- `ui/src/App.tsx`;
+- `ui/src/lib/api.ts`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - aviso conhecido de bundle acima de 500 kB;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- O UI ainda aguardara journal e resultado ABR para mostrar requests e switches
+  reais; nao exibe sucesso de ABR antecipadamente.
+
+Proximo passo recomendado:
+
+- Implementar o Slice 5 de journal e inferencia ABR, depois enriquecer a mesma
+  tela com a evidencia persistida.
+
+### 2026-08-06 - Progresso real do clone Record
+
+Fases impactadas: Record R1 e 4.
+
+Entrega:
+
+- O materializador baixa os chunks de cada playlist com concorrencia limitada a
+  tres, em vez de processa-los estritamente em serie.
+- Eventos persistidos `recording.variant_started` e
+  `recording.variant_completed` tornam o trabalho de coleta visivel na tela.
+- O worker foi recomposto; recording jobs com lease interrompido sao retomados
+  pela politica existente de retry/lease.
+
+Arquivos-chave:
+
+- `src/record/adapters/hls-vod-materializer.ts`;
+- `src/record/application/run-recording.ts`;
+- `src/record/ports/recording-materializer.ts`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test -- --run src/record` - 9 testes;
+- [x] `docker compose` recomposto com API, worker e web saudaveis;
+- [ ] suite completa e build final - pendentes apos a correcao operacional.
+
+Pendencias:
+
+- O clone ainda registra progresso por playlist; o journal detalhado por request
+  sera introduzido no Slice 5.
+
+### 2026-08-06 - Proxy publico do data plane
+
+Fases impactadas: Record R1 e 5.
+
+Entrega:
+
+- Nginx da web encaminha `/streams/*` para Fastify sem buffering, request
+  buffering ou timeout curto, em vez de aplicar o fallback da SPA.
+- Validado pela porta publica local: master, playlist de variant e segmento MPEG-
+  TS retornam `200` com os content types esperados.
+
+Arquivos-chave:
+
+- `ui/nginx.conf`;
+- `docs/api.md`.
+
+Validacoes:
+
+- [x] `npm --prefix ui run check`;
+- [x] `docker compose up -d --build --no-deps web`;
+- [x] `curl` de master, variant e segmento pelo proxy publico.
+
+### 2026-08-05 - Retry comunica falha real de aquisicao
+
+Fases impactadas: 2 e 5.
+
+Entrega:
+
+- Retries recuperaveis agora exibem a causa publica real em vez de afirmar
+  incorretamente que o worker parou inesperadamente.
+- Timeout padrao de stream e Compose elevado de 10 s para 25 s, ainda abaixo do
+  lease de 30 s e protegido por heartbeat do worker.
+
+Arquivos-chave:
+
+- `src/investigation/adapters/postgres-investigation-job.ts`
+- `src/config.ts`
+- `compose.yml`
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 84 testes;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- Avaliar timeout por tipo de origem depois de obter metricas reais de download.
+
+### 2026-08-05 - Modo de coleta de media configuravel
+
+Fases impactadas: 2 e 3.
+
+Entrega:
+
+- Adicionada a env `VIDEO_HARNESS_MEDIA_SAMPLE_MODE` com valores `sample` | `full`
+  e default `full`, preservando o comportamento atual do worker e do lab.
+- `full` materializa todos os media ate o budget (recomendado para VOD curto);
+  `sample` baixa somente inicio/meio/fim (escopo documentado do MVP).
+- O `mode` deixou de ficar hardcoded no worker; voltou a ser controlado por env e
+  a limitacao de cobertura de streams longas ficou documentada.
+
+Arquivos-chave:
+
+- `src/config.ts`
+- `src/worker/index.ts`
+- `.env.example`
+- `compose.yml`
+- `docs/architecture/README.md`
+- `docs/architecture/phases/phase-2.md`
+- `docs/api.md`
+- `docs/core/START-HERE.md`
+
+Checklist de validacao:
+
+- [x] `npm run check`;
+- [x] `npm test` - inclui teste do default `full`, aceite de `sample`/`full` e
+  rejeicao de valor invalido;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build`;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- Nenhuma.
+
+Proximo passo recomendado:
+
+- Manter `full` quando o lab exigir materializacao completa de VOD curto; usar
+  `VIDEO_HARNESS_MEDIA_SAMPLE_MODE=sample` para o escopo MVP puro.
+
+### 2026-08-05 - Perfil forense de fronteira DASH/HEVC
+
+Fases impactadas: 2, 3 e 4.
+
+Entrega:
+
+- Parser puro de MPD expande `BaseURL`, periods, adaptation sets, representations
+  e timelines para referencias temporais de segmentos.
+- O relato de URL + descricao permanece a unica entrada. Horario e alegacao de
+  troca sao extraidos como pistas `reported`, nao como fatos do player.
+- Coletor DASH seleciona 4K, Full HD, intermediaria e audio, preserva init/media,
+  hash SHA-256 e metadados HTTP dentro do budget existente.
+- Probe fMP4 local verifica estrutura, `tfdt`, `tfhd`, `trun`, `mdat`, timestamps,
+  sync flags, NAL HEVC inicial e configuracao `hvcC`/VPS/SPS/PPS.
+- Report e UI mostram ladder e matriz A->A, B->B, A->B, B->A estrutural; o resultado
+  de decoder e explicitamente `not_run` sem player/hardware.
+- Artifacts preservados podem ser listados e baixados por endpoints do caso.
+
+Arquivos-chave:
+
+- `src/stream-tools/dash-mpd.ts`
+- `src/stream-tools/isobmff.ts`
+- `src/investigation/application/analyze-dash-forensics.ts`
+- `src/investigation/adapters/http-media-sample-collector.ts`
+- `ui/src/components/InvestigationReport.tsx`
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 84 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build`;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- Expandir suporte para `SegmentBase`/`sidx`, MPD dinamico, byte ranges, DRM e
+  reproducao de decoder/Tizen.
+- Adicionar fixtures DASH fMP4/HEVC com anomalias conhecidas para testar matrix e
+  parser de boxes em bytes reais.
+
+Proximo passo recomendado:
+
+- Criar fixtures DASH fMP4/HEVC deterministicos para gap, overlap, IRAP ausente,
+  parameter sets divergentes e fragmento truncado; depois executar a matriz em
+  um decoder controlado no laboratorio.
+
+### 2026-07-23 - Geradores deterministas de fixtures para evals
+
+Fases impactadas: 2 e 3.
+
+Entrega:
+
+- Adicionado `evals/` com geradores TypeScript para quatro HLS VODs sinteticos:
+  freeze de frames com audio continuo, controle saudavel que relata freeze,
+  tela preta e silencio de audio.
+- O runner valida a playlist HLS, segmentos, tracks H.264/AAC e executa o
+  detector correspondente (`freezedetect`, `blackdetect` ou `silencedetect`) como
+  oraculo do fixture.
+- A geracao usa apenas argumentos estruturados de FFmpeg; os arquivos ficam em
+  diretorio temporario e sao removidos ao final. `--keep` preserva um caso para
+  depuracao. `evals/.generated/` e `.eval-dist/` permanecem ignorados pelo Git.
+- Adicionados `npm run eval:check` e `npm run eval:fixtures`.
+
+Arquivos-chave:
+
+- `evals/core/fixture-runner.ts`
+- `evals/core/hls.ts`
+- `evals/cases/*.eval.ts`
+- `evals/run-fixtures.ts`
+- `tsconfig.evals.json`
+
+Validacoes:
+
+- [x] `npm run eval:check`;
+- [x] `npm run eval:fixtures`;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- Criar runner end-to-end que sirva o fixture, inicie uma investigation real e
+  avalie ferramentas usadas, evidencia e conclusao sem comparar texto literal.
+
+Proximo passo recomendado:
+
+- Evoluir `EvidenceBundle` para evidencias estruturadas de detectores e conectar
+  os evals ao pipeline completo.
 
 ### 2026-07-23 - Progresso real da equipe de IA na timeline
 

@@ -281,7 +281,7 @@ export class PostgresInvestigationJobRepository implements InvestigationJobRepos
         : {
             type: "investigation.retry_scheduled",
             actor: "system",
-            message: "The worker stopped unexpectedly. The investigation was safely queued for another attempt.",
+            message: `${errorMessage} The investigation was safely queued for another attempt.`,
             payload: { state: "queued", errorCode, nextAttempt: job.attempts + 1 },
           });
       await client.query("COMMIT");

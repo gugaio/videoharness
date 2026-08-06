@@ -11,7 +11,7 @@ const EnvironmentSchema = z.object({
   VIDEO_HARNESS_WORKER_ID: z.string().trim().min(1).default("worker-local"),
   VIDEO_HARNESS_WORKER_POLL_MS: z.coerce.number().int().min(250).max(60_000).default(2_000),
   VIDEO_HARNESS_WORKER_LEASE_MS: z.coerce.number().int().min(3_000).max(300_000).default(30_000),
-  VIDEO_HARNESS_STREAM_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
+  VIDEO_HARNESS_STREAM_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(25_000),
   VIDEO_HARNESS_STREAM_LOCALHOST_ALIAS: z.string().trim()
     .regex(/^[a-zA-Z0-9.-]+$/, "Localhost alias must be a hostname or IP address")
     .optional()
@@ -19,6 +19,10 @@ const EnvironmentSchema = z.object({
   VIDEO_HARNESS_MANIFEST_MAX_BYTES: z.coerce.number().int().min(1_024).max(10_485_760).default(1_048_576),
   VIDEO_HARNESS_MEDIA_SAMPLE_MAX_BYTES: z.coerce.number().int().min(1_024).max(33_554_432).default(20_971_520),
   VIDEO_HARNESS_MEDIA_SAMPLE_MAX_TOTAL_BYTES: z.coerce.number().int().min(1_024).max(67_108_864).default(20_971_520),
+  VIDEO_HARNESS_MEDIA_SAMPLE_MODE: z.enum(["sample", "full"]).default("full"),
+  VIDEO_HARNESS_RECORD_SEGMENT_MAX_BYTES: z.coerce.number().int().min(1_024).max(67_108_864).default(67_108_864),
+  VIDEO_HARNESS_RECORD_MAX_TOTAL_BYTES: z.coerce.number().int().min(1_024).max(1_073_741_824).default(1_073_741_824),
+  VIDEO_HARNESS_RECORD_MAX_VARIANTS: z.coerce.number().int().min(2).max(8).default(8),
   VIDEO_HARNESS_FFPROBE_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
   VIDEO_HARNESS_LAB_SOCKET_PATH: z.string().trim().min(1).optional().transform((value) => value || undefined),
   VIDEO_HARNESS_LAB_TOKEN: z.string().trim().min(16).optional().transform((value) => value || undefined),
@@ -44,6 +48,10 @@ export type VideoHarnessConfig = {
   manifestMaxBytes: number;
   mediaSampleMaxBytes: number;
   mediaSampleMaxTotalBytes: number;
+  mediaSampleMode: "sample" | "full";
+  recordSegmentMaxBytes: number;
+  recordMaxTotalBytes: number;
+  recordMaxVariants: number;
   ffprobeTimeoutMs: number;
   labSocketPath?: string;
   labToken?: string;
@@ -73,6 +81,10 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): VideoH
     manifestMaxBytes: parsed.VIDEO_HARNESS_MANIFEST_MAX_BYTES,
     mediaSampleMaxBytes: parsed.VIDEO_HARNESS_MEDIA_SAMPLE_MAX_BYTES,
     mediaSampleMaxTotalBytes: parsed.VIDEO_HARNESS_MEDIA_SAMPLE_MAX_TOTAL_BYTES,
+    mediaSampleMode: parsed.VIDEO_HARNESS_MEDIA_SAMPLE_MODE,
+    recordSegmentMaxBytes: parsed.VIDEO_HARNESS_RECORD_SEGMENT_MAX_BYTES,
+    recordMaxTotalBytes: parsed.VIDEO_HARNESS_RECORD_MAX_TOTAL_BYTES,
+    recordMaxVariants: parsed.VIDEO_HARNESS_RECORD_MAX_VARIANTS,
     ffprobeTimeoutMs: parsed.VIDEO_HARNESS_FFPROBE_TIMEOUT_MS,
     ...(parsed.VIDEO_HARNESS_LAB_SOCKET_PATH ? { labSocketPath: parsed.VIDEO_HARNESS_LAB_SOCKET_PATH } : {}),
     ...(parsed.VIDEO_HARNESS_LAB_TOKEN ? { labToken: parsed.VIDEO_HARNESS_LAB_TOKEN } : {}),

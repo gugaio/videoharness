@@ -6,12 +6,15 @@ Indice de onboarding para humanos e agentes.
 
 1. `AGENTS.md` - regras obrigatorias do repositorio.
 2. `docs/planning/PROJECT-STATUS.md` - estado real e proximo passo.
-3. `docs/architecture/phases/phase-2.md` - proxima fase de implementacao.
+3. `docs/architecture/phases/phase-record-hls-vod.md` - fase ativa.
+4. `docs/planning/RECORD-ABR-IMPLEMENTATION-PLAN.md` - plano executavel de Record.
 
 ## Produto
 
 - `docs/product/PRD.md` - requisitos do MVP.
 - `docs/planning/PROJECT-VISION.md` - visao e limites do produto.
+- `docs/planning/RECORD-ABR-IMPLEMENTATION-PLAN.md` - dominio, slices e DoD de
+  Record HLS VOD e sequencia para DASH VOD.
 - `docs/ui/UI-GUIDE.md` - experiencia desejada.
 
 ## Engenharia
@@ -28,7 +31,12 @@ Indice de onboarding para humanos e agentes.
   ponta a ponta sobre PostgreSQL.
 - O worker usa claim transacional, lease, heartbeat e retry limitado.
 - Homepage cria o caso e a tela restaura eventos e apresenta a conclusao.
-- Fase ativa: **Fase 2 - HLS MPEG-TS + Investigacao Assistida**.
+- Fase ativa: **Record R1 - HLS VOD + Simulacao ABR**.
+- A linha Investigate continua funcional e auditavel; sua proxima reorganizacao
+  visual fica pausada enquanto o primeiro slice Record e construido.
+- Record materializara uma janela VOD de todas as variants suportadas, publicara
+  uma URL por playback run e registrara requests do device sob profiles de rede.
+- DASH VOD pertence a Record R2 e somente comeca depois do DoD de HLS VOD.
 - A primeira fatia real coleta manifests HLS/DASH por uma fronteira protegida
   contra SSRF, persiste artifact + evidence bundle e gera report deterministico.
 - Artifacts agora possuem identidade logica por investigation, sao registrados em
@@ -36,10 +44,14 @@ Indice de onboarding para humanos e agentes.
   `EvidenceBundle` v2 orientado a multiplos manifests e media samples.
 - Masters HLS agora expoem variants/renditions, selecionam uma variant por maior
   bandwidth e preservam seu media manifest e uma rendition de audio vinculada.
-- A primeira amostra de media HLS ja baixa no maximo um segmento por playlist
-  selecionada, preserva init segments quando necessarios e executa FFprobe local.
-- O MVP valida HLS com MPEG-TS e agentes Pi; DASH, CMAF e DRM ficam fora do
-  corte inicial.
+- A primeira amostra de media HLS ja baixa segmentos por playlist selecionada,
+  preserva init segments quando necessarios e executa FFprobe local. O modo
+  `full` (padrao) materializa todos os segmentos ate o budget; `sample` baixa
+  apenas inicio/meio/fim.
+- DASH possui um perfil forense inicial para MPDs estaticos/fMP4: o relato livre
+  somente prioriza a janela; parsers deterministas analisam a fronteira candidata.
+- O primeiro corte Record valida HLS VOD MPEG-TS clear; live, DRM, LL-HLS e DASH
+  Record ficam fora de R1.
 
 ## Referencias locais
 

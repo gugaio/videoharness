@@ -13,6 +13,10 @@ import { PostgresInvestigationJobRepository } from "../investigation/adapters/po
 import { createInvestigationWorker } from "../investigation/application/run-investigation.js";
 import { runNextPlaybackReview } from "../investigation/application/run-playback-review.js";
 import { SafeHttpClient } from "../stream-tools/safe-http-client.js";
+import { PostgresRecordingJobRepository } from "../record/adapters/postgres-recording-job.js";
+import { FilesystemRecordingStore } from "../record/adapters/filesystem-recording-store.js";
+import { HlsVodMaterializer } from "../record/adapters/hls-vod-materializer.js";
+import { createRecordingWorker } from "../record/application/run-recording.js";
 
 const config = loadConfig();
 const pool = createDatabasePool(config.databaseUrl);
@@ -30,7 +34,7 @@ const mediaCollector = new HttpMediaSampleCollector(new SafeHttpClient({
   timeoutMs: config.streamTimeoutMs,
   maxBytes: config.mediaSampleMaxBytes,
   ...localDevelopmentAlias,
-}), { maxTotalBytes: config.mediaSampleMaxTotalBytes, mode: "full" });
+}), { maxTotalBytes: config.mediaSampleMaxTotalBytes, mode: config.mediaSampleMode });
 const mediaProbe = new FfprobeMediaProbe({ dataDirectory: config.dataDir, timeoutMs: config.ffprobeTimeoutMs });
 const labWorkspace = new FilesystemLabWorkspace(config.dataDir);
 const lab = config.labSocketPath && config.labToken
@@ -57,6 +61,17 @@ const worker = createInvestigationWorker({
   workerId: config.workerId,
   leaseMs: config.workerLeaseMs,
 });
+const recordingWorker = createRecordingWorker({
+  repository: new PostgresRecordingJobRepository(pool),
+  store: new FilesystemRecordingStore(config.dataDir),
+  materializer: new HlsVodMaterializer(new SafeHttpClient({
+    timeoutMs: config.streamTimeoutMs,
+    maxBytes: config.recordSegmentMaxBytes,
+    ...localDevelopmentAlias,
+  }), { maxVariants: config.recordMaxVariants, maxTotalBytes: config.recordMaxTotalBytes }),
+  workerId: config.workerId,
+  leaseMs: config.workerLeaseMs,
+});
 let shutdownRequested = false;
 
 function requestShutdown(signal: string): void {
@@ -77,6 +92,10 @@ logger.info("worker.started", {
   manifestMaxBytes: config.manifestMaxBytes,
   mediaSampleMaxBytes: config.mediaSampleMaxBytes,
   mediaSampleMaxTotalBytes: config.mediaSampleMaxTotalBytes,
+  mediaSampleMode: config.mediaSampleMode,
+  recordSegmentMaxBytes: config.recordSegmentMaxBytes,
+  recordMaxTotalBytes: config.recordMaxTotalBytes,
+  recordMaxVariants: config.recordMaxVariants,
   ffprobeTimeoutMs: config.ffprobeTimeoutMs,
   labEnabled: Boolean(lab),
   aiEnabled: Boolean(config.aiApiKey),
@@ -87,7 +106,9 @@ logger.info("worker.started", {
 
 while (!shutdownRequested) {
   try {
-    const processed = await worker.runNext() || await runNextPlaybackReview({ pool, workerId: config.workerId, leaseMs: config.workerLeaseMs, ai });
+    const processed = await worker.runNext()
+      || await recordingWorker.runNext()
+      || await runNextPlaybackReview({ pool, workerId: config.workerId, leaseMs: config.workerLeaseMs, ai });
     if (!processed) await delay(config.workerPollMs);
   } catch (error) {
     logger.warn("worker.poll_failed", {

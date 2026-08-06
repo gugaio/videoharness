@@ -233,3 +233,105 @@ reescrita de manifests.
 Agentes Pi podem solicitar `inspect_preserved_sample`, limitada aos logical keys
 dos samples ja preservados e ao resultado deterministico de probe. O modelo nao
 recebe ferramenta de shell, arquivo, URL, argumentos de ffprobe ou download.
+
+## 2026-08-05 - Relato do usuario como hipotese de forense DASH
+
+Decisao:
+
+- O fluxo forense DASH recebe somente URL e descricao livre na primeira versao.
+- Horario, troca ABR e sequencia A/V extraidos do relato sao contexto `reported`,
+  nunca fatos tecnicos.
+- Parsers e probes deterministas verificam fronteiras candidatas; o report separa
+  evidencia observada, hipotese causal e informacao que nao pode ser comprovada
+  sem telemetria do player.
+
+Consequencia:
+
+- Nao introduzimos logs ou upload obrigatorios no intake.
+- O report nao afirma que uma troca ocorreu; identifica uma sequencia candidata e
+  classifica sua seguranca estrutural.
+
+## 2026-08-05 - Record entra na validacao atual por HLS VOD
+
+Decisao:
+
+- Record deixa de ser apenas visao futura e passa a ser a fase ativa.
+- O primeiro corte grava HLS VOD clear com toda a ladder suportada.
+- DASH VOD e a fase seguinte e reutiliza as fronteiras comprovadas em HLS.
+- Live, DRM, LL-HLS e emulacao de device continuam fora do corte.
+
+Motivo:
+
+- O caso prioritario agora e reproduzir condicoes de delivery em um device real e
+  observar suas escolhas ABR sem depender do playback browser da aplicacao.
+- HLS VOD reduz variaveis de ingestao e permite validar storage, origin server,
+  shaping e evidencia antes de adicionar MPD/fMP4.
+
+Consequencia:
+
+- PRD, visao, API, UX, status e instrucoes do repositorio passam a incluir Record.
+- A proxima reorganizacao visual de Investigate fica pausada, mas seu runtime
+  permanece suportado.
+- A decisao anterior de nao criar proxy para o playback browser continua valida
+  para aquele fluxo. Record adiciona outro data plane que serve somente bytes ja
+  gravados e nunca busca a origem sob demanda.
+
+## 2026-08-05 - Recording imutavel e PlaybackRun experimental
+
+Decisao:
+
+- `Recording` representa os manifests e bytes publicados de forma imutavel.
+- `PlaybackRun` representa uma execucao limitada com token e profile de rede.
+- Um recording pode alimentar varios runs sem ser clonado novamente.
+- O data plane usa rotas estaveis do Fastify em R1, nao servidores ou portas
+  efemeras por recording.
+
+Motivo:
+
+- Separar aquisicao de experimento torna cenarios comparaveis e recuperaveis.
+- Uma URL unica por run isola cache e permite atribuir requests a um device/caso.
+- Rotas persistentes simplificam Compose, restart e acesso por devices.
+
+Consequencia:
+
+- Record possui tabelas e storage proprios, sem fingir que e uma investigation.
+- O data plane serve somente recursos registrados e nunca faz proxy sob demanda.
+- Tokens sao armazenados como hash e redigidos de logs.
+
+## 2026-08-05 - Network shaping compartilhado e evidencia no nivel de request
+
+Decisao:
+
+- Profiles v1 usam stages deterministas de throughput e latencia.
+- Todas as respostas de media concorrentes compartilham o budget do playback run.
+- Requests sao mapeados para variant/representation e media sequence.
+- O resultado distingue `observed`, `sustained`, `not_observed` e `inconclusive`.
+
+Motivo:
+
+- Atrasar e depois liberar o arquivo inteiro mede principalmente latencia e cria
+  bursts irreais. Paced delivery representa melhor a capacidade disponivel.
+- Um limite por response multiplicaria artificialmente a banda quando audio e
+  video fossem baixados em paralelo.
+
+Consequencia:
+
+- O shaper precisa respeitar backpressure, cancelamento e um token bucket por run.
+- Request de outra variant comprova escolha de rede, nao decode ou render.
+
+## 2026-08-05 - Import controlado do recorder do VHS
+
+Decisao:
+
+- O recorte inicial parte do modulo `/home/gugaime/IA/vhs` no commit
+  `d2abfbd51046`; o Kael no commit `6af169ceb096` e apenas referencia de integracao.
+- Nao sera adicionada dependencia de runtime para nenhum dos dois repositorios.
+- O import deve criar `src/record/README.md` com procedencia e adaptacoes.
+
+Adaptacoes obrigatorias:
+
+- substituir fetch generico pela fronteira segura do Video Harness;
+- impor budgets e cleanup;
+- validar alinhamento e `MEDIA-SEQUENCE` entre variants;
+- trocar servidor efemero por data plane persistente;
+- adicionar Range, shaping e request journal.

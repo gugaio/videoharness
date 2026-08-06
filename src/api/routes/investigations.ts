@@ -6,10 +6,11 @@ import type { InvestigationQueries } from "../../investigation/application/inves
 import type { InvestigationEvent } from "../../investigation/domain/investigation-event.js";
 import { IdempotencyConflictError } from "../../investigation/ports/investigation-intake.js";
 import { ApiError } from "../errors.js";
+import type { ArtifactStore } from "../../investigation/ports/artifact-store.js";
 
 export function registerInvestigationRoutes(
   server: FastifyInstance,
-  dependencies: { startInvestigation: StartInvestigation; queries: InvestigationQueries; playbackSessions?: PostgresPlaybackSessions },
+  dependencies: { startInvestigation: StartInvestigation; queries: InvestigationQueries; playbackSessions?: PostgresPlaybackSessions; artifactStore?: ArtifactStore },
 ): void {
   server.post<{ Body: unknown }>("/v1/investigations", async (request, reply) => {
     const parsed = StartInvestigationRequestSchema.safeParse(request.body);
@@ -55,6 +56,30 @@ export function registerInvestigationRoutes(
     const report = await dependencies.queries.getReport(id);
     if (!report) throw new ApiError(404, "REPORT_NOT_READY", "Investigation report is not ready");
     return { report };
+  });
+
+  server.get<{ Params: { id: string } }>("/v1/investigations/:id/artifacts", async (request) => {
+    if (!dependencies.queries.listArtifacts) throw new ApiError(503, "ARTIFACTS_UNAVAILABLE", "Artifact listing is not configured");
+    const id = parseInvestigationId(request.params.id);
+    const investigation = await dependencies.queries.getInvestigation(id);
+    if (!investigation) throw new ApiError(404, "INVESTIGATION_NOT_FOUND", "Investigation not found");
+    const artifacts = await dependencies.queries.listArtifacts(id);
+    return { artifacts: artifacts.map(({ storageKey: _storageKey, ...artifact }) => artifact) };
+  });
+
+  server.get<{ Params: { id: string; artifactId: string } }>("/v1/investigations/:id/artifacts/:artifactId", async (request, reply) => {
+    if (!dependencies.artifactStore?.read || !dependencies.queries.getArtifact) throw new ApiError(503, "ARTIFACTS_UNAVAILABLE", "Artifact storage is not configured");
+    const id = parseInvestigationId(request.params.id);
+    if (!/^[0-9a-f-]{36}$/i.test(request.params.artifactId)) throw new ApiError(400, "INVALID_ARTIFACT_ID", "Artifact ID is invalid");
+    const artifact = await dependencies.queries.getArtifact(id, request.params.artifactId);
+    if (!artifact) throw new ApiError(404, "ARTIFACT_NOT_FOUND", "Artifact not found");
+    try {
+      const content = await dependencies.artifactStore.read(artifact.storageKey);
+      reply.header("Content-Disposition", `attachment; filename="${artifact.logicalKey.replace(/[^a-zA-Z0-9._-]/g, "-")}"`);
+      return reply.type(artifact.contentType ?? "application/octet-stream").send(content);
+    } catch {
+      throw new ApiError(404, "ARTIFACT_NOT_FOUND", "Artifact content is unavailable");
+    }
   });
 
   server.post<{ Params: { id: string }; Body: unknown }>("/v1/investigations/:id/playback-sessions", async (request, reply) => {

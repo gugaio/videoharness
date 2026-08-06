@@ -9,24 +9,28 @@ const modules = [
     description: "Investigate a stream immediately.",
     icon: <SearchIcon />,
     available: true,
+    path: undefined,
   },
   {
     title: "Record",
-    description: "Continuously record streams for future analysis.",
+    description: "Clone HLS VOD locally and test device ABR behavior.",
     icon: <RecordIcon />,
-    available: false,
+    available: true,
+    path: "/record",
   },
   {
     title: "Watch",
     description: "Monitor a live stream 24/7 and detect problems.",
     icon: <WatchIcon />,
     available: false,
+    path: undefined,
   },
   {
     title: "Replay",
     description: "Replay incidents with collected evidence.",
     icon: <ReplayIcon />,
     available: false,
+    path: undefined,
   },
 ] as const;
 
@@ -127,7 +131,7 @@ export function HomePage(): JSX.Element {
 
           <div className="mx-auto mt-10 grid w-full max-w-5xl gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {modules.map((module) => (
-              <ModuleCard key={module.title} {...module} />
+              <ModuleCard key={module.title} onOpen={module.path ? () => navigate(module.path) : undefined} {...module} />
             ))}
           </div>
         </section>
@@ -141,12 +145,13 @@ function ModuleCard(props: {
   description: string;
   icon: ReactNode;
   available: boolean;
+  onOpen?: () => void;
 }): JSX.Element {
   return (
-    <article
+    <article onClick={props.onOpen} onKeyDown={(event) => { if (props.onOpen && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); props.onOpen(); } }} role={props.onOpen ? "button" : undefined} tabIndex={props.onOpen ? 0 : undefined}
       className={`rounded-2xl border p-5 text-left backdrop-blur-xl transition ${
         props.available
-          ? "border-white/20 bg-white/[0.075] shadow-panel"
+          ? "cursor-pointer border-white/20 bg-white/[0.075] shadow-panel hover:border-sky-200/40"
           : "border-white/10 bg-white/[0.025]"
       }`}
     >
