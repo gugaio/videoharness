@@ -10,6 +10,9 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_BASE: ghcr.io/${{ github.repository }}
+  # Multi-arch build: the deploy target (Coolify VPS) may be arm64, so images
+  # must cover both common runtime platforms.
+  PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
   build-and-push:
@@ -59,6 +62,7 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          platforms: ${{ env.PLATFORMS }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

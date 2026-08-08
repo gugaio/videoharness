@@ -373,6 +373,34 @@ Proximo passo recomendado:
 
 - Criar o recurso no Coolify e validar o primeiro deploy ponta a ponta.
 
+### 2026-08-08 - Imagens multi-arquitetura para deploy em ARM
+
+Fases impactadas: 5.
+
+Entrega:
+
+- `docker-image.yml` agora publica as imagens GHCR para `linux/amd64` e
+  `linux/arm64` (`PLATFORMS` no env + `platforms:` no build-push-action),
+  corrigindo o deploy em servidor Coolify arm64 que falhava com
+  "no matching manifest for linux/arm64/v8".
+
+Arquivos-chave:
+
+- `.github/workflows/docker-image.yml`
+
+Validacoes:
+
+- [x] YAML do workflow valido.
+
+Pendencias:
+
+- Rebuild das imagens no GHCR (novo push ou redeploy manual) antes de subir o
+  stack no servidor arm64.
+
+Proximo passo recomendado:
+
+- Confirmar o deploy do stack no Coolify arm64.
+
 ### 2026-08-05 - Plano Record HLS VOD e simulacao ABR
 
 Fases impactadas: Record R1, Record R2, 4 e 5.
