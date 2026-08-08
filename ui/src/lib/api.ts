@@ -1,5 +1,23 @@
 import { z } from "zod";
 
+// crypto.randomUUID only exists in secure contexts (HTTPS or localhost), so it
+// falls back to a v4 UUID built from crypto.getRandomValues when unavailable.
+function newIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0"));
+  return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10, 16).join("")}`;
+}
+
 const HealthSchema = z.object({
   ok: z.boolean(),
   service: z.literal("video-harness-api"),
@@ -286,7 +304,7 @@ export async function startInvestigation(input: {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Idempotency-Key": crypto.randomUUID(),
+      "Idempotency-Key": newIdempotencyKey(),
     },
     body: JSON.stringify(input),
   });
@@ -294,7 +312,7 @@ export async function startInvestigation(input: {
 }
 
 export async function startRecording(input: { url: string; protocol: "hls" | "dash"; durationSeconds: number; startSeconds: number }): Promise<{ recording: Recording; replayed: boolean }> {
-  const response = await fetch("/v1/recordings", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify(input) });
+  const response = await fetch("/v1/recordings", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": newIdempotencyKey() }, body: JSON.stringify(input) });
   return parseResponse(response, z.object({ recording: RecordingSchema, replayed: z.boolean() }));
 }
 export async function getRecording(id: string): Promise<Recording> {

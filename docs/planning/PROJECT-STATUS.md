@@ -428,6 +428,35 @@ Proximo passo recomendado:
 
 - Validar ponta a ponta o stack no servidor arm64.
 
+### 2026-08-08 - Fallback de idempotency key no frontend
+
+Fases impactadas: 4.
+
+Entrega:
+
+- `ui/src/lib/api.ts` usa `newIdempotencyKey()`: `crypto.randomUUID()` quando
+  disponivel, com fallback para UUID v4 via `crypto.getRandomValues`. Corrige o
+  erro "crypto.randomUUID is not a function" em paginas servidas por HTTP (o
+  `randomUUID` do browser exige contexto seguro).
+
+Arquivos-chave:
+
+- `ui/src/lib/api.ts`
+
+Validacoes:
+
+- [x] `npm --prefix ui run check`.
+- [x] `npm --prefix ui run build`.
+
+Pendencias:
+
+- Ativar HTTPS no dominio do Coolify (contexto seguro) para tambem beneficiar
+  cookies/SSE em producao.
+
+Proximo passo recomendado:
+
+- Confirmar o acesso via HTTPS no domínio.
+
 ### 2026-08-05 - Plano Record HLS VOD e simulacao ABR
 
 Fases impactadas: Record R1, Record R2, 4 e 5.
