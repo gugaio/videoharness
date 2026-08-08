@@ -14,7 +14,7 @@ describe("startRecording", () => {
     }));
     const start = createStartRecording({ createOrGet });
 
-    await start({ sourceUrl: "https://example.test/vod/master.m3u8", durationSeconds: 120, startSeconds: 10, idempotencyKey: "record-1" });
+    await start({ sourceUrl: "https://example.test/vod/master.m3u8", protocol: "hls", durationSeconds: 120, startSeconds: 10, idempotencyKey: "record-1" });
 
     expect(createOrGet).toHaveBeenCalledWith(expect.objectContaining({
       sourceUrl: "https://example.test/vod/master.m3u8",

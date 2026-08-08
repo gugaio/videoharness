@@ -9,12 +9,13 @@ export const CreateRecordingRequestSchema = z.object({
   }, "url must use HTTP(S) without credentials"),
   durationSeconds: z.number().int().min(30).max(600).default(120),
   startSeconds: z.number().int().min(0).max(86_400).default(0),
+  protocol: z.enum(["hls", "dash"]).default("hls"),
 });
 
 export const RecordingSchema = z.object({
   id: z.string().uuid(),
   sourceUrl: z.string().url(),
-  protocol: z.literal("hls"),
+  protocol: z.enum(["hls", "dash"]),
   state: z.enum(recordingStates),
   requestedDurationSeconds: z.number().int(),
   requestedStartSeconds: z.number().int(),

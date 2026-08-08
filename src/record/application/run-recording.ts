@@ -1,11 +1,12 @@
 import { RecordingJobLeaseLostError, type ClaimedRecordingJob, type RecordingTransition } from "../domain/recording-job.js";
+import { StreamCollectionError } from "../../stream-tools/errors.js";
 import type { RecordingJobRepository } from "../ports/recording-job.js";
 import type { RecordingMaterializer } from "../ports/recording-materializer.js";
 import type { RecordingStore } from "../ports/recording-store.js";
 
 export type RecordingWorker = { runNext(): Promise<boolean> };
 
-/** Runs one durable recording job. The HLS collector is injected so this flow stays deterministic and transport-agnostic. */
+/** Runs one durable recording job. The protocol collector is injected so this flow stays deterministic and transport-agnostic. */
 export function createRecordingWorker(input: {
   repository: RecordingJobRepository;
   materializer: RecordingMaterializer;
@@ -54,7 +55,7 @@ export function createRecordingWorker(input: {
         await input.repository.complete(job.id, input.workerId, result, {
           type: "recording.ready",
           actor: "Recorder",
-          message: "The HLS VOD recording is ready to be served locally.",
+          message: `The ${job.recording.protocol.toUpperCase()} VOD recording is ready to be served locally.`,
           payload: { state: "ready", coverageSeconds: result.coverageSeconds, totalBytes: result.totalBytes, resourceCount: result.resources.length },
         });
       } catch (error) {
@@ -75,7 +76,7 @@ function validatingTransition(job: ClaimedRecordingJob): RecordingTransition {
   return {
     state: "validating",
     event: {
-      type: "recording.state_changed", actor: "Recorder", message: "Validating the HLS source and recording limits.",
+      type: "recording.state_changed", actor: "Recorder", message: `Validating the ${job.recording.protocol.toUpperCase()} source and recording limits.`,
       payload: { state: "validating", protocol: job.recording.protocol },
     },
   };
@@ -85,7 +86,7 @@ function collectingTransition(job: ClaimedRecordingJob): RecordingTransition {
   return {
     state: "collecting",
     event: {
-      type: "recording.state_changed", actor: "Recorder", message: "Collecting a bounded HLS VOD window into private storage.",
+      type: "recording.state_changed", actor: "Recorder", message: `Collecting a bounded ${job.recording.protocol.toUpperCase()} VOD window into private storage.`,
       payload: { state: "collecting", requestedDurationSeconds: job.recording.requestedDurationSeconds },
     },
   };
@@ -93,6 +94,7 @@ function collectingTransition(job: ClaimedRecordingJob): RecordingTransition {
 
 function classifyFailure(error: unknown): { code: string; message: string; retryable: boolean } {
   if (error instanceof RecordingJobLeaseLostError) return { code: "JOB_LEASE_LOST", message: "The worker lease was lost before the recording could be committed.", retryable: true };
+  if (error instanceof StreamCollectionError) return { code: error.code, message: error.message.slice(0, 500), retryable: error.retryable };
   const message = error instanceof Error ? error.message : "Recording failed unexpectedly";
   return { code: "RECORDING_FAILED", message: message.slice(0, 500), retryable: true };
 }

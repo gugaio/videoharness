@@ -54,7 +54,8 @@ Record e um fluxo dedicado, nao uma opcao escondida no formulario de Investigate
 ### Estado implementado
 
 - Card Record na homepage com estado `Available now` e navegacao para `/record`.
-- Intake HLS VOD com URL, janela de 30--600 segundos e CTA `Record stream`.
+- Intake HLS ou DASH VOD com seletor explicito, URL, janela de 30--600 segundos
+  e CTA `Record stream`.
 - Tela `/recordings/:recordingId` consulta o estado, recebe eventos persistidos
   por SSE, mostra cobertura/bytes e nunca oferece run durante falha ou coleta.
 - Quando `ready`, o preset `Good -> constrained -> recovery` cria o playback run
@@ -65,12 +66,13 @@ Record e um fluxo dedicado, nao uma opcao escondida no formulario de Investigate
 ### Intake
 
 - Rota `/record`.
-- URL HLS VOD como campo dominante.
+- URL VOD como campo dominante e seletor de protocolo explicito; HLS e o default.
 - Duracao da janela com default de 120 segundos e limites visiveis.
 - Toda a ladder suportada e gravada; nao expor checkbox `all variants` no primeiro
   corte porque ele e uma invariante do teste ABR.
 - CTA unico `Record stream`.
-- Explicar antes do envio que live, DRM e DASH ainda nao fazem parte de R1.
+- Explicar antes do envio os limites: HLS clear/MPEG-TS ou DASH static clear/fMP4
+  com SegmentTemplate; live, DRM e byte ranges nao sao aceitos.
 
 ### Recording screen
 
@@ -82,13 +84,36 @@ Record e um fluxo dedicado, nao uma opcao escondida no formulario de Investigate
 
 ### Playback run
 
-- O recording pronto possui CTA principal `Start ABR test`.
-- Preset default `Good -> constrained -> recovery`, com valores reais de kbps e
-  latencia visiveis antes da criacao.
+- O recording pronto oferece duas acoes: `Start normal` (controle, 100 Mbps e
+  zero latencia artificial) e `Force ABR`.
+- Para DASH, ha tambem `1080p control`: cria um run normal cuja mesma URL fixa
+  entrega somente a 1080p de maior bitrate e o audio, removendo ABR de video.
+- `Force ABR` usa `Good -> constrained -> recovery`, com valores reais de kbps
+  e latencia visiveis antes da criacao (stepper com os 3 stages do plano).
 - Depois da criacao, mostrar a URL completa com acao `Copy playback URL` e uma
   instrucao curta para abri-la no device.
+- A URL copiada preserva a origem pela qual a tela foi aberta. Para um device na
+  LAN, abra o Harness pelo IP/DNS da maquina, nunca por `localhost`.
 - A URL e unica por run; criar outro teste gera outra URL.
+- Enquanto o modo de laboratorio estiver ativo, a URL exposta e fixa
+  (`/streams/fixed/...`) e aponta para o run valido criado mais recentemente.
 - Um CTA explicito `Finish test` encerra a janela e congela o resumo.
+
+### Recording screen (dashboard)
+
+- Tela no estilo dashboard com KPIs em cards: janela solicitada, cobertura
+  efetiva, bytes armazenados e protocolo.
+- Quando um playback run existe, uma seccao `ABR evidence` mostra KPIs
+  derivados dos requests (total, video picks, latencia media, banda media) mais
+  a contagem real de trocas de variant observadas no journal.
+- Graficos em SVG nativo (sem biblioteca nova), sempre alimentados por dados
+  reais do journal de delivery - nunca por progresso ficticio:
+  - `Bandwidth vs representation`: banda modelada (rede) sobreposta a selecao
+    de representacao do player (pontos), com faixas por stage (Good /
+    Constrained / Recovery).
+  - `Served latency`: barras por request com cor por magnitude.
+- O plano de shaping usa os stages reais do playback run (preset antes da
+  criacao; run.profile depois), mantendo os valores de kbps/latencia visiveis.
 
 ### Request evidence
 

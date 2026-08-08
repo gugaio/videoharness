@@ -4,6 +4,7 @@ import type { RecordingJobRepository } from "../ports/recording-job.js";
 import type { RecordingMaterializer } from "../ports/recording-materializer.js";
 import type { RecordingStore } from "../ports/recording-store.js";
 import { createRecordingWorker } from "./run-recording.js";
+import { StreamCollectionError } from "../../stream-tools/errors.js";
 
 const job: ClaimedRecordingJob = {
   id: "8dc67e09-4b25-4fe5-a69a-58f896fb5197", attempts: 1, maxAttempts: 3,
@@ -49,5 +50,18 @@ describe("RecordingWorker", () => {
 
     expect(store.removePublished).toHaveBeenCalledWith(job.recording.id);
     expect(repository.fail).toHaveBeenCalledWith(job.id, "worker-a", "RECORDING_FAILED", "database unavailable", true);
+  });
+
+  it("does not retry a definitive stream collection limit", async () => {
+    const repository: RecordingJobRepository = {
+      claimNext: vi.fn(async () => job), heartbeat: vi.fn(async () => true), transition: vi.fn(async () => undefined),
+      complete: vi.fn(async () => undefined), fail: vi.fn(async () => "failed" as const),
+    };
+    const store: RecordingStore = { prepareWorkspace: vi.fn(async () => ({ recordingId: job.recording.id, path: "/private/recording" })), publish: vi.fn(async () => undefined), discardWorkspace: vi.fn(async () => undefined), removePublished: vi.fn(async () => undefined) };
+    const materializer: RecordingMaterializer = { materialize: vi.fn(async () => { throw new StreamCollectionError("STREAM_RESPONSE_TOO_LARGE", "The recording exceeds the aggregate byte limit", false); }) };
+
+    await createRecordingWorker({ repository, store, materializer, workerId: "worker-a", leaseMs: 60_000 }).runNext();
+
+    expect(repository.fail).toHaveBeenCalledWith(job.id, "worker-a", "STREAM_RESPONSE_TOO_LARGE", "The recording exceeds the aggregate byte limit", false);
   });
 });

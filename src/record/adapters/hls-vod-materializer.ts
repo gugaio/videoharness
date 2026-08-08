@@ -78,7 +78,10 @@ export class HlsVodMaterializer implements RecordingMaterializer {
       const playlistBytes = new TextEncoder().encode(playlist);
       totalBytes += playlistBytes.byteLength;
       await writeWorkspaceFile(input.workspace.path, localPath, playlistBytes);
-      resources.push(resource(input.job.recording.id, localPath, "media-playlist", playlistBytes, "application/vnd.apple.mpegurl", { targetId: target.id, kind: target.kind }));
+      resources.push(resource(input.job.recording.id, localPath, "media-playlist", playlistBytes, "application/vnd.apple.mpegurl", {
+        targetId: target.id, kind: target.kind,
+        ...(target.kind === "video" ? { bandwidth: (target.source as HlsVariant).bandwidth, resolution: (target.source as HlsVariant).resolution, codecs: (target.source as HlsVariant).codecs } : {}),
+      }));
       localPlaylists.push({ target, localPath });
       coverage.push(selected[selected.length - 1]!.timelineEndSeconds - selected[0]!.timelineStartSeconds);
       await input.onProgress?.({ type: "recording.variant_completed", message: `Recorded ${target.id}: ${selected.length} chunks stored.`, payload: { targetId: target.id, targetKind: target.kind, segmentCount: selected.length } });

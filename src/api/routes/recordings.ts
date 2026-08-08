@@ -13,7 +13,7 @@ import type { PlaybackRunRepository } from "../../record/ports/playback-run.js";
 export function registerRecordingRoutes(server: FastifyInstance, dependencies: { startRecording: StartRecording; queries: RecordingQueries; createPlaybackRun?: CreatePlaybackRun; playbackRuns?: PlaybackRunRepository }): void {
   server.post<{ Body: unknown }>("/v1/recordings", async (request, reply) => {
     const parsed = CreateRecordingRequestSchema.safeParse(request.body);
-    if (!parsed.success) throw new ApiError(400, "INVALID_REQUEST", "A valid HLS URL and bounded recording window are required");
+    if (!parsed.success) throw new ApiError(400, "INVALID_REQUEST", "A valid HLS or DASH URL and bounded recording window are required");
     const header = request.headers["idempotency-key"];
     const idempotencyKey = Array.isArray(header) ? header[0]?.trim() : header?.trim();
     if (!idempotencyKey || idempotencyKey.length > 200) {
@@ -22,6 +22,7 @@ export function registerRecordingRoutes(server: FastifyInstance, dependencies: {
     try {
       const result = await dependencies.startRecording({
         sourceUrl: parsed.data.url,
+        protocol: parsed.data.protocol,
         durationSeconds: parsed.data.durationSeconds,
         startSeconds: parsed.data.startSeconds,
         idempotencyKey,
@@ -93,7 +94,7 @@ export function registerRecordingRoutes(server: FastifyInstance, dependencies: {
     if (!parsed.success) throw new ApiError(400, "INVALID_PLAYBACK_RUN", "Playback duration must be between 30 and 900 seconds");
     const created = await dependencies.createPlaybackRun({ recordingId, maxDurationSeconds: parsed.data.maxDurationSeconds, profile: parsed.data.profile });
     if (created === "recording_not_ready") throw new ApiError(409, "RECORDING_NOT_READY", "Playback is available when the recording is ready");
-    return reply.status(201).send({ run: created.run, playbackUrl: `/streams/${created.playbackToken}/index.m3u8` });
+    return reply.status(201).send({ run: created.run, playbackUrl: `/streams/fixed/${created.manifestPath}` });
   });
 
   server.get<{ Params: { id: string; runId: string }; Querystring: { limit?: string } }>("/v1/recordings/:id/playback-runs/:runId/requests", async (request) => {

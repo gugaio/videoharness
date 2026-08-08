@@ -226,7 +226,7 @@ export type Investigation = z.infer<typeof InvestigationSchema>;
 export type InvestigationEvent = z.infer<typeof InvestigationEventSchema>;
 
 const RecordingSchema = z.object({
-  id: z.string().uuid(), sourceUrl: z.string().url(), protocol: z.literal("hls"),
+  id: z.string().uuid(), sourceUrl: z.string().url(), protocol: z.enum(["hls", "dash"]),
   state: z.enum(["queued", "validating", "collecting", "ready", "failed"]),
   requestedDurationSeconds: z.number().int(), requestedStartSeconds: z.number().int(),
   coverageSeconds: z.number().optional(), totalBytes: z.number().optional(), errorCode: z.string().optional(), errorMessage: z.string().optional(),
@@ -234,7 +234,29 @@ const RecordingSchema = z.object({
 });
 export const RecordingEventSchema = z.object({ id: z.string().regex(/^\d+$/), recordingId: z.string().uuid(), type: z.string(), actor: z.string(), message: z.string(), payload: z.record(z.string(), z.unknown()), createdAt: z.string() });
 const NetworkProfileSchema = z.object({ schemaVersion: z.literal(1), name: z.string(), stages: z.array(z.object({ afterVideoRequests: z.number(), bandwidthKbps: z.number(), latencyMs: z.number() })) });
+export const ABR_PRESET_PROFILE: z.infer<typeof NetworkProfileSchema> = {
+  schemaVersion: 1,
+  name: "Good → constrained → recovery",
+  stages: [
+    { afterVideoRequests: 0, bandwidthKbps: 12000, latencyMs: 30 },
+    { afterVideoRequests: 3, bandwidthKbps: 1200, latencyMs: 200 },
+    { afterVideoRequests: 8, bandwidthKbps: 12000, latencyMs: 30 },
+  ],
+};
+export const NORMAL_PLAYBACK_PROFILE: z.infer<typeof NetworkProfileSchema> = {
+  schemaVersion: 1,
+  name: "Normal playback",
+  stages: [{ afterVideoRequests: 0, bandwidthKbps: 100000, latencyMs: 0 }],
+};
+export const CONTROL_1080P_PROFILE: z.infer<typeof NetworkProfileSchema> = {
+  schemaVersion: 1,
+  name: "1080p control (no ABR)",
+  stages: [{ afterVideoRequests: 0, bandwidthKbps: 100000, latencyMs: 0 }],
+};
 const PlaybackRunSchema = z.object({ id: z.string().uuid(), recordingId: z.string().uuid(), state: z.enum(["created", "active", "completed", "expired", "failed"]), maxDurationSeconds: z.number(), profile: NetworkProfileSchema, createdAt: z.string(), expiresAt: z.string() });
+export type NetworkProfile = z.infer<typeof NetworkProfileSchema>;
+export type NetworkProfileStage = NetworkProfile["stages"][number];
+export type PlaybackRun = z.infer<typeof PlaybackRunSchema>;
 export type Recording = z.infer<typeof RecordingSchema>;
 export type RecordingEvent = z.infer<typeof RecordingEventSchema>;
 const DeliveryRequestSchema = z.object({ id: z.string(), logicalPath: z.string(), resourceKind: z.string(), targetId: z.string().optional(), mediaSequence: z.number().optional(), variantBandwidth: z.number().optional(), variantResolution: z.string().optional(), stageIndex: z.number(), bandwidthKbps: z.number(), latencyMs: z.number(), bytesSent: z.number(), statusCode: z.number(), startedAt: z.string(), completedAt: z.string() });
@@ -271,7 +293,7 @@ export async function startInvestigation(input: {
   return parseResponse(response, z.object({ investigation: InvestigationSchema, replayed: z.boolean() }));
 }
 
-export async function startRecording(input: { url: string; durationSeconds: number; startSeconds: number }): Promise<{ recording: Recording; replayed: boolean }> {
+export async function startRecording(input: { url: string; protocol: "hls" | "dash"; durationSeconds: number; startSeconds: number }): Promise<{ recording: Recording; replayed: boolean }> {
   const response = await fetch("/v1/recordings", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify(input) });
   return parseResponse(response, z.object({ recording: RecordingSchema, replayed: z.boolean() }));
 }
@@ -279,8 +301,8 @@ export async function getRecording(id: string): Promise<Recording> {
   const response = await fetch(`/v1/recordings/${encodeURIComponent(id)}`);
   return (await parseResponse(response, z.object({ recording: RecordingSchema }))).recording;
 }
-export async function createRecordingPlaybackRun(id: string): Promise<{ run: z.infer<typeof PlaybackRunSchema>; playbackUrl: string }> {
-  const response = await fetch(`/v1/recordings/${encodeURIComponent(id)}/playback-runs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profile: { schemaVersion: 1, name: "Good → constrained → recovery", stages: [{ afterVideoRequests: 0, bandwidthKbps: 12000, latencyMs: 30 }, { afterVideoRequests: 3, bandwidthKbps: 1200, latencyMs: 200 }, { afterVideoRequests: 8, bandwidthKbps: 12000, latencyMs: 30 }] } }) });
+export async function createRecordingPlaybackRun(id: string, profile: NetworkProfile = ABR_PRESET_PROFILE): Promise<{ run: PlaybackRun; playbackUrl: string }> {
+  const response = await fetch(`/v1/recordings/${encodeURIComponent(id)}/playback-runs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profile }) });
   return parseResponse(response, z.object({ run: PlaybackRunSchema, playbackUrl: z.string() }));
 }
 export async function getRecordingRequests(recordingId: string, runId: string): Promise<DeliveryRequest[]> {

@@ -1,8 +1,8 @@
 # API - Video Harness Space
 
-Status: Investigate, validacao opcional de playback, clone HLS VOD e data plane
-sem shaping de Record estao implementados. Shaping e journal ABR pertencem aos
-slices seguintes de Record R1.
+Status: Investigate, clone HLS VOD e DASH VOD estatico e data plane de Record
+estao implementados. Shaping e journal de requests operam por recurso gravado;
+inferencia final de transicoes ABR permanece pendente.
 
 Prefixo do control plane: `/v1`. O data plane consumido pelo device usa
 `/streams/:playbackToken/*`.
@@ -30,7 +30,7 @@ flowchart TD
     Client --> CreateRun[POST /v1/recordings/:id/playback-runs]
     Client --> Run[GET /v1/recordings/:id/playback-runs/:runId]
     Client --> Requests[GET /v1/recordings/:id/playback-runs/:runId/requests]
-    Device[Device/player] --> DataPlane[GET /streams/:playbackToken/*]
+    Device[Device/player] --> DataPlane[GET /streams/fixed/*]
     DataPlane --> RecordingStore
     DataPlane --> Requests
 ```
@@ -51,14 +51,16 @@ flowchart TD
 | Implementado | POST | `/v1/investigations/:id/playback-sessions/:sessionId/complete` | Persistir telemetria e enfileirar revisao |
 | Implementado | POST | `/v1/investigations/:id/playback-sessions/:sessionId/fail` | Encerrar tentativa sem mudar o report |
 | Planejado | GET | `/v1/reports/shared/:token` | Report compartilhado por token |
-| Implementado R1 | POST | `/v1/recordings` | Criar recording HLS VOD e enfileirar coleta |
+| Implementado R1/R2 | POST | `/v1/recordings` | Criar recording HLS ou DASH VOD e enfileirar coleta |
 | Implementado R1 | GET | `/v1/recordings/:id` | Estado, cobertura e falha publica |
 | Implementado R1 | GET | `/v1/recordings/:id/events` | Historico e SSE do recording |
 | Implementado R1 | POST | `/v1/recordings/:id/playback-runs` | Criar experimento e URL opaca |
 | Planejado R1 | GET | `/v1/recordings/:id/playback-runs/:runId` | Estado e resumo ABR do run |
 | Implementado R1 | GET | `/v1/recordings/:id/playback-runs/:runId/requests` | Ultimos delivery requests do run |
 | Planejado R1 | POST | `/v1/recordings/:id/playback-runs/:runId/finish` | Encerrar run e congelar resumo |
-| Implementado R1 | GET | `/streams/:playbackToken/*` | Data plane local sem shaping |
+| Implementado R1/R2 | GET | `/streams/fixed/*` | Alias fixo para o playback run valido mais recente |
+| Implementado R2 | GET | `/streams/fixed-1080/index.mpd` | Controle DASH: somente a 1080p de maior bitrate + audio |
+| Implementado R1/R2 | GET | `/streams/:playbackToken/*` | URL opaca interna por playback run |
 
 ## Criar investigacao
 
@@ -244,14 +246,12 @@ desenvolvimento; IPs privados literais e redirects para outros destinos privados
 continuam bloqueados. URLs publicas tambem nao podem redirecionar para o alias
 localhost.
 
-## Record HLS VOD - contratos R1
+## Record HLS e DASH VOD - contratos R1/R2
 
-O Slice 2 habilita as rotas de `recordings` na composicao de producao. O worker
-aceita somente master HLS VOD clear/MPEG-TS, com 2--8 variants fetchable e
-renditions de audio vinculadas. Live, criptografia, fMP4/`EXT-X-MAP` e byte ranges
-falham de forma explicita antes da publicacao. O primeiro playback run e data
-plane GET estao implementados; profile de rede, journal, `HEAD`, `OPTIONS`, Range
-e encerramento de run seguem planejados.
+O worker aceita HLS VOD clear/MPEG-TS com 2--8 variants e DASH VOD `static`
+clear/fMP4 com `SegmentTemplate` e 2--8 video representations. Para DASH o MPD
+local referencia somente init e segmentos ja registrados. Live/dynamic, DRM,
+`SegmentBase` e byte ranges falham explicitamente antes da publicacao.
 
 ### Criar recording
 
@@ -264,6 +264,7 @@ Idempotency-Key: <client-generated-key>
 ```json
 {
   "url": "https://example.test/vod/master.m3u8",
+  "protocol": "hls",
   "durationSeconds": 120,
   "startSeconds": 0
 }
@@ -272,6 +273,7 @@ Idempotency-Key: <client-generated-key>
 Regras iniciais:
 
 - `url` aceita somente HTTP(S), sem credenciais embutidas;
+- `protocol` aceita `hls` (default) ou `dash`;
 - `durationSeconds` fica entre 30 e 600, default 120;
 - `startSeconds` fica entre 0 e 86.400, default 0;
 - o backend sempre tenta materializar toda a ladder suportada;
@@ -305,6 +307,10 @@ queued -> validating -> collecting -> ready
 
 `ready` significa que manifests, recursos e metadata foram publicados
 atomicamente. Um workspace parcial nunca recebe playback URL.
+
+Para DASH, antes do download o servidor estima a janela usando os bitrates
+declarados das representations. Se a ladder exceder o teto agregado de 1 GiB,
+retorna falha definitiva `STREAM_RESPONSE_TOO_LARGE`; reduza a janela solicitada.
 
 ### Consultar recording
 
@@ -351,6 +357,16 @@ Contagens publicadas representam trabalho real. Nao existe percentual estimado.
 
 Disponivel somente quando o recording esta `ready`.
 
+Sem `profile`, a API usa `baseline` (100.000 Kbps, 0 ms): o modo normal. A UI
+envia esse profile explicitamente para `Start normal`; `Force ABR` envia o preset
+com os tres stages Good, constrained e recovery.
+
+Para separar defeito de representation de uma troca ABR, o perfil de run
+`1080p control (no ABR)` faz a mesma URL `/streams/fixed/index.mpd` entregar um
+MPD derivado somente de recursos locais. Ele mantem a representation 1920x1080
+de maior bitrate (e o audio), sem outra representation de video para o player
+escolher. `/streams/fixed-1080/index.mpd` continua disponivel como alias direto.
+
 ```http
 POST /v1/recordings/:id/playback-runs
 Content-Type: application/json
@@ -396,7 +412,7 @@ Resposta: `201 Created`.
     "createdAt": "2026-08-05T12:05:00.000Z",
     "expiresAt": "2026-08-05T12:20:00.000Z"
   },
-  "playbackUrl": "https://vhs.example/streams/<opaque-token>/index.m3u8"
+  "playbackUrl": "https://vhs.example/streams/fixed/index.m3u8"
 }
 ```
 

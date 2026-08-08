@@ -6,7 +6,7 @@ Indice de onboarding para humanos e agentes.
 
 1. `AGENTS.md` - regras obrigatorias do repositorio.
 2. `docs/planning/PROJECT-STATUS.md` - estado real e proximo passo.
-3. `docs/architecture/phases/phase-record-hls-vod.md` - fase ativa.
+3. `docs/architecture/phases/phase-record-dash-vod.md` - fase ativa.
 4. `docs/planning/RECORD-ABR-IMPLEMENTATION-PLAN.md` - plano executavel de Record.
 
 ## Produto
@@ -31,12 +31,13 @@ Indice de onboarding para humanos e agentes.
   ponta a ponta sobre PostgreSQL.
 - O worker usa claim transacional, lease, heartbeat e retry limitado.
 - Homepage cria o caso e a tela restaura eventos e apresenta a conclusao.
-- Fase ativa: **Record R1 - HLS VOD + Simulacao ABR**.
+- Fase ativa: **Record R2 - DASH VOD**.
 - A linha Investigate continua funcional e auditavel; sua proxima reorganizacao
   visual fica pausada enquanto o primeiro slice Record e construido.
 - Record materializara uma janela VOD de todas as variants suportadas, publicara
   uma URL por playback run e registrara requests do device sob profiles de rede.
-- DASH VOD pertence a Record R2 e somente comeca depois do DoD de HLS VOD.
+- DASH VOD Record esta sendo implementado sobre o mesmo data plane e journal de
+  HLS; a inferencia final de transicoes ABR continua pendente para ambos.
 - A primeira fatia real coleta manifests HLS/DASH por uma fronteira protegida
   contra SSRF, persiste artifact + evidence bundle e gera report deterministico.
 - Artifacts agora possuem identidade logica por investigation, sao registrados em

@@ -113,7 +113,9 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${VIDEO_HARNESS_WEB_PORT:-5173}:80"
+      # The player/device consumes /streams through this public web origin.
+      # API and PostgreSQL remain loopback-only; set a LAN IP here to narrow it.
+      - "${VIDEO_HARNESS_WEB_BIND_ADDRESS:-0.0.0.0}:${VIDEO_HARNESS_WEB_PORT:-5173}:80"
     restart: unless-stopped
 
 volumes:

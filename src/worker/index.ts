@@ -16,6 +16,8 @@ import { SafeHttpClient } from "../stream-tools/safe-http-client.js";
 import { PostgresRecordingJobRepository } from "../record/adapters/postgres-recording-job.js";
 import { FilesystemRecordingStore } from "../record/adapters/filesystem-recording-store.js";
 import { HlsVodMaterializer } from "../record/adapters/hls-vod-materializer.js";
+import { DashVodMaterializer } from "../record/adapters/dash-vod-materializer.js";
+import { ProtocolRecordingMaterializer } from "../record/adapters/recording-materializer.js";
 import { createRecordingWorker } from "../record/application/run-recording.js";
 
 const config = loadConfig();
@@ -64,11 +66,15 @@ const worker = createInvestigationWorker({
 const recordingWorker = createRecordingWorker({
   repository: new PostgresRecordingJobRepository(pool),
   store: new FilesystemRecordingStore(config.dataDir),
-  materializer: new HlsVodMaterializer(new SafeHttpClient({
+  materializer: new ProtocolRecordingMaterializer(new HlsVodMaterializer(new SafeHttpClient({
     timeoutMs: config.streamTimeoutMs,
     maxBytes: config.recordSegmentMaxBytes,
     ...localDevelopmentAlias,
-  }), { maxVariants: config.recordMaxVariants, maxTotalBytes: config.recordMaxTotalBytes }),
+  }), { maxVariants: config.recordMaxVariants, maxTotalBytes: config.recordMaxTotalBytes }), new DashVodMaterializer(new SafeHttpClient({
+    timeoutMs: config.streamTimeoutMs,
+    maxBytes: config.recordSegmentMaxBytes,
+    ...localDevelopmentAlias,
+  }), { maxVariants: config.recordMaxVariants, maxTotalBytes: config.recordMaxTotalBytes })),
   workerId: config.workerId,
   leaseMs: config.workerLeaseMs,
 });

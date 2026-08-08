@@ -1,17 +1,17 @@
 # Project Status - Video Harness Space
 
-Ultima atualizacao: **2026-08-05**
+Ultima atualizacao: **2026-08-06**
 
 ## Resumo
 
-- Fase ativa: **Record R1 - HLS VOD + Simulacao ABR**.
+- Fase ativa: **Record R2 - DASH VOD**.
 - Estado: **em andamento**.
 - Repositorio: novo e independente.
 - Runtime: API, worker, UI e PostgreSQL executaveis.
 - Objetivo imediato: implementar o Slice 5 de Record: journal persistido de
   requests e inferencia de transicoes ABR.
 - Investigate permanece funcional; sua proxima reorganizacao visual esta pausada.
-- DASH VOD esta planejado para Record R2, depois do DoD de HLS VOD.
+- DASH VOD esta em implementacao sobre o data plane ja comprovado.
 
 ## Fases
 
@@ -24,7 +24,7 @@ Ultima atualizacao: **2026-08-05**
 | 4 | Planejada | UX premium e experiencia end-to-end |
 | 5 | Planejada | Hardening, deploy e validacao com usuarios |
 | Record R1 | Em andamento | HLS VOD, origem controlada e evidencia ABR por requests |
-| Record R2 | Planejada | DASH VOD sobre a fronteira comprovada em R1 |
+| Record R2 | Em andamento | DASH VOD sobre a fronteira comprovada em R1 |
 
 ## Entregue
 
@@ -90,6 +90,9 @@ Ultima atualizacao: **2026-08-05**
   SSE e criacao/copia da URL de playback.
 - Slice 5 inicial de Record: journal persistido de delivery e painel dos ultimos
   10 requests por playback run.
+- Record R2 inicial: materializador DASH VOD estatico/fMP4, MPD local, init e
+  segmentos registrados, URL `index.mpd` por playback run e seletor de protocolo
+  no intake.
 
 ## Checklist da Fase 1
 
@@ -133,8 +136,170 @@ Ultima atualizacao: **2026-08-05**
 
 ## Proximo passo recomendado
 
-Implementar o Slice 5 de Record R1: journal persistido de delivery requests e
-inferencia ABR observada/sustentada.
+Fazer smoke de MPD DASH em player externo e concluir inferencia de transicoes
+ABR, compartilhada por HLS e DASH.
+
+### 2026-08-06 - Record DASH VOD estatico
+
+Fases impactadas: Record R2, API e UI Record.
+
+Entrega:
+
+- O intake aceita `protocol: hls | dash`; HLS continua como default.
+- O materializador DASH coleta MPD `static` clear com `SegmentTemplate`, init e
+  segmentos de todas as representations da adaptation set de video (e um grupo
+  de audio), reescrevendo um `index.mpd` local auto-contido.
+- Playback runs de DASH retornam URL opaca terminada em `index.mpd`; o mesmo
+  shaping e journal por resource sao reutilizados.
+- Dynamic MPD, DRM, `SegmentBase` e byte ranges sao recusados antes de publish.
+
+Arquivos-chave:
+
+- `src/record/adapters/dash-vod-materializer.ts`;
+- `src/record/adapters/recording-materializer.ts`;
+- `src/worker/index.ts`;
+- `src/contracts/recording.ts`;
+- `ui/src/pages/RecordPage.tsx`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test -- --run src/record src/api/server.test.ts` - 23 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - aviso conhecido de bundle acima de 500 kB;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- Smoke com MPD real/player externo e inferencia ABR `observed/sustained`.
+
+Proximo passo recomendado:
+
+- Criar um recording DASH VOD e validar troca de representation no journal.
+
+### 2026-08-06 - Limite de tamanho DASH sem retry
+
+Fases impactadas: Record R2.
+
+Entrega:
+
+- Falhas de `StreamCollectionError` agora preservam codigo e retryability no
+  worker; teto de bytes deixa de reenfileirar o mesmo recording.
+- DASH estima os bytes da ladder antes de buscar init ou segmentos, evitando
+  minutos de download quando a janela inteira nao cabe no teto de 1 GiB.
+
+Arquivos-chave:
+
+- `src/record/application/run-recording.ts`;
+- `src/record/adapters/dash-vod-materializer.ts`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test -- --run src/record` - 13 testes;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- Reconstruir o runtime local e repetir o recording com janela menor.
+
+### 2026-08-06 - Exposicao LAN do data plane Record
+
+Fases impactadas: Record R1/R2 e deploy local.
+
+Entrega:
+
+- A porta web (UI, `/v1` proxy e `/streams`) passa a escutar em `0.0.0.0:5173`
+  por default, configuravel via `VIDEO_HARNESS_WEB_BIND_ADDRESS`.
+- API e PostgreSQL continuam loopback-only; devices externos usam somente a
+  origem web, que faz proxy interno para o data plane.
+
+Arquivos-chave:
+
+- `compose.yml`;
+- `ui/nginx.conf`;
+- `docs/ui/UI-GUIDE.md`.
+
+Validacoes:
+
+- [ ] Recriar `web` e confirmar acesso de outra maquina na LAN.
+
+Pendencias:
+
+- Liberar a porta 5173 no firewall do host, se houver um configurado.
+
+### 2026-08-06 - Alias fixo de playback
+
+Fases impactadas: Record R1/R2 e API.
+
+Entrega:
+
+- `POST /playback-runs` agora devolve `/streams/fixed/index.m3u8` ou
+  `/streams/fixed/index.mpd`, sem token na URL entregue ao device.
+- O alias resolve o playback run `created`/`active` mais recente ainda valido;
+  o token opaco interno continua suportado para isolamento e compatibilidade.
+
+Arquivos-chave:
+
+- `src/api/routes/streams.ts`;
+- `src/record/adapters/postgres-playback-run.ts`.
+
+Validacoes:
+
+- [x] API reconstruida e healthcheck PostgreSQL/API passou.
+- [x] origem web acessivel pela LAN em `http://192.168.0.114:5173`.
+- [x] teste de rota fixa em Fastify (`/streams/fixed/index.m3u8`).
+- [ ] Testar alias fixo em player externo apos criar um novo playback run.
+
+### 2026-08-06 - Modos normal e Force ABR
+
+Fases impactadas: Record R1/R2 e UI Record.
+
+Entrega:
+
+- A tela de recording pronto oferece `Start normal` e `Force ABR`.
+- O modo normal envia um profile auditavel de 100.000 Kbps/0 ms; Force ABR
+  preserva o profile Good -> constrained -> recovery já existente.
+- O painel passa a identificar o modo do run criado e explica se houve ou não
+  pressão intencional de rede.
+
+Arquivos-chave:
+
+- `ui/src/lib/api.ts`;
+- `ui/src/pages/RecordPage.tsx`.
+
+Validacoes:
+
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - aviso conhecido de bundle acima de 500 kB;
+- [x] `npm run check`;
+- [x] `git diff --check`.
+
+### 2026-08-06 - Controle DASH 1080p sem ABR
+
+Fases impactadas: Record R2 e data plane.
+
+Entrega:
+
+- `GET /streams/fixed-1080/index.mpd` deriva um MPD local com a representation
+  1920x1080 de maior bitrate e o audio original; não há outra representation de
+  video para uma troca ABR.
+- O controle reutiliza somente bytes registrados do recording e mantém o mesmo
+  journal de delivery e profile do run atual.
+- A UI DASH oferece `1080p control`; ao escolher esse modo, a URL fixa normal
+  (`/streams/fixed/index.mpd`) passa a servir o MPD reduzido para aquele run.
+
+Arquivos-chave:
+
+- `src/api/routes/streams.ts`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test -- --run src/api/server.test.ts` - 12 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - aviso conhecido de bundle acima de 500 kB;
+- [x] `git diff --check`.
 
 ## Registro de atualizacoes
 

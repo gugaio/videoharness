@@ -1,6 +1,6 @@
 # Fase Record R2 - DASH VOD
 
-Status: **planejada depois do DoD de Record R1**.
+Status: **ativa**.
 
 ## Objetivo
 
@@ -24,6 +24,18 @@ PlaybackRun, shaping, request journal e UX comprovados com HLS VOD.
 - MPD local reescrito para recursos registrados.
 - Transicao ABR inferida por requests de representation de video.
 
+## Estado implementado
+
+- Intake permite escolher `hls` ou `dash`; HLS permanece o default compativel.
+- O worker despacha pelo protocolo e o collector DASH aceita MPD `static`, clear,
+  `SegmentTemplate` com timeline ou duration, sem `SegmentBase`/ranges.
+- A maior adaptation set de video com 2--8 representations e uma adaptation set
+  de audio sao materializadas com init e segmentos fMP4 em storage privado.
+- O MPD local e reescrito para paths registrados e o playback run retorna
+  `index.mpd`; shaping e journal continuam os mesmos do data plane existente.
+- Antes de baixar media, o collector estima o tamanho da janela pela bitrate
+  declarada. Ladder acima do teto agregado falha sem retry nem downloads parciais.
+
 ## Fora do primeiro corte DASH
 
 - MPD dinamico;
@@ -42,4 +54,3 @@ PlaybackRun, shaping, request journal e UX comprovados com HLS VOD.
 - Requests sao mapeados para representation, bitrate, resolucao e timeline.
 - Resultado preserva a mesma semantica `observed | sustained | not_observed |
   inconclusive` de HLS.
-

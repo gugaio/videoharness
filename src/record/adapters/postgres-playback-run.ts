@@ -3,7 +3,7 @@ import type pg from "pg";
 import { baselineNetworkProfile, type NetworkProfile, type PlaybackRun } from "../domain/playback-run.js";
 import type { CreatedPlaybackRun, DeliveryRequest, PlaybackRunRepository, ResolvedPlaybackResource } from "../ports/playback-run.js";
 
-type RunRow = { id: string; recording_id: string; state: PlaybackRun["state"]; max_duration_seconds: number; network_profile: NetworkProfile | null; created_at: Date; first_media_request_at: Date | null; expires_at: Date; completed_at: Date | null; error_code: string | null; error_message: string | null };
+type RunRow = { id: string; recording_id: string; protocol?: "hls" | "dash"; state: PlaybackRun["state"]; max_duration_seconds: number; network_profile: NetworkProfile | null; created_at: Date; first_media_request_at: Date | null; expires_at: Date; completed_at: Date | null; error_code: string | null; error_message: string | null };
 type ResourceRow = { id: string; state: PlaybackRun["state"]; storage_key: string; content_type: string | null; size_bytes: string | number; expires_at: Date; kind: string; max_duration_seconds: number; network_profile: NetworkProfile | null; metadata: Record<string, unknown> };
 type DeliveryRow = { id: string; logical_path: string; resource_kind: string; target_id: string | null; media_sequence: number | null; stage_index: number; bandwidth_kbps: number; latency_ms: number; bytes_sent: string | number; status_code: number; started_at: Date; completed_at: Date; metadata: Record<string, unknown> };
 
@@ -16,8 +16,8 @@ export class PostgresPlaybackRuns implements PlaybackRunRepository {
       `INSERT INTO playback_runs (id, recording_id, token_hash, state, max_duration_seconds, network_profile, expires_at)
        SELECT $1, id, $2, 'created', $3, $4::jsonb, now() + interval '15 minutes'
          FROM recordings WHERE id = $5 AND state = 'ready'
-       RETURNING *`, [randomUUID(), tokenHash(token), maxDurationSeconds, JSON.stringify(profile), recordingId]);
-    return result.rows[0] ? { run: toRun(result.rows[0]), playbackToken: token } : "recording_not_ready";
+       RETURNING *, (SELECT protocol FROM recordings WHERE recordings.id = playback_runs.recording_id) AS protocol`, [randomUUID(), tokenHash(token), maxDurationSeconds, JSON.stringify(profile), recordingId]);
+    return result.rows[0] ? { run: toRun(result.rows[0]), playbackToken: token, manifestPath: result.rows[0].protocol === "dash" ? "index.mpd" : "index.m3u8" } : "recording_not_ready";
   }
 
   async findById(recordingId: string, runId: string): Promise<PlaybackRun | null> {
@@ -26,10 +26,18 @@ export class PostgresPlaybackRuns implements PlaybackRunRepository {
   }
 
   async resolveResource(tokenHashValue: string, logicalPath: string): Promise<ResolvedPlaybackResource | "expired" | null> {
+    return this.resolve(logicalPath, `token_hash = $1`, [tokenHashValue]);
+  }
+
+  async resolveFixedResource(logicalPath: string): Promise<ResolvedPlaybackResource | "expired" | null> {
+    return this.resolve(logicalPath, `state IN ('created', 'active') ORDER BY created_at DESC LIMIT 1`, []);
+  }
+
+  private async resolve(logicalPath: string, condition: string, values: unknown[]): Promise<ResolvedPlaybackResource | "expired" | null> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      const runs = await client.query<RunRow>(`SELECT * FROM playback_runs WHERE token_hash = $1 FOR UPDATE`, [tokenHashValue]);
+      const runs = await client.query<RunRow>(`SELECT * FROM playback_runs WHERE ${condition} FOR UPDATE`, values);
       const run = runs.rows[0];
       if (!run) { await client.query("COMMIT"); return null; }
       if (run.state === "completed" || run.state === "failed" || run.state === "expired" || run.expires_at <= new Date()) {

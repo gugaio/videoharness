@@ -6,7 +6,7 @@ export type CreateRecordingRecords = {
   idempotencyKey: string;
   requestSignature: string;
   sourceUrl: string;
-  protocol: "hls";
+  protocol: Recording["protocol"];
   requestedDurationSeconds: number;
   requestedStartSeconds: number;
   initialEvent: { type: "recording.created"; actor: "system"; message: string; payload: Record<string, unknown> };

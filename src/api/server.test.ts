@@ -231,11 +231,11 @@ describe("recording routes", () => {
     const server = buildApiServer({
       database: { check: async () => undefined }, startInvestigation, investigationQueries,
       startRecording: async () => ({ created: true, recording }), recordingQueries: { getRecording: async () => recording, listEventsAfter: async () => [] },
-      createPlaybackRun: async () => ({ run: { id: "8dc67e09-4b25-4fe5-a69a-58f896fb5197", recordingId: recording.id, state: "created", maxDurationSeconds: 300, profile: { schemaVersion: 1, name: "baseline", stages: [{ afterVideoRequests: 0, bandwidthKbps: 100000, latencyMs: 0 }] }, createdAt: "2026-08-06T12:00:00.000Z", expiresAt: "2026-08-06T12:05:00.000Z" }, playbackToken: "A".repeat(43) }),
+      createPlaybackRun: async () => ({ run: { id: "8dc67e09-4b25-4fe5-a69a-58f896fb5197", recordingId: recording.id, state: "created", maxDurationSeconds: 300, profile: { schemaVersion: 1, name: "baseline", stages: [{ afterVideoRequests: 0, bandwidthKbps: 100000, latencyMs: 0 }] }, createdAt: "2026-08-06T12:00:00.000Z", expiresAt: "2026-08-06T12:05:00.000Z" }, playbackToken: "A".repeat(43), manifestPath: "index.m3u8" }),
     });
     const response = await server.inject({ method: "POST", url: `/v1/recordings/${recording.id}/playback-runs`, payload: {} });
     expect(response.statusCode).toBe(201);
-    expect(response.json()).toMatchObject({ run: { state: "created" }, playbackUrl: `/streams/${"A".repeat(43)}/index.m3u8` });
+    expect(response.json()).toMatchObject({ run: { state: "created" }, playbackUrl: "/streams/fixed/index.m3u8" });
     await server.close();
   });
 
@@ -248,11 +248,13 @@ describe("recording routes", () => {
     await store.publish(workspace);
     const server = buildApiServer({
       database: { check: async () => undefined }, startInvestigation, investigationQueries,
-      playbackRuns: { create: async () => "recording_not_ready", findById: async () => null, resolveResource: async () => ({ runId: "8dc67e09-4b25-4fe5-a69a-58f896fb5197", state: "active", storageKey: `recordings/${recordingId}/index.m3u8`, contentType: "application/vnd.apple.mpegurl", sizeBytes: 8, resourceKind: "master", profile: { schemaVersion: 1, name: "baseline", stages: [{ afterVideoRequests: 0, bandwidthKbps: 100000, latencyMs: 0 }] }, metadata: {} }), recordDelivery: async () => undefined, listDeliveries: async () => [] },
+      playbackRuns: { create: async () => "recording_not_ready", findById: async () => null, resolveResource: async () => ({ runId: "8dc67e09-4b25-4fe5-a69a-58f896fb5197", state: "active", storageKey: `recordings/${recordingId}/index.m3u8`, contentType: "application/vnd.apple.mpegurl", sizeBytes: 8, resourceKind: "master", profile: { schemaVersion: 1, name: "baseline", stages: [{ afterVideoRequests: 0, bandwidthKbps: 100000, latencyMs: 0 }] }, metadata: {} }), resolveFixedResource: async () => ({ runId: "8dc67e09-4b25-4fe5-a69a-58f896fb5197", state: "active", storageKey: `recordings/${recordingId}/index.m3u8`, contentType: "application/vnd.apple.mpegurl", sizeBytes: 8, resourceKind: "master", profile: { schemaVersion: 1, name: "baseline", stages: [{ afterVideoRequests: 0, bandwidthKbps: 100000, latencyMs: 0 }] }, metadata: {} }), recordDelivery: async () => undefined, listDeliveries: async () => [] },
       recordingStore: store,
     });
     const response = await server.inject({ method: "GET", url: `/streams/${"A".repeat(43)}/index.m3u8` });
     expect(response.statusCode).toBe(200);
+    const fixedResponse = await server.inject({ method: "GET", url: "/streams/fixed/index.m3u8" });
+    expect(fixedResponse.statusCode).toBe(200);
     expect(response.body).toBe("#EXTM3U\n");
     expect(response.headers["cache-control"]).toBe("no-store");
     await server.close();
