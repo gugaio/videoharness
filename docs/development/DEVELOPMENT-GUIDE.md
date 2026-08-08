@@ -134,6 +134,41 @@ Antes de copiar:
 4. Registrar proveniencia no README do modulo.
 5. Fazer a importacao em commit isolado antes de adaptacoes amplas.
 
+## Deploy com Coolify
+
+O stack de producao usa `compose.prod.yml`, que referencia as imagens publicadas
+no GHCR por `.github/workflows/docker-image.yml` (`ghcr.io/gugaio/videoharness/backend`
+e `/web`). Ele difere de `compose.yml` por:
+
+- nao usar build contexts (imagens ja publicadas no GHCR);
+- usar `pull_policy: always` para que todo redeploy puxe a imagem `:latest` mais
+  recente, sem cache local;
+- nao expor ports no host: somente `web` e publico, exposto via dominio no proxy
+  do deploy platform;
+- exigir segredos com `${VAR:?}` para que a plataforma valide antes de subir.
+
+### Passos no Coolify
+
+1. Criar recurso do tipo **Docker Compose** com source no repo git
+   `gugaio/videoharness`, apontando o compose path para `compose.prod.yml`.
+2. Atribuir um dominio ao servico `web` (escuta na porta 80). postgres, api e
+   worker permanecem privados na rede interna do stack.
+3. Preencher as variaveis obrigatorias detectadas na UI
+   (`VIDEO_HARNESS_POSTGRES_PASSWORD`, `VIDEO_HARNESS_LAB_TOKEN`,
+   `VIDEO_HARNESS_AI_API_KEY`).
+4. Copiar a URL do webhook *Git Deploy* (Resource -> Webhooks) e salvar como o
+   secret `COOLIFY_WEBHOOK_URL` no GitHub.
+
+### Fluxo de deploy automatico
+
+O push nao dispara deploy direto; o GitHub Actions publica as imagens no GHCR e
+so entao o job `deploy` chama o webhook do Coolify. Isso evita que o stack rode
+uma imagem antiga (a imagem `:latest` anterior) por causa da corrida entre o
+push e o build da CI.
+
+Se `COOLIFY_WEBHOOK_URL` nao estiver configurado, o job emite um warning e
+pula; o deploy pode ser disparado manualmente no Coolify.
+
 ## Definition of Done de uma mudanca
 
 - Comportamento implementado.

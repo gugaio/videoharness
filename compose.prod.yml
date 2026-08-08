@@ -1,0 +1,119 @@
+# Production compose for Coolify (and any docker compose runtime).
+#
+# Differences from compose.yml:
+# - Uses the images published to GHCR by `.github/workflows/docker-image.yml`
+#   instead of local build contexts.
+# - `pull_policy: always` forces a fresh image pull on every deploy, so a
+#   redeploy always runs the latest `:latest` published by CI.
+# - No host port bindings: only the `web` service is public (assigned a domain
+#   in the deploy platform). postgres, api and worker stay on the private
+#   compose network.
+# - Secrets are required via `${VAR:?}` so deploy platforms validate them.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: video_harness
+      POSTGRES_USER: video_harness
+      POSTGRES_PASSWORD: ${VIDEO_HARNESS_POSTGRES_PASSWORD:?set in deploy platform}
+    volumes:
+      - video-harness-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U video_harness -d video_harness"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+
+  api:
+    image: ghcr.io/gugaio/videoharness/backend:latest
+    pull_policy: always
+    environment:
+      VIDEO_HARNESS_HOST: 0.0.0.0
+      VIDEO_HARNESS_PORT: 3210
+      VIDEO_HARNESS_DATABASE_URL: postgresql://video_harness:${VIDEO_HARNESS_POSTGRES_PASSWORD:?set in deploy platform}@postgres:5432/video_harness
+      VIDEO_HARNESS_DATA_DIR: /data
+    command: ["sh", "-c", "node dist/database/migrate.js && node dist/api/index.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - video-harness-data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3210/v1/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  worker:
+    image: ghcr.io/gugaio/videoharness/backend:latest
+    pull_policy: always
+    environment:
+      VIDEO_HARNESS_DATABASE_URL: postgresql://video_harness:${VIDEO_HARNESS_POSTGRES_PASSWORD:?set in deploy platform}@postgres:5432/video_harness
+      VIDEO_HARNESS_WORKER_ID: worker-compose
+      VIDEO_HARNESS_WORKER_LEASE_MS: 30000
+      VIDEO_HARNESS_STREAM_TIMEOUT_MS: 25000
+      VIDEO_HARNESS_MANIFEST_MAX_BYTES: 1048576
+      VIDEO_HARNESS_MEDIA_SAMPLE_MAX_BYTES: ${VIDEO_HARNESS_MEDIA_SAMPLE_MAX_BYTES:-20971520}
+      VIDEO_HARNESS_MEDIA_SAMPLE_MAX_TOTAL_BYTES: ${VIDEO_HARNESS_MEDIA_SAMPLE_MAX_TOTAL_BYTES:-20971520}
+      VIDEO_HARNESS_MEDIA_SAMPLE_MODE: ${VIDEO_HARNESS_MEDIA_SAMPLE_MODE:-full}
+      VIDEO_HARNESS_RECORD_SEGMENT_MAX_BYTES: ${VIDEO_HARNESS_RECORD_SEGMENT_MAX_BYTES:-67108864}
+      VIDEO_HARNESS_RECORD_MAX_TOTAL_BYTES: ${VIDEO_HARNESS_RECORD_MAX_TOTAL_BYTES:-1073741824}
+      VIDEO_HARNESS_RECORD_MAX_VARIANTS: ${VIDEO_HARNESS_RECORD_MAX_VARIANTS:-8}
+      VIDEO_HARNESS_FFPROBE_TIMEOUT_MS: 10000
+      VIDEO_HARNESS_LAB_SOCKET_PATH: /run/video-harness-lab/lab.sock
+      VIDEO_HARNESS_LAB_TOKEN: ${VIDEO_HARNESS_LAB_TOKEN:?set in deploy platform}
+      VIDEO_HARNESS_LAB_COMMAND_TIMEOUT_MS: ${VIDEO_HARNESS_LAB_COMMAND_TIMEOUT_MS:-60000}
+      VIDEO_HARNESS_AI_PROVIDER: ${VIDEO_HARNESS_AI_PROVIDER:-openai}
+      VIDEO_HARNESS_AI_API_URL: ${VIDEO_HARNESS_AI_API_URL:-https://api.openai.com/v1/chat/completions}
+      VIDEO_HARNESS_AI_MODEL: ${VIDEO_HARNESS_AI_MODEL:-gpt-5.5}
+      VIDEO_HARNESS_AI_API_KEY: ${VIDEO_HARNESS_AI_API_KEY:?set in deploy platform}
+      VIDEO_HARNESS_AI_TIMEOUT_MS: ${VIDEO_HARNESS_AI_TIMEOUT_MS:-45000}
+      VIDEO_HARNESS_DATA_DIR: /data
+    command: ["node", "dist/worker/index.js"]
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - video-harness-data:/data
+      - video-harness-lab-sockets:/run/video-harness-lab
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  lab:
+    image: ghcr.io/gugaio/videoharness/backend:latest
+    pull_policy: always
+    environment:
+      VIDEO_HARNESS_DATA_DIR: /data
+      VIDEO_HARNESS_LAB_SOCKET_PATH: /run/video-harness-lab/lab.sock
+      VIDEO_HARNESS_LAB_TOKEN: ${VIDEO_HARNESS_LAB_TOKEN:?set in deploy platform}
+    command: ["node", "dist/lab/index.js"]
+    user: "0:0"
+    network_mode: "none"
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 2g
+    cpus: 2
+    volumes:
+      - video-harness-data:/data
+      - video-harness-lab-sockets:/run/video-harness-lab
+    restart: unless-stopped
+
+  web:
+    image: ghcr.io/gugaio/videoharness/web:latest
+    pull_policy: always
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  video-harness-postgres:
+  video-harness-data:
+  video-harness-lab-sockets:

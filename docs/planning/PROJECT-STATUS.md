@@ -1,6 +1,6 @@
 # Project Status - Video Harness Space
 
-Ultima atualizacao: **2026-08-06**
+Ultima atualizacao: **2026-08-07**
 
 ## Resumo
 
@@ -331,6 +331,47 @@ Pendencias:
 Proximo passo recomendado:
 
 - Abrir um PR e confirmar o build das duas imagens no GHCR.
+
+### 2026-08-07 - Deploy via Coolify com compose de producao
+
+Fases impactadas: 5.
+
+Entrega:
+
+- `compose.prod.yml` para deploy em Coolify (ou qualquer runtime docker compose),
+  referenciando as imagens GHCR ja publicadas pelo CI em vez de build contexts.
+- `pull_policy: always` em api, worker, lab e web para que todo redeploy puxe a
+  imagem `:latest` sem cache local.
+- Sem ports de host: somente `web` e publico via dominio do proxy; postgres, api
+  e worker ficam privados na rede interna do stack.
+- Segredos exigidos com `${VAR:?}` (`VIDEO_HARNESS_POSTGRES_PASSWORD`,
+  `VIDEO_HARNESS_LAB_TOKEN`, `VIDEO_HARNESS_AI_API_KEY`) para validacao na UI do
+  Coolify.
+- Job `deploy` no `docker-image.yml` chama o webhook Git Deploy do Coolify
+  (`COOLIFY_WEBHOOK_URL`) somente depois que as imagens foram publicadas,
+  eliminando a corrida entre push e build da CI.
+
+Arquivos-chave:
+
+- `compose.prod.yml`
+- `.github/workflows/docker-image.yml`
+- `docs/development/DEVELOPMENT-GUIDE.md` (secao "Deploy com Coolify")
+
+Validacoes:
+
+- [x] `docker compose -f compose.prod.yml config --quiet` com as variaveis
+      obrigatorias preenchidas.
+- [x] YAML do workflow valido.
+
+Pendencias:
+
+- Configurar o recurso Docker Compose no Coolify, atribuir dominio ao `web`,
+  preencher as variaveis obrigatorias e salvar `COOLIFY_WEBHOOK_URL` como secret
+  no GitHub.
+
+Proximo passo recomendado:
+
+- Criar o recurso no Coolify e validar o primeiro deploy ponta a ponta.
 
 ### 2026-08-05 - Plano Record HLS VOD e simulacao ABR
 

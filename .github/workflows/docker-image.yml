@@ -61,3 +61,21 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Triggers the Coolify Docker Compose deploy only after the GHCR images are
+  # pushed, so the stack never runs a stale `:latest`. Add the Coolify Git Deploy
+  # webhook URL as the `COOLIFY_WEBHOOK_URL` repository secret.
+  deploy:
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Coolify deploy
+        env:
+          COOLIFY_WEBHOOK_URL: ${{ secrets.COOLIFY_WEBHOOK_URL }}
+        run: |
+          if [ -z "$COOLIFY_WEBHOOK_URL" ]; then
+            echo "::warning::COOLIFY_WEBHOOK_URL not set; skipping Coolify deploy"
+            exit 0
+          fi
+          curl -fsS "$COOLIFY_WEBHOOK_URL"
