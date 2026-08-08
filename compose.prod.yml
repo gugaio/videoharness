@@ -98,8 +98,8 @@ services:
     security_opt:
       - no-new-privileges:true
     pids_limit: 256
-    mem_limit: 2g
-    cpus: 2
+    mem_limit: ${VIDEO_HARNESS_LAB_MEM:-1g}
+    cpus: ${VIDEO_HARNESS_LAB_CPUS:-1}
     volumes:
       - video-harness-data:/data
       - video-harness-lab-sockets:/run/video-harness-lab

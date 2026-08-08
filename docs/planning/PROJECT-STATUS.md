@@ -401,6 +401,33 @@ Proximo passo recomendado:
 
 - Confirmar o deploy do stack no Coolify arm64.
 
+### 2026-08-08 - Limites do lab ajustados para VPS de 1 CPU
+
+Fases impactadas: 5.
+
+Entrega:
+
+- `compose.prod.yml` passa a usar `VIDEO_HARNESS_LAB_CPUS` (default 1) e
+  `VIDEO_HARNESS_LAB_MEM` (default 1g) no servico `lab`, corrigindo o erro do
+  Docker "range of CPUs is from 0.01 to 1.00" no deploy do Coolify.
+
+Arquivos-chave:
+
+- `compose.prod.yml`
+
+Validacoes:
+
+- [x] `docker compose -f compose.prod.yml config --quiet` e valores interpolados
+      conferidos (mem 1g, cpus 1).
+
+Pendencias:
+
+- Confirmar o primeiro deploy completo do stack no Coolify.
+
+Proximo passo recomendado:
+
+- Validar ponta a ponta o stack no servidor arm64.
+
 ### 2026-08-05 - Plano Record HLS VOD e simulacao ABR
 
 Fases impactadas: Record R1, Record R2, 4 e 5.
