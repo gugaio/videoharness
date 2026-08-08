@@ -303,6 +303,35 @@ Validacoes:
 
 ## Registro de atualizacoes
 
+### 2026-08-07 - Workflow de push para GHCR
+
+Fases impactadas: 5.
+
+Entrega:
+
+- `.github/workflows/docker-image.yml` passou a construir e publicar as imagens
+  `ghcr.io/gugaio/videoharness/backend` e `.../web` com Buildx e cache GitHub.
+- Tags: `sha-<short>`, nome da branch, `vX.Y.Z`/`vX.Y` em tags semanticas e
+  `latest` em `main`; PRs constroem sem push.
+- Backend usa `Dockerfile` raiz; web usa `ui/Dockerfile`.
+
+Arquivos-chave:
+
+- `.github/workflows/docker-image.yml`.
+
+Validacoes:
+
+- [x] YAML valido (`js-yaml`).
+
+Pendencias:
+
+- Primeiro push depende de `GITHUB_TOKEN` ja conceder `packages: write`; nenhuma
+  imagem ainda foi publicada.
+
+Proximo passo recomendado:
+
+- Abrir um PR e confirmar o build das duas imagens no GHCR.
+
 ### 2026-08-05 - Plano Record HLS VOD e simulacao ABR
 
 Fases impactadas: Record R1, Record R2, 4 e 5.
