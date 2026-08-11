@@ -64,9 +64,10 @@ describe("investigation worker", () => {
 
     await expect(worker.runNext()).resolves.toBe(true);
 
-    expect(repository.transition).toHaveBeenCalledTimes(3);
+    expect(repository.transition).toHaveBeenCalledTimes(4);
     expect(vi.mocked(repository.transition).mock.calls.map((call) => call[3].state)).toEqual([
       "validating",
+      "collecting",
       "analyzing",
       "synthesizing",
     ]);
@@ -87,6 +88,62 @@ describe("investigation worker", () => {
       expect.objectContaining({ type: "investigation.report_ready" }),
     );
     expect(repository.fail).not.toHaveBeenCalled();
+  });
+
+  it("publishes counted collection progress events while evidence is collected", async () => {
+    const repository = createRepository();
+    const progressCollector = {
+      collect: vi.fn(async (_url: string, onProgress?: (p: { stage: string; message: string; completed?: number; total?: number }) => Promise<void>) => {
+        await onProgress?.({ stage: "root_manifest", message: "Fetching the root manifest through the safe network boundary…" });
+        await onProgress?.({ stage: "variant_manifest", message: "Fetching the selected video variant playlist…" });
+        return {
+          manifests: [{
+            logicalKey: "manifest/root",
+            role: "root" as const,
+            source: {
+              requestedUrl: claimedJob.investigation.sourceUrl,
+              finalUrl: claimedJob.investigation.sourceUrl,
+              statusCode: 200,
+            },
+            content: { bytes: new TextEncoder().encode("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nvideo.m3u8") },
+            inspection: { protocol: "hls" as const, kind: "master" as const, variantCount: 1 },
+          }],
+        };
+      }),
+    };
+    const progressMediaCollector = {
+      collect: vi.fn(async (_collection: unknown, onProgress?: (p: { stage: string; message: string; completed?: number; total?: number }) => Promise<void>) => {
+        await onProgress?.({ stage: "media_sample", message: "Sampling media segment 1 of 2 from manifest/variant/0…", completed: 0, total: 2 });
+        await onProgress?.({ stage: "media_sample", message: "Sampling media segment 2 of 2 from manifest/variant/0…", completed: 1, total: 2 });
+        return { samples: [], limitations: [] };
+      }),
+    };
+    const mediaProbe = { probe: vi.fn() };
+    const worker = createInvestigationWorker({
+      repository,
+      collector: progressCollector,
+      artifactStore,
+      mediaCollector: progressMediaCollector,
+      mediaProbe,
+      workerId: "worker-test",
+      leaseMs: 30_000,
+    });
+
+    await expect(worker.runNext()).resolves.toBe(true);
+
+    const events = vi.mocked(repository.transition).mock.calls.map((call) => call[3]);
+    const states = events.map((transition) => transition.state);
+    expect(states).toEqual(["validating", "collecting", "collecting", "collecting", "collecting", "collecting", "analyzing", "synthesizing"]);
+    const progressEvents = events
+      .filter((transition) => transition.event.payload.stage === "collection")
+      .map((transition) => transition.event.payload);
+    expect(progressEvents).toEqual([
+      { state: "collecting", stage: "collection", collectionStage: "root_manifest" },
+      { state: "collecting", stage: "collection", collectionStage: "variant_manifest" },
+      { state: "collecting", stage: "collection", collectionStage: "media_sample", completed: 0, total: 2 },
+      { state: "collecting", stage: "collection", collectionStage: "media_sample", completed: 1, total: 2 },
+    ]);
+    expect(repository.complete).toHaveBeenCalledOnce();
   });
 
   it("returns idle without fabricating lifecycle events when no job is available", async () => {
@@ -314,6 +371,7 @@ describe("investigation worker", () => {
             { id: "manifest-delivery", state: "completed" },
             { id: "lead-investigator", state: "completed" },
           ],
+          promptAudits: [],
         };
       },
     };

@@ -13,6 +13,8 @@ describe("loadConfig", () => {
     expect(config.streamTimeoutMs).toBe(25_000);
     expect(config.manifestMaxBytes).toBe(1_048_576);
     expect(config.mediaSampleMode).toBe("full");
+    expect(config.mediaSampleMaxSeconds).toBe(60);
+    expect(config.mediaSampleMaxTotalBytes).toBe(536_870_912);
     expect(config.recordSegmentMaxBytes).toBe(67_108_864);
     expect(config.recordMaxVariants).toBe(8);
   });
@@ -28,5 +30,10 @@ describe("loadConfig", () => {
 
   it("rejects an invalid media sample mode", () => {
     expect(() => loadConfig({ VIDEO_HARNESS_MEDIA_SAMPLE_MODE: "all" })).toThrow();
+  });
+
+  it("loads a configured media sample time budget", () => {
+    expect(loadConfig({ VIDEO_HARNESS_MEDIA_SAMPLE_MAX_SECONDS: "120" }).mediaSampleMaxSeconds).toBe(120);
+    expect(() => loadConfig({ VIDEO_HARNESS_MEDIA_SAMPLE_MAX_SECONDS: "0" })).toThrow();
   });
 });

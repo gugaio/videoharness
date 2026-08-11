@@ -55,12 +55,17 @@ apenas aumentar a quantidade de dados exibidos.
 ## Fluxos atuais
 
 ```text
-Investigate: URL + problema -> evidencia -> explicacao
-Record:      URL HLS VOD -> recording -> playback run -> evidencia ABR
+Investigate: URL + problema opcional -> evidencia + AbrAssessment -> explicacao
+Record:      URL HLS/DASH VOD -> recording -> playback run -> evidencia ABR
 ```
 
-Record comeca por HLS VOD clear. DASH VOD e a extensao seguinte depois que a
-fronteira Recording/PlaybackRun estiver validada.
+Qualidade ABR e uma dimensao permanente de Investigate, para HLS e DASH. Quando o
+usuario relata um sintoma ABR, o sistema aprofunda e prioriza essa direcao; quando
+nao relata, ainda avalia ladder, cobertura e riscos observaveis sem inventar
+comportamento do player.
+
+Record comecou por HLS VOD clear e agora estende a mesma fronteira
+Recording/PlaybackRun para DASH VOD static clear.
 
 ## Limites
 

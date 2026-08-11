@@ -40,6 +40,14 @@ export class FilesystemRecordingStore implements RecordingStore {
     return fs.readFile(destination);
   }
 
+  /** Resolves an already-published recording resource without consulting PostgreSQL. */
+  async readPublishedRecordingResource(recordingId: string, logicalPath: string): Promise<Uint8Array> {
+    const root = this.publishedPath(recordingId);
+    const destination = path.resolve(root, logicalPath);
+    if (!destination.startsWith(`${root}${path.sep}`)) throw new Error("Recording resource path is invalid");
+    return fs.readFile(destination);
+  }
+
   private workspacePath(recordingId: string): string {
     return this.resolve("recording-workspaces", recordingId);
   }

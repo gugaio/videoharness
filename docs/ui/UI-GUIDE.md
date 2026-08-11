@@ -45,6 +45,9 @@ Investigate permanece o fluxo default. Record esta interativo e navega para
 - Health discreto conectado a `/v1/health`.
 - CTA envia URL e problem description para a API e navega imediatamente para o
   caso criado.
+- Somente a URL e obrigatoria. A descricao aceita sintomas e, quando existirem,
+  modelo/firmware e trechos de log de qualquer player; a ajuda deixa claro que
+  esses dados permanecem contexto relatado, nao telemetria medida.
 - Background abstrato foi feito em CSS, sem depender de asset externo.
 
 ## Record
@@ -60,8 +63,9 @@ Record e um fluxo dedicado, nao uma opcao escondida no formulario de Investigate
   por SSE, mostra cobertura/bytes e nunca oferece run durante falha ou coleta.
 - Quando `ready`, o preset `Good -> constrained -> recovery` cria o playback run
   e permite copiar sua URL local para o device.
-- A tela declara as limitacoes atuais de R1; ela nao inventa evidencias ABR
-  enquanto journal e inferencia nao existem.
+- A tela declara as limitacoes atuais; o journal mostra selecao de rede real e a
+  evidencia correlacionada de switch fica disponivel no control plane sem fingir
+  decode/render ou eventos de player ausentes.
 
 ### Intake
 
@@ -94,10 +98,15 @@ Record e um fluxo dedicado, nao uma opcao escondida no formulario de Investigate
   instrucao curta para abri-la no device.
 - A URL copiada preserva a origem pela qual a tela foi aberta. Para um device na
   LAN, abra o Harness pelo IP/DNS da maquina, nunca por `localhost`.
-- A URL e unica por run; criar outro teste gera outra URL.
-- Enquanto o modo de laboratorio estiver ativo, a URL exposta e fixa
-  (`/streams/fixed/...`) e aponta para o run valido criado mais recentemente.
-- Um CTA explicito `Finish test` encerra a janela e congela o resumo.
+- A URL de playback e fixa por recording; iniciar ou encerrar um teste nunca
+  gera outra URL. A tela deve deixar isso explicito.
+- Sem run ativo, a URL ainda serve o clone com o perfil baseline; o shaping so
+  vale enquanto um run estiver aberto.
+- Um CTA explicito `Stop test run` encerra o run e congela o resumo; a URL
+  permanece servindo o recording.
+- Ao recarregar a rota do recording, a tela consulta o último run aberto e
+  restaura seu perfil e journal; ela não volta a oferecer `Start` enquanto
+  esse run existir.
 
 ### Recording screen (dashboard)
 
@@ -157,10 +166,17 @@ Record e um fluxo dedicado, nao uma opcao escondida no formulario de Investigate
 - Conclusao e report fixture apresentados sem esconder que a analise real ainda
   nao foi executada.
 - Durante `analyzing`, o card de trabalho mostra o checklist vivo da equipe de IA
-  (Pip, Coda, Mara e Lead) com estados reais waiting/analyzing/done/failed
-  derivados dos eventos `ai_agent`, alem do contador "N of 4 analyses complete".
+  (Pip, Coda, Mara, Iris e Lead) com estados reais
+  waiting/analyzing/done/failed derivados dos eventos `ai_agent`. Iris avalia
+  qualidade ABR em toda investigation HLS/DASH; o total real e 5.
   Eventos `started` alimentam somente o checklist; conclusoes e falhas viram
   posts na timeline com a persona do especialista.
+- Durante `collecting`, o card de trabalho mostra o passo atual da coleta
+  (ex.: "Sampling media segment 12 of 40…"), contador e barra reais derivados dos
+  eventos `collection`, alem dos chips das etapas ja concluidas (root manifest,
+  video variant, audio rendition, media samples, FFprobe). Os eventos de coleta
+  nao viram posts individuais na timeline; o milestone `evidence_found` resume o
+  que foi preservado ao final.
 
 Proibido:
 
@@ -194,12 +210,22 @@ O report deve funcionar como pagina compartilhavel e como documento de engenhari
   apresentar a selecao limitada como causa raiz; confidence permanece `limited`.
 - Quando configurado, o Lead Investigator aparece como uma camada separada sobre
   a evidencia deterministica, com causa provavel e proximos passos auditaveis.
+- Cada card da equipe com uma chamada concluida oferece `View prompt & evidence
+  sent` por progressive disclosure. O painel mostra system prompt, pacote de
+  analise/evidencia, provider/modelo, tentativas e ferramentas disponibilizadas;
+  ele nunca mostra raciocinio interno do modelo e nao faz parte de reports
+  compartilhados.
 - Masters HLS exibem um finding adicional com a variant representativa selecionada
   e o numero real de manifests preservados; a regra de selecao nao e apresentada
   como root cause.
-- Reports DASH mostram a ladder de video e uma matriz de fronteiras candidatas.
-  O bloco deixa claro quando a janela veio do relato do usuario e quando a matriz
-  possui somente resultado estrutural, sem telemetria de player ou Tizen.
+- Todo report novo mostra `ABR quality` logo apos o verdict: protocolo, verdict
+  limitado pela cobertura, ladder, samples, transicoes analisadas, findings
+  determinísticos e proximas medicoes. O bloco existe mesmo sem problema ABR
+  relatado.
+- Em DASH, o mesmo bloco acrescenta cards de `AbrSwitchEvidence` com provenance,
+  INIT semantic diff, SAP/IRAP, timeline e rule IDs. Candidatos URL-only ficam
+  rotulados como nao observados; contexto de player/device relatado nunca vira
+  telemetria. Reports antigos sem `AbrAssessment` usam o painel DASH legado.
 
 ## Responsividade
 

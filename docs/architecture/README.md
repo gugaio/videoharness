@@ -16,7 +16,7 @@ flowchart LR
     Worker --> AI[AI provider]
     Worker --> FS[(Local artifacts)]
     API --> FS
-    Device[Device/player] -->|opaque playback URL| Delivery[Record data plane]
+    Device[Device/player] -->|signed playback URL, 24 h| Delivery[Record data plane]
     Delivery --> FS
     Delivery --> DB
 ```
@@ -44,6 +44,9 @@ Casos de uso esperados:
 - `createPlaybackRun`;
 - `serveRecordedResource`;
 - `finishPlaybackRun`.
+- `assessStreamAbr`;
+- `analyzeDashSwitchCandidates`;
+- `correlateAbrSwitches`.
 
 ### Ports iniciais
 
@@ -81,6 +84,39 @@ fronteira do report cria `ManifestEvidence`, uma projecao sem bytes.
 Nomes baseados apenas em etapas (`CollectedManifest`, `PromotedManifest`) devem ser
 evitados. Tipos diferentes ficam reservados para fronteiras ou invariantes reais,
 nao para cada chamada sequencial.
+
+## Pipeline de diagnostico ABR
+
+```mermaid
+flowchart TD
+    HLS[HLS master + bounded samples] --> Ladder[Canonical ABR ladder]
+    DASH[DASH MPD + bounded samples] --> Ladder
+    Ladder --> Baseline[Protocol-neutral ladder rules]
+    DASH --> DashTransition[DASH transition specialization]
+    DashTransition --> Switch[AbrSwitchEvidence]
+    Baseline --> Assessment[AbrAssessment]
+    Switch --> Assessment
+    Journal[Playback request journal] --> Switch
+    Assessment --> Specialist[ABR Quality Investigator]
+    HLS --> Artifacts[(Raw artifacts for drill-down)]
+    DASH --> Artifacts
+```
+
+`AbrAssessment` e a raiz protocol-neutral do diagnostico e existe em toda
+investigation HLS ou DASH. Ele explicita ladder, cobertura, verdict, findings,
+transicoes disponiveis e proximas medicoes. O problema relatado muda somente a
+prioridade; nao liga/desliga o baseline ABR.
+
+`AbrSwitchEvidence` e uma especializacao de transicao com proveniencia explicita.
+Uma investigation somente por URL gera `URL_STATIC_ANALYSIS/CANDIDATE`; um playback run gera
+`PLAYBACK_NETWORK_OBSERVED/OBSERVED` apenas quando o journal mostra mudanca de
+Representation. Texto do usuario pode conter contexto de qualquer player/device,
+mas entra como `reportedPlayerContext`, separado de eventos e capability evidence.
+
+O especialista recebe o assessment compacto e pode inspecionar amostras
+preservadas. Para uma transicao ele recebe contrato, semantic INIT/parameter-set
+diff, boundary, timeline, findings e summaries opcionais de delivery,
+decode/conformance/device. Bytes completos permanecem fora do prompt.
 
 ## Fluxo principal
 
@@ -232,6 +268,15 @@ src/
     ports/
     adapters/
     stream-tools/
+  abr/
+    domain/
+    application/
+    adapters/
+  agents/
+    domain/
+    application/
+    ports/
+    adapters/
   database/
   ai/
   infra/
@@ -246,8 +291,10 @@ prompts/
   timeout e limite de bytes usada na investigacao.
 - A janela e validada entre variants antes da publicacao; misalignment que torne
   o playback incorreto bloqueia o recording ou aparece como limitacao explicita.
-- Cada playback run recebe token opaco armazenado como hash e URL unica com
-  `Cache-Control: no-store`.
+- Cada recording expoe uma URL de playback fixa em
+  `/streams/recordings/:recordingId/*`; cada request resolve o run aberto atual
+  para aplicar shaping e gravar o journal, e sem run ativo o clone e servido com
+  o perfil baseline. Respostas usam `Cache-Control: no-store`.
 - Throughput e compartilhado por video, audio e demais respostas concorrentes do
   run. Latencia e aplicada por request e bytes sao enviados progressivamente.
 - O clock do profile comeca no primeiro request de media.
@@ -286,10 +333,14 @@ O plano completo esta em
 - A playlist media selecionada, ou o root quando ele ja e uma media playlist, tem
   seus segmentos coletados conforme o modo configurado por
   `VIDEO_HARNESS_MEDIA_SAMPLE_MODE`:
-  - `full` (padrao): baixa todos os segmentos ate o budget agregado. Para VOD curto
-    materializa o conteudo inteiro; em streams longas o budget limita a cobertura
-    ao inicio.
+  - `full` (padrao): uma janela contigua de ate `VIDEO_HARNESS_MEDIA_SAMPLE_MAX_SECONDS`
+    (padrao 60s) por variant, centrada no horario de incidente relatado quando
+    existir; sem horario, a janela parte do inicio da playlist.
   - `sample`: baixa somente os segmentos de inicio, meio e fim.
+- O tempo declarado no manifest guia a selecao; os limites de bytes
+  (`VIDEO_HARNESS_MEDIA_SAMPLE_MAX_TOTAL_BYTES` e
+  `VIDEO_HARNESS_MEDIA_SAMPLE_MAX_BYTES`) sao redes de seguranca contra abuso e
+  memoria, nao definem a cobertura normal.
 - Subtitles e outras variants permanecem somente como descritores ate uma
   hipotese justificar coleta adicional.
 

@@ -3,6 +3,7 @@ import { selectHlsManifestSample } from "../../stream-tools/hls-manifest.js";
 import { inspectManifest } from "../../stream-tools/manifest.js";
 import { SafeHttpClient } from "../../stream-tools/safe-http-client.js";
 import type {
+  CollectionProgress,
   Manifest,
   ManifestCollector,
 } from "../ports/manifest-collector.js";
@@ -17,7 +18,8 @@ export class HttpManifestCollector implements ManifestCollector {
     this.maxDerivedManifests = Math.max(0, Math.min(2, options.maxDerivedManifests ?? 2));
   }
 
-  async collect(sourceUrl: string) {
+  async collect(sourceUrl: string, onProgress?: (progress: CollectionProgress) => Promise<void>) {
+    await onProgress?.({ stage: "root_manifest", message: "Fetching the root manifest through the safe network boundary…" });
     const response = await this.http.getText(sourceUrl);
     const root = toManifest(response, "manifest/root", "root");
     const manifests: Manifest[] = [root];
@@ -35,9 +37,11 @@ export class HttpManifestCollector implements ManifestCollector {
       );
     }
     if (this.maxDerivedManifests > 0) {
+      await onProgress?.({ stage: "variant_manifest", message: "Fetching the selected video variant playlist…" });
       manifests.push(await this.fetchDerived(selection.variant.url, "manifest/variant/0", "variant"));
     }
     if (this.maxDerivedManifests > 1 && selection.audioRendition?.url) {
+      await onProgress?.({ stage: "rendition_manifest", message: "Fetching the linked audio rendition playlist…" });
       manifests.push(await this.fetchDerived(
         selection.audioRendition.url,
         "manifest/rendition/audio/0",

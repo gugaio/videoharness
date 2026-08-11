@@ -21,20 +21,80 @@ export type DashRepresentation = {
   width?: number;
   height?: number;
   frameRate?: string;
+  sar?: string;
+  baseUrl: string;
   timescale: number;
   presentationTimeOffset: bigint;
   initializationUrl?: string;
   initializationRange?: { start: number; end?: number };
   mediaTemplate?: string;
+  segmentAddressing: "template" | "list" | "base" | "unknown";
   segmentAlignment?: boolean;
+  subsegmentAlignment?: boolean;
+  startWithSap?: number;
+  subsegmentStartsWithSap?: number;
   bitstreamSwitching?: boolean;
+  contentProtection: DashContentProtection[];
   segments: DashSegmentReference[];
+};
+
+export type DashContentProtection = {
+  schemeIdUri?: string;
+  value?: string;
+  defaultKid?: string;
+  pssh: string[];
+};
+
+export type DashAdaptationSet = {
+  periodIndex: number;
+  index: number;
+  id?: string;
+  contentType: "video" | "audio" | "unknown";
+  mimeType?: string;
+  codecs?: string;
+  width?: number;
+  maxWidth?: number;
+  height?: number;
+  maxHeight?: number;
+  frameRate?: string;
+  maxFrameRate?: string;
+  sar?: string;
+  par?: string;
+  segmentAlignment?: boolean;
+  subsegmentAlignment?: boolean;
+  startWithSap?: number;
+  subsegmentStartsWithSap?: number;
+  bitstreamSwitching?: boolean;
+  initialization?: string;
+  timescale: number;
+  duration?: string;
+  presentationTimeOffset: string;
+  segmentTimeline: Array<{ time?: string; duration: string; repeat: number }>;
+  contentProtection: DashContentProtection[];
+  representationIds: string[];
+  switchingContract: SwitchingContract;
+};
+
+export type SwitchingContract = {
+  mode: "GENERAL_REINITIALIZATION" | "BITSTREAM_SWITCHING" | "CMAF_SWITCHING_SET" | "UNKNOWN";
+  bitstreamSwitching?: boolean;
+  segmentAlignment?: boolean;
+  subsegmentAlignment?: boolean;
+  startWithSap?: number;
+  subsegmentStartsWithSap?: number;
+  effectiveTimescale?: number;
+  presentationTimeOffset?: string;
+  codecFamily: string;
+  sampleEntryExpectation?: string;
+  representations: string[];
 };
 
 export type DashManifestInspection = {
   type: "static" | "dynamic";
   mediaPresentationDurationSeconds?: number;
-  periods: Array<{ index: number; startSeconds: number; durationSeconds?: number }>;
+  profiles: string[];
+  periods: Array<{ index: number; id?: string; startSeconds: number; durationSeconds?: number }>;
+  adaptationSets: DashAdaptationSet[];
   representations: DashRepresentation[];
   limitations: string[];
 };
@@ -58,12 +118,14 @@ export function parseDashMpd(xml: string, manifestUrl: string): DashManifestInsp
     throw new StreamCollectionError("UNSUPPORTED_MANIFEST", "The DASH document has no MPD root element", false);
   }
   const type = root.attributes.type === "dynamic" ? "dynamic" : "static";
+  const profiles = (root.attributes.profiles ?? "").split(/[\s,]+/).filter(Boolean);
   const mpdDuration = parseDuration(root.attributes.mediaPresentationDuration);
   const limitations: string[] = [];
   if (type === "dynamic") limitations.push("Dynamic MPD analysis is a snapshot; future segment availability was not inferred.");
   const rootBase = resolveBase(manifestUrl, childText(root, "BaseURL"));
   const rootTemplate = templateFrom(root);
   const periods: DashManifestInspection["periods"] = [];
+  const adaptationSets: DashAdaptationSet[] = [];
   const representations: DashRepresentation[] = [];
   let inferredPeriodStart = 0;
   const periodNodes = children(root, "Period");
@@ -72,25 +134,39 @@ export function parseDashMpd(xml: string, manifestUrl: string): DashManifestInsp
     const durationSeconds = parseDuration(period.attributes.duration)
       ?? (periodIndex === periodNodes.length - 1 && mpdDuration !== undefined ? Math.max(0, mpdDuration - startSeconds) : undefined);
     if (durationSeconds !== undefined) inferredPeriodStart = startSeconds + durationSeconds;
-    periods.push({ index: periodIndex, startSeconds, ...(durationSeconds === undefined ? {} : { durationSeconds }) });
+    periods.push({ index: periodIndex, ...(period.attributes.id ? { id: period.attributes.id } : {}), startSeconds, ...(durationSeconds === undefined ? {} : { durationSeconds }) });
     const periodBase = resolveBase(rootBase, childText(period, "BaseURL"));
     const periodTemplate = mergeTemplate(rootTemplate, templateFrom(period));
     children(period, "AdaptationSet").forEach((adaptationSet, adaptationSetIndex) => {
       const adaptationBase = resolveBase(periodBase, childText(adaptationSet, "BaseURL"));
       const adaptationTemplate = mergeTemplate(periodTemplate, templateFrom(adaptationSet));
       const inheritedType = contentType(adaptationSet.attributes.contentType, adaptationSet.attributes.mimeType, adaptationSet.attributes.codecs);
+      const segmentAlignment = booleanAttribute(adaptationSet, "segmentAlignment");
+      const subsegmentAlignment = booleanAttribute(adaptationSet, "subsegmentAlignment");
+      const startWithSap = numberAttribute(adaptationSet, "startWithSAP");
+      const subsegmentStartsWithSap = numberAttribute(adaptationSet, "subsegmentStartsWithSAP");
+      const bitstreamSwitching = booleanAttribute(adaptationSet, "bitstreamSwitching") ?? booleanAttribute(root, "bitstreamSwitching");
+      const adaptationProtection = contentProtectionFrom(adaptationSet);
+      const representationIds: string[] = [];
       children(adaptationSet, "Representation").forEach((representation, representationIndex) => {
         const representationBase = resolveBase(adaptationBase, childText(representation, "BaseURL"));
         const template = mergeTemplate(adaptationTemplate, templateFrom(representation));
         const id = representation.attributes.id ?? `p${periodIndex}-a${adaptationSetIndex}-r${representationIndex}`;
+        representationIds.push(id);
         const timescale = template.timescale ?? 1;
         const pto = template.presentationTimeOffset ?? 0n;
         const mediaTemplate = template.media;
         const bandwidth = numberAttribute(representation, "bandwidth");
         const width = numberAttribute(representation, "width") ?? numberAttribute(adaptationSet, "width");
         const height = numberAttribute(representation, "height") ?? numberAttribute(adaptationSet, "height");
-        const segmentAlignment = booleanAttribute(adaptationSet, "segmentAlignment");
-        const bitstreamSwitching = booleanAttribute(adaptationSet, "bitstreamSwitching") ?? booleanAttribute(root, "bitstreamSwitching");
+        const protection = mergeContentProtection(adaptationProtection, contentProtectionFrom(representation));
+        const segmentAddressing = template.media || template.initialization
+          ? "template"
+          : firstChild(representation, "SegmentList") || firstChild(adaptationSet, "SegmentList")
+            ? "list"
+            : firstChild(representation, "SegmentBase") || firstChild(adaptationSet, "SegmentBase")
+              ? "base"
+              : "unknown";
         const common = {
           id,
           periodIndex,
@@ -102,13 +178,20 @@ export function parseDashMpd(xml: string, manifestUrl: string): DashManifestInsp
           ...(width === undefined ? {} : { width }),
           ...(height === undefined ? {} : { height }),
           ...(representation.attributes.frameRate ?? adaptationSet.attributes.frameRate ? { frameRate: representation.attributes.frameRate ?? adaptationSet.attributes.frameRate } : {}),
+          ...(representation.attributes.sar ?? adaptationSet.attributes.sar ? { sar: representation.attributes.sar ?? adaptationSet.attributes.sar } : {}),
+          baseUrl: representationBase,
           timescale,
           presentationTimeOffset: pto,
           ...(template.initialization ? { initializationUrl: resolveBase(representationBase, substitute(template.initialization, id, bandwidth, 0n, template.startNumber ?? 1)) } : {}),
           ...(template.indexRange ? { initializationRange: template.indexRange } : {}),
           ...(mediaTemplate ? { mediaTemplate } : {}),
+          segmentAddressing,
           ...(segmentAlignment === undefined ? {} : { segmentAlignment }),
+          ...(subsegmentAlignment === undefined ? {} : { subsegmentAlignment }),
+          ...(startWithSap === undefined ? {} : { startWithSap }),
+          ...(subsegmentStartsWithSap === undefined ? {} : { subsegmentStartsWithSap }),
           ...(bitstreamSwitching === undefined ? {} : { bitstreamSwitching }),
+          contentProtection: protection,
         } satisfies Omit<DashRepresentation, "segments">;
         const segments = buildSegments({ template, ...(durationSeconds === undefined ? {} : { periodDurationSeconds: durationSeconds }), periodStartSeconds: startSeconds, baseUrl: representationBase, id, ...(bandwidth === undefined ? {} : { bandwidth }) });
         if (segments.length === 0 && type === "static") {
@@ -116,9 +199,56 @@ export function parseDashMpd(xml: string, manifestUrl: string): DashManifestInsp
         }
         representations.push({ ...common, segments });
       });
+      const effectiveTimescale = adaptationTemplate.timescale ?? 1;
+      const effectivePto = adaptationTemplate.presentationTimeOffset ?? 0n;
+      const codecs = adaptationSet.attributes.codecs;
+      adaptationSets.push({
+        periodIndex,
+        index: adaptationSetIndex,
+        ...(adaptationSet.attributes.id ? { id: adaptationSet.attributes.id } : {}),
+        contentType: inheritedType,
+        ...(adaptationSet.attributes.mimeType ? { mimeType: adaptationSet.attributes.mimeType } : {}),
+        ...(codecs ? { codecs } : {}),
+        ...optionalNumber(adaptationSet, "width", "width"),
+        ...optionalNumber(adaptationSet, "maxWidth", "maxWidth"),
+        ...optionalNumber(adaptationSet, "height", "height"),
+        ...optionalNumber(adaptationSet, "maxHeight", "maxHeight"),
+        ...(adaptationSet.attributes.frameRate ? { frameRate: adaptationSet.attributes.frameRate } : {}),
+        ...(adaptationSet.attributes.maxFrameRate ? { maxFrameRate: adaptationSet.attributes.maxFrameRate } : {}),
+        ...(adaptationSet.attributes.sar ? { sar: adaptationSet.attributes.sar } : {}),
+        ...(adaptationSet.attributes.par ? { par: adaptationSet.attributes.par } : {}),
+        ...(segmentAlignment === undefined ? {} : { segmentAlignment }),
+        ...(subsegmentAlignment === undefined ? {} : { subsegmentAlignment }),
+        ...(startWithSap === undefined ? {} : { startWithSap }),
+        ...(subsegmentStartsWithSap === undefined ? {} : { subsegmentStartsWithSap }),
+        ...(bitstreamSwitching === undefined ? {} : { bitstreamSwitching }),
+        ...(adaptationTemplate.initialization ? { initialization: adaptationTemplate.initialization } : {}),
+        timescale: effectiveTimescale,
+        ...(adaptationTemplate.duration === undefined ? {} : { duration: String(adaptationTemplate.duration) }),
+        presentationTimeOffset: String(effectivePto),
+        segmentTimeline: (adaptationTemplate.timeline ?? []).map((entry) => ({
+          ...(entry.time === undefined ? {} : { time: String(entry.time) }),
+          duration: String(entry.duration),
+          repeat: entry.repeat,
+        })),
+        contentProtection: adaptationProtection,
+        representationIds,
+        switchingContract: buildSwitchingContract({
+          profiles,
+          ...(bitstreamSwitching === undefined ? {} : { bitstreamSwitching }),
+          ...(segmentAlignment === undefined ? {} : { segmentAlignment }),
+          ...(subsegmentAlignment === undefined ? {} : { subsegmentAlignment }),
+          ...(startWithSap === undefined ? {} : { startWithSap }),
+          ...(subsegmentStartsWithSap === undefined ? {} : { subsegmentStartsWithSap }),
+          timescale: effectiveTimescale,
+          presentationTimeOffset: effectivePto,
+          ...(codecs ? { codecs } : {}),
+          representationIds,
+        }),
+      });
     });
   });
-  return { type, ...(mpdDuration === undefined ? {} : { mediaPresentationDurationSeconds: mpdDuration }), periods, representations, limitations };
+  return { type, profiles, ...(mpdDuration === undefined ? {} : { mediaPresentationDurationSeconds: mpdDuration }), periods, adaptationSets, representations, limitations };
 }
 
 function buildSegments(input: { template: SegmentTemplate; periodDurationSeconds?: number; periodStartSeconds: number; baseUrl: string; id: string; bandwidth?: number }): DashSegmentReference[] {
@@ -220,6 +350,55 @@ function childText(node: XmlNode, name: string): string | undefined { const chil
 function numberAttribute(node: XmlNode, name: string): number | undefined { const value = Number(node.attributes[name]); return Number.isFinite(value) ? value : undefined; }
 function bigintAttribute(node: XmlNode, name: string): bigint | undefined { try { return node.attributes[name] === undefined ? undefined : BigInt(node.attributes[name]); } catch { return undefined; } }
 function booleanAttribute(node: XmlNode, name: string): boolean | undefined { const value = node.attributes[name]; return value === "true" ? true : value === "false" ? false : undefined; }
+function optionalNumber<K extends string>(node: XmlNode, attribute: string, key: K): Partial<Record<K, number>> { const value = numberAttribute(node, attribute); return value === undefined ? {} : { [key]: value } as Partial<Record<K, number>>; }
+function contentProtectionFrom(node: XmlNode): DashContentProtection[] {
+  return children(node, "ContentProtection").map((protection) => ({
+    ...(protection.attributes.schemeIdUri ? { schemeIdUri: protection.attributes.schemeIdUri } : {}),
+    ...(protection.attributes.value ? { value: protection.attributes.value } : {}),
+    ...(protection.attributes.default_KID ? { defaultKid: protection.attributes.default_KID } : {}),
+    pssh: children(protection, "pssh").map((entry) => entry.text.trim()).filter(Boolean),
+  }));
+}
+function mergeContentProtection(left: DashContentProtection[], right: DashContentProtection[]): DashContentProtection[] {
+  const keyed = new Map<string, DashContentProtection>();
+  for (const entry of [...left, ...right]) keyed.set(`${entry.schemeIdUri ?? ""}|${entry.value ?? ""}|${entry.defaultKid ?? ""}`, entry);
+  return [...keyed.values()];
+}
+function buildSwitchingContract(input: {
+  profiles: string[];
+  bitstreamSwitching?: boolean;
+  segmentAlignment?: boolean;
+  subsegmentAlignment?: boolean;
+  startWithSap?: number;
+  subsegmentStartsWithSap?: number;
+  timescale: number;
+  presentationTimeOffset: bigint;
+  codecs?: string;
+  representationIds: string[];
+}): SwitchingContract {
+  const sampleEntryExpectation = /(?:^|,)(hvc1|hev1)(?:\.|,|$)/i.exec(input.codecs ?? "")?.[1]?.toLowerCase();
+  const codecFamily = /^(?:hvc1|hev1)/i.test(input.codecs ?? "") ? "HEVC" : (input.codecs?.split(/[.,]/)[0]?.toUpperCase() ?? "UNKNOWN");
+  const mode: SwitchingContract["mode"] = input.profiles.some((profile) => /cmaf/i.test(profile))
+    ? "CMAF_SWITCHING_SET"
+    : input.bitstreamSwitching === true
+      ? "BITSTREAM_SWITCHING"
+      : input.bitstreamSwitching === false || sampleEntryExpectation === "hvc1"
+        ? "GENERAL_REINITIALIZATION"
+        : "UNKNOWN";
+  return {
+    mode,
+    ...(input.bitstreamSwitching === undefined ? {} : { bitstreamSwitching: input.bitstreamSwitching }),
+    ...(input.segmentAlignment === undefined ? {} : { segmentAlignment: input.segmentAlignment }),
+    ...(input.subsegmentAlignment === undefined ? {} : { subsegmentAlignment: input.subsegmentAlignment }),
+    ...(input.startWithSap === undefined ? {} : { startWithSap: input.startWithSap }),
+    ...(input.subsegmentStartsWithSap === undefined ? {} : { subsegmentStartsWithSap: input.subsegmentStartsWithSap }),
+    effectiveTimescale: input.timescale,
+    presentationTimeOffset: String(input.presentationTimeOffset),
+    codecFamily,
+    ...(sampleEntryExpectation ? { sampleEntryExpectation } : {}),
+    representations: input.representationIds,
+  };
+}
 function parseRange(value: string | undefined): { start: number; end?: number } | undefined { if (!value) return undefined; const parsed = value.split("-").map(Number); const start = parsed[0]; const end = parsed[1]; return start !== undefined && Number.isFinite(start) ? { start, ...(end !== undefined && Number.isFinite(end) ? { end } : {}) } : undefined; }
 function parseDuration(value: string | undefined): number | undefined { if (!value) return undefined; const match = /^P(?:([\d.]+)D)?(?:T(?:([\d.]+)H)?(?:([\d.]+)M)?(?:([\d.]+)S)?)?$/.exec(value); if (!match) return undefined; return Number(match[1] ?? 0) * 86400 + Number(match[2] ?? 0) * 3600 + Number(match[3] ?? 0) * 60 + Number(match[4] ?? 0); }
 function resolveBase(base: string, next: string | undefined): string { return next ? new URL(next, base).toString() : base; }

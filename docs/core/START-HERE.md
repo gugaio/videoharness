@@ -36,8 +36,8 @@ Indice de onboarding para humanos e agentes.
   visual fica pausada enquanto o primeiro slice Record e construido.
 - Record materializara uma janela VOD de todas as variants suportadas, publicara
   uma URL por playback run e registrara requests do device sob profiles de rede.
-- DASH VOD Record esta sendo implementado sobre o mesmo data plane e journal de
-  HLS; a inferencia final de transicoes ABR continua pendente para ambos.
+- DASH VOD Record usa o mesmo data plane/journal de HLS e ja correlaciona
+  mudancas reais de Representation em `AbrSwitchEvidence` observado.
 - A primeira fatia real coleta manifests HLS/DASH por uma fronteira protegida
   contra SSRF, persiste artifact + evidence bundle e gera report deterministico.
 - Artifacts agora possuem identidade logica por investigation, sao registrados em
@@ -47,10 +47,16 @@ Indice de onboarding para humanos e agentes.
   bandwidth e preservam seu media manifest e uma rendition de audio vinculada.
 - A primeira amostra de media HLS ja baixa segmentos por playlist selecionada,
   preserva init segments quando necessarios e executa FFprobe local. O modo
-  `full` (padrao) materializa todos os segmentos ate o budget; `sample` baixa
-  apenas inicio/meio/fim.
-- DASH possui um perfil forense inicial para MPDs estaticos/fMP4: o relato livre
-  somente prioriza a janela; parsers deterministas analisam a fronteira candidata.
+  `full` (padrao) coleta uma janela contigua de ate 60s por variant, centrada no
+  horario de incidente relatado quando existir; `sample` baixa apenas
+  inicio/meio/fim.
+- DASH trata switching como entidade de primeira classe. Com apenas a URL,
+  Investigate gera candidatos explicitamente nao observados e analisa MPD,
+  INIT/fMP4, HEVC IRAP/SAP e timeline; logs opcionais colados na descricao
+  permanecem contexto relatado.
+- Toda investigation HLS ou DASH produz um `AbrAssessment` com ladder, cobertura,
+  verdict, findings e proximas medicoes. O especialista ABR roda sempre; o
+  problema relatado orienta prioridade sem limitar o baseline.
 - O primeiro corte Record valida HLS VOD MPEG-TS clear; live, DRM, LL-HLS e DASH
   Record ficam fora de R1.
 

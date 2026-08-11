@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { investigationStates } from "../investigation/domain/investigation.js";
+import { AbrAssessmentSchema, AbrSwitchEvidenceSchema } from "./abr.js";
 
 export const StartInvestigationRequestSchema = z.object({
   url: z.string().trim().url().max(4_096).refine((value) => {
     const protocol = new URL(value).protocol;
     return protocol === "http:" || protocol === "https:";
   }, "url must use http or https"),
-  problemDescription: z.string().trim().min(1).max(2_000).optional(),
+  problemDescription: z.string().trim().min(1).max(20_000).optional(),
 });
 
 export const InvestigationSchema = z.object({
@@ -68,6 +69,20 @@ const EvidenceBundleV1Schema = z.object({
   observations: z.array(EvidenceObservationSchema),
   limitations: z.array(z.string()),
 });
+
+const DashContentProtectionSchema = z.object({ schemeIdUri: z.string().optional(), value: z.string().optional(), defaultKid: z.string().optional(), pssh: z.array(z.string()) });
+const SwitchingContractSchema = z.object({
+  mode: z.enum(["GENERAL_REINITIALIZATION", "BITSTREAM_SWITCHING", "CMAF_SWITCHING_SET", "UNKNOWN"]),
+  bitstreamSwitching: z.boolean().optional(), segmentAlignment: z.boolean().optional(), subsegmentAlignment: z.boolean().optional(),
+  startWithSap: z.number().int().min(0).max(6).optional(), subsegmentStartsWithSap: z.number().int().min(0).max(6).optional(),
+  effectiveTimescale: z.number().positive().optional(), presentationTimeOffset: z.string().optional(), codecFamily: z.string(), sampleEntryExpectation: z.string().optional(), representations: z.array(z.string()),
+});
+
+const ReportedContextSchema = z.union([
+  z.object({ approximateTimeSeconds: z.number().nonnegative().optional(), reportsVideoFreeze: z.boolean(), reportsAudioContinues: z.boolean(), reportsAbrSwitch: z.boolean(), reportedAbrDirection: z.enum(["UPSHIFT", "DOWNSHIFT"]).optional(), reportedResolutionTransition: z.object({ sourceHeight: z.number().int().positive(), targetHeight: z.number().int().positive() }).optional(), reportedDevice: z.object({ manufacturer: z.string().optional(), modelCode: z.string().optional(), firmwareVersion: z.string().optional(), operatingSystem: z.string().optional(), operatingSystemVersion: z.string().optional(), applicationVersion: z.string().optional(), playerName: z.string().optional(), playerVersion: z.string().optional(), drmSystem: z.string().optional(), displayOrHdrMode: z.string().optional() }).optional(), mentionedPlayerEvents: z.array(z.string()).default([]), descriptionExcerpt: z.string().optional(), uncertainties: z.array(z.string()) }),
+  // Historical Tizen-shaped context remains accepted at the report boundary.
+  z.object({ approximateTimeSeconds: z.number().nonnegative().optional(), reportsVideoFreeze: z.boolean(), reportsAudioContinues: z.boolean(), reportsAbrSwitch: z.boolean(), reportsFourKToFullHd: z.boolean(), reportedDevice: z.object({ exactModelCode: z.string().optional(), firmwareVersion: z.string().optional(), tizenVersion: z.string().optional(), applicationVersion: z.string().optional(), avplayVersion: z.string().optional(), drmSystem: z.string().optional(), displayOrHdrMode: z.string().optional() }).optional(), mentionedAvplayEvents: z.array(z.string()).optional(), descriptionExcerpt: z.string().optional(), uncertainties: z.array(z.string()) }),
+]);
 
 const EvidenceBundleV2Schema = z.object({
   schemaVersion: z.literal(2),
@@ -151,8 +166,17 @@ const EvidenceBundleV2Schema = z.object({
       audioRenditionLogicalKey: z.string().optional(),
     }).optional(),
   }).optional(),
-  reportedContext: z.object({ approximateTimeSeconds: z.number().nonnegative().optional(), reportsVideoFreeze: z.boolean(), reportsAudioContinues: z.boolean(), reportsAbrSwitch: z.boolean(), reportsFourKToFullHd: z.boolean(), uncertainties: z.array(z.string()) }).optional(),
-  dash: z.object({ type: z.enum(["static", "dynamic"]), representations: z.array(z.object({ id: z.string(), periodIndex: z.number().int().nonnegative(), adaptationSetIndex: z.number().int().nonnegative(), contentType: z.enum(["video", "audio", "unknown"]), codecs: z.string().optional(), bandwidth: z.number().nonnegative().optional(), width: z.number().int().nonnegative().optional(), height: z.number().int().nonnegative().optional(), frameRate: z.string().optional(), timescale: z.number().positive(), segmentAlignment: z.boolean().optional(), bitstreamSwitching: z.boolean().optional(), segmentCount: z.number().int().nonnegative() })), limitations: z.array(z.string()), analysis: z.unknown().optional() }).optional(),
+  reportedContext: ReportedContextSchema.optional(),
+  abr: AbrAssessmentSchema.optional(),
+  dash: z.object({
+    type: z.enum(["static", "dynamic"]),
+    periods: z.array(z.object({ index: z.number().int().nonnegative(), id: z.string().optional(), startSeconds: z.number(), durationSeconds: z.number().nonnegative().optional() })).default([]),
+    adaptationSets: z.array(z.object({
+      periodIndex: z.number().int().nonnegative(), index: z.number().int().nonnegative(), id: z.string().optional(), contentType: z.enum(["video", "audio", "unknown"]), mimeType: z.string().optional(), codecs: z.string().optional(), width: z.number().int().nonnegative().optional(), maxWidth: z.number().int().nonnegative().optional(), height: z.number().int().nonnegative().optional(), maxHeight: z.number().int().nonnegative().optional(), frameRate: z.string().optional(), maxFrameRate: z.string().optional(), sar: z.string().optional(), par: z.string().optional(), segmentAlignment: z.boolean().optional(), subsegmentAlignment: z.boolean().optional(), startWithSap: z.number().int().optional(), subsegmentStartsWithSap: z.number().int().optional(), bitstreamSwitching: z.boolean().optional(), initialization: z.string().optional(), timescale: z.number().positive(), duration: z.string().optional(), presentationTimeOffset: z.string(), segmentTimeline: z.array(z.object({ time: z.string().optional(), duration: z.string(), repeat: z.number().int() })), contentProtection: z.array(DashContentProtectionSchema), representationIds: z.array(z.string()), switchingContract: SwitchingContractSchema,
+    })).default([]),
+    representations: z.array(z.object({ id: z.string(), periodIndex: z.number().int().nonnegative(), adaptationSetIndex: z.number().int().nonnegative(), contentType: z.enum(["video", "audio", "unknown"]), codecs: z.string().optional(), bandwidth: z.number().nonnegative().optional(), width: z.number().int().nonnegative().optional(), height: z.number().int().nonnegative().optional(), frameRate: z.string().optional(), sar: z.string().optional(), baseUrl: z.string().url().optional(), timescale: z.number().positive(), presentationTimeOffset: z.string().optional(), initializationUrl: z.string().url().optional(), mediaTemplate: z.string().optional(), segmentAddressing: z.enum(["template", "list", "base", "unknown"]).optional(), segmentAlignment: z.boolean().optional(), subsegmentAlignment: z.boolean().optional(), startWithSap: z.number().int().optional(), subsegmentStartsWithSap: z.number().int().optional(), bitstreamSwitching: z.boolean().optional(), contentProtection: z.array(DashContentProtectionSchema).optional(), segmentCount: z.number().int().nonnegative() })),
+    limitations: z.array(z.string()), analysis: z.unknown().optional(), switches: z.array(AbrSwitchEvidenceSchema).optional(), switchMatrix: z.array(z.object({ fromRepresentationId: z.string(), toRepresentationId: z.string(), switchKind: z.enum(["SAME_RESOLUTION_BITRATE", "RESOLUTION_CHANGING", "UNKNOWN"]), status: z.enum(["PASS", "FAIL", "RISK", "NOT_TESTED"]), findingRuleIds: z.array(z.string()) })).optional(), reconfigurationSensitivity: z.string().optional(),
+  }).optional(),
   observations: z.array(EvidenceObservationSchema),
   limitations: z.array(z.string()),
 });
@@ -227,7 +251,15 @@ const ManifestReportContentBaseSchema = z.object({
     available: z.boolean(), summary: z.string().optional(), likelyCause: z.string().optional(), confidence: z.number().min(0).max(1).optional(),
     findings: z.array(z.object({ title: z.string(), severity: z.enum(["info", "warning", "error"]), explanation: z.string(), evidenceIds: z.array(z.string()), confidence: z.number().min(0).max(1) })),
     recommendations: z.array(z.string()), limitations: z.array(z.string()),
-    agents: z.array(z.object({ id: z.enum(["timeline-playback", "container-encoding", "manifest-delivery", "lead-investigator"]), state: z.enum(["completed", "failed", "unavailable"]), summary: z.string().optional(), limitation: z.string().optional() })),
+    agents: z.array(z.object({ id: z.enum(["timeline-playback", "container-encoding", "manifest-delivery", "abr-switch-investigator", "lead-investigator"]), state: z.enum(["completed", "failed", "unavailable"]), summary: z.string().optional(), limitation: z.string().optional(), prompts: z.object({ system: z.string(), user: z.string() }).optional() })),
+    promptAudits: z.array(z.object({
+      agentId: z.enum(["timeline-playback", "container-encoding", "manifest-delivery", "abr-switch-investigator", "lead-investigator"]),
+      attempt: z.number().int().positive(),
+      state: z.enum(["completed", "failed"]),
+      provider: z.string().min(1), model: z.string().min(1),
+      systemPrompt: z.string(), prompt: z.string(), toolNames: z.array(z.string()),
+      toolCalls: z.array(z.object({ name: z.string(), input: z.string(), output: z.string() })),
+    })).optional(),
   }).optional(),
 });
 
@@ -267,6 +299,6 @@ export const InvestigationReportSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
-export const InvestigationReportResponseSchema = z.object({
+export const InvestigationReportResponseSchema: z.ZodType<{ report: unknown }> = z.object({
   report: InvestigationReportSchema,
 });

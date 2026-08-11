@@ -4,6 +4,7 @@ import path from "node:path";
 import { StreamCollectionError } from "../../stream-tools/errors.js";
 import { inspectManifest } from "../../stream-tools/manifest.js";
 import type { DashRepresentation, DashSegmentReference } from "../../stream-tools/dash-mpd.js";
+import { inspectFmp4Fragment, inspectFmp4Init, type Fmp4FragmentInspection, type Fmp4InitInspection } from "../../stream-tools/isobmff.js";
 import { SafeHttpClient } from "../../stream-tools/safe-http-client.js";
 import type { RecordedResource, RecordedResourceKind } from "../domain/recorded-resource.js";
 import type { MaterializedRecording, RecordingMaterializer } from "../ports/recording-materializer.js";
@@ -39,18 +40,19 @@ export class DashVodMaterializer implements RecordingMaterializer {
       const initPath = `${target.id}/init.mp4`;
       await writeWorkspaceFile(input.workspace.path, initPath, init.bytes);
       totalBytes = addBytes(totalBytes, init.bytes.byteLength, this.options.maxTotalBytes ?? 1_073_741_824);
-      resources.push(resource(input.job.recording.id, initPath, "init-segment", init.bytes, contentType(target.kind), metadata(target, undefined)));
+      const initInspection = inspectFmp4Init(init.bytes);
+      resources.push(resource(input.job.recording.id, initPath, "init-segment", init.bytes, contentType(target.kind), metadata(target, undefined, { init: initInspection })));
 
       const downloaded = await mapConcurrent(segments, this.options.maxConcurrentDownloads ?? 3, async (selection) => {
         if (!selection.segment.url || selection.segment.range) throw unsupported(`DASH ${target.id} uses an unresolved URL or byte range`);
         const bytes = await this.http.getBytes(selection.segment.url);
         const logicalPath = `${target.id}/segments/${selection.segment.number}.m4s`;
         await writeWorkspaceFile(input.workspace.path, logicalPath, bytes.bytes);
-        return { bytes: bytes.bytes, logicalPath, selection };
+        return { bytes: bytes.bytes, logicalPath, selection, fragment: inspectFmp4Fragment(bytes.bytes, initInspection.nalLengthSize ?? 4) };
       });
       for (const item of downloaded) {
         totalBytes = addBytes(totalBytes, item.bytes.byteLength, this.options.maxTotalBytes ?? 1_073_741_824);
-        resources.push(resource(input.job.recording.id, item.logicalPath, target.kind === "video" ? "video-segment" : "audio-segment", item.bytes, contentType(target.kind), metadata(target, item.selection)));
+        resources.push(resource(input.job.recording.id, item.logicalPath, target.kind === "video" ? "video-segment" : "audio-segment", item.bytes, contentType(target.kind), metadata(target, item.selection, { fragment: projectFragment(item.fragment) })));
       }
       await input.onProgress?.({ type: "recording.variant_completed", message: `Recorded ${target.id}: ${segments.length} chunks stored.`, payload: { targetId: target.id, targetKind: target.kind, segmentCount: segments.length } });
     }
@@ -58,7 +60,9 @@ export class DashVodMaterializer implements RecordingMaterializer {
     const mpdBytes = new TextEncoder().encode(buildMpd(selected, coverageSeconds));
     totalBytes = addBytes(totalBytes, mpdBytes.byteLength, this.options.maxTotalBytes ?? 1_073_741_824);
     await writeWorkspaceFile(input.workspace.path, "index.mpd", mpdBytes);
-    resources.push(resource(input.job.recording.id, "index.mpd", "master", mpdBytes, "application/dash+xml", { variantCount: selected.filter((entry) => entry.target.kind === "video").length, audioRenditionCount: selected.filter((entry) => entry.target.kind === "audio").length }));
+    const selectedVideo = selected.filter((entry) => entry.target.kind === "video");
+    const sourceAdaptation = root.dash.adaptationSets.find((adaptation) => adaptation.periodIndex === selectedVideo[0]?.target.source.periodIndex && adaptation.index === selectedVideo[0]?.target.source.adaptationSetIndex);
+    resources.push(resource(input.job.recording.id, "index.mpd", "master", mpdBytes, "application/dash+xml", { variantCount: selectedVideo.length, audioRenditionCount: selected.filter((entry) => entry.target.kind === "audio").length, ...(sourceAdaptation ? { switchingContract: { ...sourceAdaptation.switchingContract, representations: selectedVideo.map((entry) => entry.target.id) } } : {}), representations: selectedVideo.map((entry) => representationMetadata(entry.target)) }));
     return { coverageSeconds, totalBytes, resources };
   }
 }
@@ -103,9 +107,12 @@ function representationXml(target: Target, segments: Selection[]): string {
   return `<Representation ${attrs.join(" ")}><SegmentTemplate timescale="${source.timescale}" presentationTimeOffset="${first.time}" startNumber="${first.number}" initialization="${target.id}/init.mp4" media="${target.id}/segments/$Number$.m4s"><SegmentTimeline>${timeline}</SegmentTimeline></SegmentTemplate></Representation>`;
 }
 
-function metadata(target: Target, selection: Selection | undefined): Record<string, unknown> {
-  return { targetId: target.id, representationId: target.source.id, kind: target.kind, ...(selection ? { mediaSequence: selection.segment.number, durationSeconds: Number(selection.segment.duration) / target.source.timescale, timelineStartSeconds: selection.start, timelineEndSeconds: selection.end } : {}), ...(target.kind === "video" ? { bandwidth: target.source.bandwidth, resolution: target.source.width && target.source.height ? `${target.source.width}x${target.source.height}` : undefined, codecs: target.source.codecs } : {}) };
+function metadata(target: Target, selection: Selection | undefined, diagnostic: { init?: Fmp4InitInspection; fragment?: Record<string, unknown> }): Record<string, unknown> {
+  return { ...representationMetadata(target), ...(selection ? { mediaSequence: selection.segment.number, durationSeconds: Number(selection.segment.duration) / target.source.timescale, timelineStartSeconds: selection.start, timelineEndSeconds: selection.end } : {}), ...diagnostic };
 }
+function representationMetadata(target: Target): Record<string, unknown> { return { targetId: target.id, representationId: target.source.id, kind: target.kind, periodIndex: target.source.periodIndex, adaptationSetIndex: target.source.adaptationSetIndex, timescale: target.source.timescale, presentationTimeOffset: String(target.source.presentationTimeOffset), ...(target.kind === "video" ? { bandwidth: target.source.bandwidth, width: target.source.width, height: target.source.height, resolution: target.source.width && target.source.height ? `${target.source.width}x${target.source.height}` : undefined, frameRate: target.source.frameRate, codecs: target.source.codecs } : {}) }; }
+function projectFragment(fragment: Fmp4FragmentInspection): Record<string, unknown> { return { ...(fragment.styp ? { styp: fragment.styp } : {}), ...(fragment.sidx ? { sidx: fragment.sidx } : {}), ...(fragment.sequenceNumber === undefined ? {} : { sequenceNumber: fragment.sequenceNumber }), ...(fragment.baseMediaDecodeTime === undefined ? {} : { baseMediaDecodeTime: String(fragment.baseMediaDecodeTime) }), trafs: fragment.trafs, sampleCount: fragment.samples.length, boundarySamples: boundaryItems(fragment.samples).map((sample) => ({ dts: String(sample.dts), pts: String(sample.pts), ...(sample.duration === undefined ? {} : { duration: String(sample.duration) }), ...(sample.size === undefined ? {} : { size: sample.size }), ...(sample.flags === undefined ? {} : { flags: sample.flags }), ...(sample.sync === undefined ? {} : { sync: sample.sync }), ...(sample.compositionOffset === undefined ? {} : { compositionOffset: String(sample.compositionOffset) }), nalTypes: sample.nalTypes, accessUnit: sample.accessUnit })), drmBoxTypes: fragment.drmBoxTypes, structuralErrors: fragment.structuralErrors }; }
+function boundaryItems<T>(values: T[]): T[] { return values.length <= 6 ? values : [...values.slice(0, 3), ...values.slice(-3)]; }
 function contentType(kind: "video" | "audio"): string { return kind === "video" ? "video/mp4" : "audio/mp4"; }
 function resource(recordingId: string, logicalPath: string, kind: RecordedResourceKind, bytes: Uint8Array, contentTypeValue: string, metadataValue: Record<string, unknown>): RecordedResource { return { id: randomUUID(), logicalPath, kind, storageKey: path.posix.join("recordings", recordingId, logicalPath), contentType: contentTypeValue, sizeBytes: bytes.byteLength, sha256: createHash("sha256").update(bytes).digest("hex"), metadata: metadataValue }; }
 function addBytes(current: number, next: number, max: number): number { const total = current + next; if (total > max) throw new StreamCollectionError("STREAM_RESPONSE_TOO_LARGE", "The recording exceeds the aggregate byte limit", false); return total; }

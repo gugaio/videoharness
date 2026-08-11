@@ -11,7 +11,7 @@ const WORKING_COPY: Record<string, { actor: string; message: string }> = {
   synthesizing: { actor: "Investigator", message: "Putting the final report together…" },
 };
 
-const AI_AGENT_ORDER = ["timeline-playback", "container-encoding", "manifest-delivery", "lead-investigator"] as const;
+const AI_AGENT_ORDER = ["timeline-playback", "container-encoding", "manifest-delivery", "abr-switch-investigator", "lead-investigator"] as const;
 
 type AiAgentStage = "started" | "completed" | "failed";
 
@@ -21,11 +21,56 @@ interface AiTeamProgress {
   total: number;
 }
 
+const COLLECTION_STAGES = ["root_manifest", "variant_manifest", "rendition_manifest", "media_sample", "media_probe"] as const;
+
+const COLLECTION_STAGE_LABELS: Record<(typeof COLLECTION_STAGES)[number], string> = {
+  root_manifest: "Root manifest",
+  variant_manifest: "Video variant",
+  rendition_manifest: "Audio rendition",
+  media_sample: "Media samples",
+  media_probe: "FFprobe inspection",
+};
+
+interface CollectionProgress {
+  stage: (typeof COLLECTION_STAGES)[number];
+  message: string;
+  completed?: number;
+  total?: number;
+}
+
+/** Live, counted progress derived from persisted collection events; never an estimate. */
+function deriveCollectionProgress(events: InvestigationEvent[]): { latest: CollectionProgress; stages: Partial<Record<(typeof COLLECTION_STAGES)[number], "done" | "active">> } | undefined {
+  const stages: Partial<Record<(typeof COLLECTION_STAGES)[number], "done" | "active">> = {};
+  let latest: CollectionProgress | undefined;
+  for (const event of events) {
+    if (event.type !== "investigation.observation" || event.payload.stage !== "collection") continue;
+    const stage = event.payload.collectionStage;
+    if (typeof stage !== "string" || !(COLLECTION_STAGES as readonly string[]).includes(stage)) continue;
+    latest = {
+      stage: stage as CollectionProgress["stage"],
+      message: event.message,
+      ...(typeof event.payload.completed === "number" ? { completed: event.payload.completed } : {}),
+      ...(typeof event.payload.total === "number" ? { total: event.payload.total } : {}),
+    };
+    stages[latest.stage] = "done";
+  }
+  if (!latest) return undefined;
+  stages[latest.stage] = "active";
+  return { latest, stages };
+}
+
+function isCollectionProgress(event: InvestigationEvent): boolean {
+  return (
+    event.type === "investigation.observation" &&
+    event.payload.stage === "collection"
+  );
+}
+
 /** Real per-agent lifecycle derived from persisted pipeline events; never an estimate. */
 function deriveAiTeamProgress(events: InvestigationEvent[]): AiTeamProgress | undefined {
   const stages: AiTeamProgress["stages"] = {};
   let completed: number = 0;
-  let total: number = AI_AGENT_ORDER.length;
+  let total: number = 5;
   let seen = false;
   for (const event of events) {
     if (event.type !== "investigation.observation" || event.payload.stage !== "ai_agent") continue;
@@ -68,6 +113,7 @@ export function InvestigationFeed(props: {
   }, [events]);
 
   const aiProgress = useMemo(() => deriveAiTeamProgress(events), [events]);
+  const collectionProgress = useMemo(() => deriveCollectionProgress(events), [events]);
 
   useEffect(() => {
     const nearBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 480;
@@ -108,14 +154,22 @@ export function InvestigationFeed(props: {
             Restoring the persisted investigation feed…
           </div>
         )}
-        {events.filter((event) => !isAiAgentStart(event)).map((event, index) =>
+        {events.filter((event) => !isAiAgentStart(event) && !isCollectionProgress(event)).map((event, index) =>
           isMilestone(event) ? (
             <Milestone event={event} key={event.id} stagger={staggerDelay(index)} />
           ) : (
             <FeedPost event={event} key={event.id} stagger={staggerDelay(index)} />
           ),
         )}
-        {active && <WorkingCard aiProgress={aiProgress} state={state} />}
+        {active && (
+          <WorkingCard
+            aiProgress={aiProgress}
+            collectionProgress={
+              collectionProgress ? { ...collectionProgress.latest, stages: collectionProgress.stages } : undefined
+            }
+            state={state}
+          />
+        )}
       </div>
       <div ref={feedEndRef} />
     </section>
@@ -208,8 +262,17 @@ function EvidenceChips({ payload }: { payload: Record<string, unknown> }): JSX.E
   );
 }
 
-function WorkingCard({ state, aiProgress }: { state: Investigation["state"]; aiProgress?: AiTeamProgress }): JSX.Element {
+function WorkingCard({
+  state,
+  aiProgress,
+  collectionProgress,
+}: {
+  state: Investigation["state"];
+  aiProgress?: AiTeamProgress;
+  collectionProgress?: CollectionProgress & { stages: Partial<Record<(typeof COLLECTION_STAGES)[number], "done" | "active">> };
+}): JSX.Element {
   if (state === "analyzing" && aiProgress) return <AiTeamWorkingCard progress={aiProgress} />;
+  if (state === "collecting" && collectionProgress) return <CollectionWorkingCard progress={collectionProgress} />;
   const copy = WORKING_COPY[state] ?? WORKING_COPY.queued;
   const persona = personaForActor(copy.actor);
   return (
@@ -228,6 +291,77 @@ function WorkingCard({ state, aiProgress }: { state: Investigation["state"]; aiP
           <p className="mt-1 text-sm text-white/45">{copy.message}</p>
         </div>
       </div>
+    </article>
+  );
+}
+
+function CollectionWorkingCard({ progress }: { progress: CollectionProgress & { stages: Partial<Record<(typeof COLLECTION_STAGES)[number], "done" | "active">> } }): JSX.Element {
+  const persona = personaForActor("Media Agent");
+  const doneCount = COLLECTION_STAGES.filter((stage) => progress.stages[stage] === "done").length;
+  return (
+    <article className="animate-fade-up rounded-2xl border border-dashed border-amber-300/25 bg-amber-300/[0.04] p-5">
+      <div className="flex items-center gap-4">
+        <AgentAvatar active persona={persona} />
+        <div className="flex-1">
+          <p className="text-sm font-medium text-white/75">
+            {persona.name} is collecting evidence
+            <span className="ml-2 inline-flex items-end gap-1 align-baseline">
+              <TypingDot delay="0ms" />
+              <TypingDot delay="150ms" />
+              <TypingDot delay="300ms" />
+            </span>
+          </p>
+          <p className="mt-1 text-sm text-white/45">{progress.message}</p>
+          {progress.completed !== undefined && progress.total !== undefined && progress.total > 0 && (
+            <div className="mt-3">
+              <div className="flex items-center justify-between text-xs text-white/40">
+                <span>
+                  {progress.completed} of {progress.total} complete
+                </span>
+                <span>{Math.min(100, Math.round((progress.completed / progress.total) * 100))}%</span>
+              </div>
+              <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/[0.07]">
+                <div
+                  className="h-full rounded-full bg-amber-400 transition-[width]"
+                  style={{ width: `${Math.min(100, Math.round((progress.completed / progress.total) * 100))}%` }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+      <ul className="mt-4 flex flex-wrap gap-2 border-t border-white/[0.06] pt-4">
+        {COLLECTION_STAGES.map((stage) => {
+          const state = progress.stages[stage];
+          const label = COLLECTION_STAGE_LABELS[stage];
+          return (
+            <li
+              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+                state === "done"
+                  ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-200"
+                  : state === "active"
+                    ? "border-amber-300/25 bg-amber-300/10 text-amber-200"
+                    : "border-white/10 bg-white/[0.03] text-white/35"
+              }`}
+              key={stage}
+            >
+              {state === "done" ? (
+                <svg aria-hidden="true" className="h-3 w-3" fill="none" viewBox="0 0 24 24">
+                  <path d="m5 12.5 4.5 4.5L19 7.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" />
+                </svg>
+              ) : state === "active" ? (
+                <span className="h-1.5 w-1.5 animate-pulse-dot rounded-full bg-amber-300" />
+              ) : (
+                <span className="h-1.5 w-1.5 rounded-full bg-white/20" />
+              )}
+              {label}
+            </li>
+          );
+        })}
+      </ul>
+      <p className="mt-3 text-[11px] text-white/30">
+        {doneCount} of {COLLECTION_STAGES.length} collection stages done — each sample is fetched through the safe network boundary.
+      </p>
     </article>
   );
 }

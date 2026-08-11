@@ -1,4 +1,5 @@
-import type { ManifestCollection } from "./manifest-collector.js";
+import type { CollectionProgress, ManifestCollection } from "./manifest-collector.js";
+import type { Fmp4InitInspection, HevcAccessUnitInspection } from "../../stream-tools/isobmff.js";
 
 export type MediaSample = {
   logicalKey: string;
@@ -35,31 +36,51 @@ export type MediaProbeTrack = {
   frameRate?: string;
   sampleRate?: number;
   channels?: number;
+  codecTagString?: string;
+  profile?: string;
+  level?: number;
+  codedWidth?: number;
+  codedHeight?: number;
+  pixelFormat?: string;
+  refs?: number;
+  timeBase?: string;
+  averageFrameRate?: string;
+  colorRange?: string;
+  colorSpace?: string;
+  colorTransfer?: string;
+  colorPrimaries?: string;
+  chromaLocation?: string;
+};
+
+export type FfprobeBoundarySummary = {
+  packets: Array<{ pts?: string; ptsTime?: number; dts?: string; dtsTime?: number; duration?: string; durationTime?: number; size?: number; pos?: string; flags?: string }>;
+  frames: Array<{ keyFrame?: boolean; pictureType?: string; pts?: string; ptsTime?: number; packetDts?: string; packetDtsTime?: number; bestEffortTimestamp?: string; duration?: string; width?: number; height?: number; pixelFormat?: string; colorRange?: string; colorSpace?: string; colorTransfer?: string; colorPrimaries?: string; sideDataTypes: string[] }>;
+  totalPacketCount: number;
+  totalFrameCount: number;
 };
 
 export type MediaProbeResult = {
   format?: string;
   duration?: number;
   tracks: MediaProbeTrack[];
+  boundary?: FfprobeBoundarySummary;
   fmp4?: {
-    init?: {
-      fourcc?: string;
-      timescale?: number;
-      nalLengthSize?: number;
-      hevc?: { profileIdc: number; levelIdc: number; tierFlag: boolean; chromaFormat: number; bitDepthLuma: number; bitDepthChroma: number; parameterSetHashes: Partial<Record<"vps" | "sps" | "pps", string[]>> };
-      structuralErrors: string[];
-    };
+    init?: Fmp4InitInspection;
     fragment: {
+      styp?: import("../../stream-tools/isobmff.js").Fmp4FragmentInspection["styp"];
+      sidx?: import("../../stream-tools/isobmff.js").Fmp4FragmentInspection["sidx"];
       sequenceNumber?: number;
       baseMediaDecodeTime?: string;
-      samples: Array<{ dts: string; pts: string; duration?: string; size?: number; flags?: number; sync?: boolean; compositionOffset?: string; firstFrameKind: "idr" | "cra" | "bla" | "rasl" | "radl" | "other" | "unknown" }>;
+      trafs: import("../../stream-tools/isobmff.js").Fmp4TrafInspection[];
+      samples: Array<{ dts: string; pts: string; duration?: string; size?: number; flags?: number; sync?: boolean; compositionOffset?: string; nalTypes: number[]; accessUnit: HevcAccessUnitInspection; firstFrameKind: "idr" | "cra" | "bla" | "rasl" | "radl" | "other" | "unknown" }>;
+      drmBoxTypes: string[];
       structuralErrors: string[];
     };
   };
 };
 
 export interface MediaSampleCollector {
-  collect(collection: ManifestCollection): Promise<{ samples: MediaSample[]; limitations: string[] }>;
+  collect(collection: ManifestCollection, onProgress?: (progress: CollectionProgress) => Promise<void>): Promise<{ samples: MediaSample[]; limitations: string[] }>;
 }
 
 export interface MediaProbe {

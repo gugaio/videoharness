@@ -47,6 +47,8 @@ Saida:
 
 - Timeline viva da investigacao.
 - Evidencias tecnicas auditaveis.
+- `AbrAssessment` de HLS ou DASH em toda investigation, mesmo quando o sintoma
+  relatado nao e ABR.
 - Hipoteses e causa mais provavel.
 - Recomendacoes acionaveis.
 - Relatorio final compartilhavel.
@@ -162,6 +164,9 @@ Secoes esperadas:
 14. Aplicar profiles deterministas de throughput e latencia por playback run.
 15. Persistir requests e derivar trocas ABR no nivel de request.
 16. Reutilizar o mesmo recording em multiplos experimentos.
+17. Avaliar deterministicamente a ladder ABR em toda investigation e executar o
+    especialista ABR sem depender de protocolo, fabricante, player ou resolucao
+    especificos; o relato do usuario orienta apenas a prioridade.
 
 ## Requisitos nao funcionais
 
@@ -173,7 +178,8 @@ Secoes esperadas:
 - Protecao SSRF para URLs arbitrarias.
 - Pipeline recuperavel apos restart do worker.
 - Deploy por Docker Compose em um VPS.
-- URL de playback estavel, acessivel ao device e protegida por token opaco.
+- URL de playback fixa por recording e acessivel ao device; o run ativo aplica
+  shaping e grava o journal, e o clone continua servindo sem run ativo.
 - Throughput compartilhado entre requests concorrentes do mesmo playback run.
 
 ## Fora do MVP

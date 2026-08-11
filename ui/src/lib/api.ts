@@ -94,6 +94,62 @@ const EvidenceBundleV1Schema = z.object({
   limitations: z.array(z.string()),
 });
 
+const EvidenceRefSchema = z.object({ evidenceId: z.string().min(1) });
+const AbrSeveritySchema = z.enum(["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"]);
+const AbrRepresentationSchema = EvidenceRefSchema.extend({
+  id: z.string(), groupId: z.string(), bandwidth: z.number().nonnegative().optional(), averageBandwidth: z.number().nonnegative().optional(),
+  width: z.number().int().nonnegative().optional(), height: z.number().int().nonnegative().optional(), frameRate: z.number().nonnegative().optional(),
+  codecs: z.string().optional(), audioGroupId: z.string().optional(), segmentCount: z.number().int().nonnegative().optional(),
+});
+const AbrRepresentationSummarySchema = EvidenceRefSchema.extend({
+  id: z.string(), periodIndex: z.number().int().nonnegative(), adaptationSetIndex: z.number().int().nonnegative(), bandwidth: z.number().nonnegative().optional(),
+  codecs: z.string().optional(), sampleEntry: z.string().optional(), width: z.number().int().nonnegative().optional(), height: z.number().int().nonnegative().optional(),
+  frameRate: z.string().optional(), timescale: z.number().positive().optional(), presentationTimeOffset: z.string().optional(),
+});
+const AbrDeterministicFindingSchema = EvidenceRefSchema.extend({
+  ruleId: z.string(), category: z.string(), severity: AbrSeveritySchema, confidence: z.enum(["LOW", "MEDIUM", "HIGH", "VERY_HIGH"]),
+  title: z.string(), explanation: z.string(), evidenceIds: z.array(z.string()),
+});
+const AbrSwitchBaseSchema = EvidenceRefSchema.extend({
+  switchId: z.string(), timestamps: z.object({ candidateBoundaryPresentationTimeMs: z.number().optional() }).passthrough(),
+  sourceRepresentation: AbrRepresentationSummarySchema, targetRepresentation: AbrRepresentationSummarySchema,
+  direction: z.enum(["UPSHIFT", "DOWNSHIFT", "LATERAL"]), switchKind: z.enum(["SAME_RESOLUTION_BITRATE", "RESOLUTION_CHANGING", "UNKNOWN"]),
+  switchingContract: EvidenceRefSchema.passthrough(), reportedPlayerContext: EvidenceRefSchema.passthrough().optional(),
+  playerEvidence: EvidenceRefSchema.passthrough().optional(), avplayEvidence: EvidenceRefSchema.passthrough().optional(),
+  networkEvidence: EvidenceRefSchema.extend({ requests: z.array(EvidenceRefSchema.passthrough()) }).passthrough(),
+  sourceInit: EvidenceRefSchema.passthrough().optional(), targetInit: EvidenceRefSchema.passthrough().optional(), initSemanticDiff: EvidenceRefSchema.passthrough().optional(),
+  sourceBoundary: EvidenceRefSchema.passthrough().optional(), targetBoundary: EvidenceRefSchema.passthrough().optional(), sapEvidence: EvidenceRefSchema.passthrough().optional(),
+  timelineEvidence: EvidenceRefSchema.passthrough().optional(), codecDiff: EvidenceRefSchema.passthrough().optional(), drmDiff: EvidenceRefSchema.passthrough().optional(),
+  deviceCapabilityEvidence: EvidenceRefSchema.passthrough().optional(), decodeTests: z.array(EvidenceRefSchema.passthrough()), conformance: EvidenceRefSchema.passthrough().optional(),
+  deterministicFindings: z.array(AbrDeterministicFindingSchema), missingEvidence: z.array(z.string()),
+});
+const AbrSwitchEvidenceSchema = z.discriminatedUnion("evidenceBasis", [
+  AbrSwitchBaseSchema.extend({ evidenceBasis: z.literal("URL_STATIC_ANALYSIS"), transitionStatus: z.literal("CANDIDATE") }),
+  AbrSwitchBaseSchema.extend({ evidenceBasis: z.literal("PLAYBACK_NETWORK_OBSERVED"), transitionStatus: z.literal("OBSERVED") }),
+]);
+const AbrSwitchMatrixSchema = z.object({
+  fromRepresentationId: z.string(), toRepresentationId: z.string(), switchKind: z.enum(["SAME_RESOLUTION_BITRATE", "RESOLUTION_CHANGING", "UNKNOWN"]),
+  status: z.enum(["PASS", "FAIL", "RISK", "NOT_TESTED"]), findingRuleIds: z.array(z.string()),
+});
+const AbrTransitionAssessmentSchema = EvidenceRefSchema.extend({
+  transitionId: z.string(), protocol: z.enum(["hls", "dash"]), evidenceBasis: z.enum(["URL_STATIC_ANALYSIS", "PLAYBACK_NETWORK_OBSERVED"]),
+  transitionStatus: z.enum(["CANDIDATE", "OBSERVED"]), sourceRepresentation: AbrRepresentationSchema, targetRepresentation: AbrRepresentationSchema,
+  direction: z.enum(["UPSHIFT", "DOWNSHIFT", "LATERAL"]), switchKind: z.enum(["SAME_RESOLUTION_BITRATE", "RESOLUTION_CHANGING", "UNKNOWN"]),
+  outcome: z.enum(["PASS", "FAIL", "RISK", "NOT_TESTED"]), findingRuleIds: z.array(z.string()),
+});
+const AbrAssessmentSchema = EvidenceRefSchema.extend({
+  schemaVersion: z.literal(1), protocol: z.enum(["hls", "dash"]), verdict: z.enum(["NO_ISSUE_DETECTED", "ISSUES_FOUND", "INCONCLUSIVE", "NOT_APPLICABLE"]),
+  reportedPriority: z.object({ abrProblemReported: z.boolean(), direction: z.enum(["UPSHIFT", "DOWNSHIFT", "LATERAL"]).optional(), sourceHeight: z.number().int().positive().optional(), targetHeight: z.number().int().positive().optional(), approximateTimeSeconds: z.number().nonnegative().optional() }),
+  coverage: z.object({ level: z.enum(["MANIFEST_ONLY", "SAMPLED_MEDIA", "OBSERVED_PLAYBACK"]), manifestObserved: z.literal(true), mediaSampleCount: z.number().int().nonnegative(), representationCount: z.number().int().nonnegative(), transitionPairsAnalyzed: z.number().int().nonnegative(), playbackObserved: z.boolean(), limitations: z.array(z.string()) }),
+  ladder: z.object({ representations: z.array(AbrRepresentationSchema), videoRepresentationCount: z.number().int().nonnegative(), audioRenditionCount: z.number().int().nonnegative() }),
+  findings: z.array(EvidenceRefSchema.extend({ ruleId: z.string(), category: z.enum(["LADDER_TOPOLOGY", "LADDER_CONSISTENCY", "TRANSITION_SAFETY", "DELIVERY_BEHAVIOR", "COVERAGE"]), severity: AbrSeveritySchema, title: z.string(), explanation: z.string(), evidenceIds: z.array(z.string()) })),
+  transitions: z.array(AbrTransitionAssessmentSchema), transitionMatrix: z.array(AbrSwitchMatrixSchema), recommendedMeasurements: z.array(z.string()),
+});
+const ReportedContextSchema = z.union([
+  z.object({ approximateTimeSeconds: z.number().nonnegative().optional(), reportsVideoFreeze: z.boolean(), reportsAudioContinues: z.boolean(), reportsAbrSwitch: z.boolean(), reportedAbrDirection: z.enum(["UPSHIFT", "DOWNSHIFT"]).optional(), reportedResolutionTransition: z.object({ sourceHeight: z.number().int().positive(), targetHeight: z.number().int().positive() }).optional(), reportedDevice: z.object({ manufacturer: z.string().optional(), modelCode: z.string().optional(), firmwareVersion: z.string().optional(), operatingSystem: z.string().optional(), operatingSystemVersion: z.string().optional(), applicationVersion: z.string().optional(), playerName: z.string().optional(), playerVersion: z.string().optional(), drmSystem: z.string().optional(), displayOrHdrMode: z.string().optional() }).optional(), mentionedPlayerEvents: z.array(z.string()), descriptionExcerpt: z.string().optional(), uncertainties: z.array(z.string()) }),
+  z.object({ approximateTimeSeconds: z.number().nonnegative().optional(), reportsVideoFreeze: z.boolean(), reportsAudioContinues: z.boolean(), reportsAbrSwitch: z.boolean(), reportsFourKToFullHd: z.boolean(), reportedDevice: z.object({ exactModelCode: z.string().optional(), firmwareVersion: z.string().optional(), tizenVersion: z.string().optional(), applicationVersion: z.string().optional(), avplayVersion: z.string().optional(), drmSystem: z.string().optional(), displayOrHdrMode: z.string().optional() }).optional(), mentionedAvplayEvents: z.array(z.string()).optional(), descriptionExcerpt: z.string().optional(), uncertainties: z.array(z.string()) }),
+]);
+
 const EvidenceBundleV2Schema = z.object({
   schemaVersion: z.literal(2),
   collectedAt: z.string(),
@@ -174,8 +230,9 @@ const EvidenceBundleV2Schema = z.object({
       audioRenditionLogicalKey: z.string().optional(),
     }).optional(),
   }).optional(),
-  reportedContext: z.object({ approximateTimeSeconds: z.number().nonnegative().optional(), reportsVideoFreeze: z.boolean(), reportsAudioContinues: z.boolean(), reportsAbrSwitch: z.boolean(), reportsFourKToFullHd: z.boolean(), uncertainties: z.array(z.string()) }).optional(),
-  dash: z.object({ type: z.enum(["static", "dynamic"]), representations: z.array(z.object({ id: z.string(), periodIndex: z.number().int().nonnegative(), adaptationSetIndex: z.number().int().nonnegative(), contentType: z.enum(["video", "audio", "unknown"]), codecs: z.string().optional(), bandwidth: z.number().nonnegative().optional(), width: z.number().int().nonnegative().optional(), height: z.number().int().nonnegative().optional(), frameRate: z.string().optional(), timescale: z.number().positive(), segmentAlignment: z.boolean().optional(), bitstreamSwitching: z.boolean().optional(), segmentCount: z.number().int().nonnegative() })), limitations: z.array(z.string()), analysis: z.unknown().optional() }).optional(),
+  reportedContext: ReportedContextSchema.optional(),
+  abr: AbrAssessmentSchema.optional(),
+  dash: z.object({ type: z.enum(["static", "dynamic"]), periods: z.array(z.unknown()).optional(), adaptationSets: z.array(z.unknown()).optional(), representations: z.array(z.object({ id: z.string(), periodIndex: z.number().int().nonnegative(), adaptationSetIndex: z.number().int().nonnegative(), contentType: z.enum(["video", "audio", "unknown"]), codecs: z.string().optional(), bandwidth: z.number().nonnegative().optional(), width: z.number().int().nonnegative().optional(), height: z.number().int().nonnegative().optional(), frameRate: z.string().optional(), sar: z.string().optional(), baseUrl: z.string().url().optional(), timescale: z.number().positive(), presentationTimeOffset: z.string().optional(), initializationUrl: z.string().url().optional(), mediaTemplate: z.string().optional(), segmentAddressing: z.enum(["template", "list", "base", "unknown"]).optional(), segmentAlignment: z.boolean().optional(), subsegmentAlignment: z.boolean().optional(), startWithSap: z.number().int().optional(), subsegmentStartsWithSap: z.number().int().optional(), bitstreamSwitching: z.boolean().optional(), contentProtection: z.array(z.unknown()).optional(), segmentCount: z.number().int().nonnegative() })), limitations: z.array(z.string()), analysis: z.unknown().optional(), switches: z.array(AbrSwitchEvidenceSchema).optional(), switchMatrix: z.array(AbrSwitchMatrixSchema).optional(), reconfigurationSensitivity: z.string().optional() }).optional(),
   observations: z.array(EvidenceObservationSchema),
   limitations: z.array(z.string()),
 });
@@ -198,7 +255,8 @@ const ManifestReportContentBaseSchema = z.object({
     available: z.boolean(), summary: z.string().optional(), likelyCause: z.string().optional(), confidence: z.number().min(0).max(1).optional(),
     findings: z.array(z.object({ title: z.string(), severity: z.enum(["info", "warning", "error"]), explanation: z.string(), evidenceIds: z.array(z.string()), confidence: z.number().min(0).max(1) })),
     recommendations: z.array(z.string()), limitations: z.array(z.string()),
-    agents: z.array(z.object({ id: z.enum(["timeline-playback", "container-encoding", "manifest-delivery", "lead-investigator"]), state: z.enum(["completed", "failed", "unavailable"]), summary: z.string().optional(), limitation: z.string().optional() })),
+    agents: z.array(z.object({ id: z.enum(["timeline-playback", "container-encoding", "manifest-delivery", "abr-switch-investigator", "lead-investigator"]), state: z.enum(["completed", "failed", "unavailable"]), summary: z.string().optional(), limitation: z.string().optional(), prompts: z.object({ system: z.string(), user: z.string() }).optional() })),
+    promptAudits: z.array(z.object({ agentId: z.enum(["timeline-playback", "container-encoding", "manifest-delivery", "abr-switch-investigator", "lead-investigator"]), attempt: z.number().int().positive(), state: z.enum(["completed", "failed"]), provider: z.string(), model: z.string(), systemPrompt: z.string(), prompt: z.string(), toolNames: z.array(z.string()), toolCalls: z.array(z.object({ name: z.string(), input: z.string(), output: z.string() })) })).optional(),
   }).optional(),
 });
 
@@ -242,6 +300,7 @@ const InvestigationReportSchema = z.object({
 export type Health = z.infer<typeof HealthSchema>;
 export type Investigation = z.infer<typeof InvestigationSchema>;
 export type InvestigationEvent = z.infer<typeof InvestigationEventSchema>;
+export type AbrAssessment = z.infer<typeof AbrAssessmentSchema>;
 
 const RecordingSchema = z.object({
   id: z.string().uuid(), sourceUrl: z.string().url(), protocol: z.enum(["hls", "dash"]),
@@ -323,6 +382,14 @@ export async function createRecordingPlaybackRun(id: string, profile: NetworkPro
   const response = await fetch(`/v1/recordings/${encodeURIComponent(id)}/playback-runs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profile }) });
   return parseResponse(response, z.object({ run: PlaybackRunSchema, playbackUrl: z.string() }));
 }
+export async function getLatestRecordingPlaybackRun(id: string): Promise<{ run: PlaybackRun; playbackUrl: string } | null> {
+  const response = await fetch(`/v1/recordings/${encodeURIComponent(id)}/playback-runs/latest`);
+  return (await parseResponse(response, z.object({ playback: z.object({ run: PlaybackRunSchema, playbackUrl: z.string() }).nullable() }))).playback;
+}
+export async function finishRecordingPlaybackRun(recordingId: string, runId: string): Promise<PlaybackRun> {
+  const response = await fetch(`/v1/recordings/${encodeURIComponent(recordingId)}/playback-runs/${encodeURIComponent(runId)}/finish`, { method: "POST" });
+  return (await parseResponse(response, z.object({ run: PlaybackRunSchema }))).run;
+}
 export async function getRecordingRequests(recordingId: string, runId: string): Promise<DeliveryRequest[]> {
   const response = await fetch(`/v1/recordings/${encodeURIComponent(recordingId)}/playback-runs/${encodeURIComponent(runId)}/requests?limit=10`);
   return (await parseResponse(response, z.object({ requests: z.array(DeliveryRequestSchema) }))).requests;
@@ -338,6 +405,13 @@ export async function getInvestigationReport(id: string): Promise<InvestigationR
   const response = await fetch(`/v1/investigations/${encodeURIComponent(id)}/report`);
   const result = await parseResponse(response, z.object({ report: InvestigationReportSchema }));
   return result.report;
+}
+
+export type AiPromptAudit = NonNullable<NonNullable<Extract<InvestigationReport["content"], { placeholder: false }>["ai"]>["promptAudits"]>[number];
+
+export async function getInvestigationAiRuns(id: string): Promise<AiPromptAudit[]> {
+  const response = await fetch(`/v1/investigations/${encodeURIComponent(id)}/ai-runs`);
+  return (await parseResponse(response, z.object({ runs: z.array(z.object({ agentId: z.enum(["timeline-playback", "container-encoding", "manifest-delivery", "abr-switch-investigator", "lead-investigator"]), attempt: z.number().int().positive(), state: z.enum(["completed", "failed"]), provider: z.string(), model: z.string(), systemPrompt: z.string(), prompt: z.string(), toolNames: z.array(z.string()), toolCalls: z.array(z.object({ name: z.string(), input: z.string(), output: z.string() })) })) }))).runs;
 }
 
 export type PlaybackTelemetry = {

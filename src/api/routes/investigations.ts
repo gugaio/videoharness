@@ -58,6 +58,20 @@ export function registerInvestigationRoutes(
     return { report };
   });
 
+  // Prompt audit is intentionally a workspace endpoint: it can contain source
+  // URLs and detailed evidence packets, so it must never be used for sharing.
+  server.get<{ Params: { id: string } }>("/v1/investigations/:id/ai-runs", async (request) => {
+    const id = parseInvestigationId(request.params.id);
+    const investigation = await dependencies.queries.getInvestigation(id);
+    if (!investigation) throw new ApiError(404, "INVESTIGATION_NOT_FOUND", "Investigation not found");
+    const report = await dependencies.queries.getReport(id);
+    if (!report) throw new ApiError(404, "REPORT_NOT_READY", "AI prompt audit is available after the initial report");
+    const ai = report.content.placeholder
+      ? undefined
+      : (report.content as { ai?: { promptAudits?: unknown[] } }).ai;
+    return { runs: ai?.promptAudits ?? [] };
+  });
+
   server.get<{ Params: { id: string } }>("/v1/investigations/:id/artifacts", async (request) => {
     if (!dependencies.queries.listArtifacts) throw new ApiError(503, "ARTIFACTS_UNAVAILABLE", "Artifact listing is not configured");
     const id = parseInvestigationId(request.params.id);

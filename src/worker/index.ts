@@ -19,6 +19,7 @@ import { HlsVodMaterializer } from "../record/adapters/hls-vod-materializer.js";
 import { DashVodMaterializer } from "../record/adapters/dash-vod-materializer.js";
 import { ProtocolRecordingMaterializer } from "../record/adapters/recording-materializer.js";
 import { createRecordingWorker } from "../record/application/run-recording.js";
+import { FfmpegAbrDecodeTester } from "../abr/adapters/ffmpeg-abr-decode-tester.js";
 
 const config = loadConfig();
 const pool = createDatabasePool(config.databaseUrl);
@@ -36,8 +37,9 @@ const mediaCollector = new HttpMediaSampleCollector(new SafeHttpClient({
   timeoutMs: config.streamTimeoutMs,
   maxBytes: config.mediaSampleMaxBytes,
   ...localDevelopmentAlias,
-}), { maxTotalBytes: config.mediaSampleMaxTotalBytes, mode: config.mediaSampleMode });
+}), { maxTotalBytes: config.mediaSampleMaxTotalBytes, maxSeconds: config.mediaSampleMaxSeconds, mode: config.mediaSampleMode });
 const mediaProbe = new FfprobeMediaProbe({ dataDirectory: config.dataDir, timeoutMs: config.ffprobeTimeoutMs });
+const abrDecodeTester = new FfmpegAbrDecodeTester({ dataDirectory: config.dataDir, timeoutMs: 60_000 });
 const labWorkspace = new FilesystemLabWorkspace(config.dataDir);
 const lab = config.labSocketPath && config.labToken
   ? new UnixSocketInvestigationLab({ socketPath: config.labSocketPath, token: config.labToken, timeoutMs: config.labCommandTimeoutMs })
@@ -58,6 +60,7 @@ const worker = createInvestigationWorker({
   collector,
   mediaCollector,
   mediaProbe,
+  abrDecodeTester,
   labWorkspace,
   ai,
   workerId: config.workerId,

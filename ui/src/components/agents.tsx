@@ -181,6 +181,7 @@ const SPECIALIST_PERSONAS: Record<string, AgentPersona> = {
   "timeline-playback": { name: "Pip", role: "Timeline & Playback", hue: "emerald", icon: <GaugeIcon /> },
   "container-encoding": { name: "Coda", role: "Container & Encoding", hue: "amber", icon: <BoxIcon /> },
   "manifest-delivery": { name: "Mara", role: "Manifest & Delivery", hue: "sky", icon: <GlobeIcon /> },
+  "abr-switch-investigator": { name: "Iris", role: "ABR Quality", hue: "rose", icon: <GaugeIcon /> },
   "lead-investigator": { name: "Lead", role: "Lead Investigator", hue: "violet", icon: <CompassIcon /> },
 };
 

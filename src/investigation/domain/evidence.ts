@@ -122,11 +122,18 @@ export type EvidenceBundleV2 = {
     reportsVideoFreeze: boolean;
     reportsAudioContinues: boolean;
     reportsAbrSwitch: boolean;
-    reportsFourKToFullHd: boolean;
+    reportedAbrDirection?: "UPSHIFT" | "DOWNSHIFT";
+    reportedResolutionTransition?: { sourceHeight: number; targetHeight: number };
+    reportedDevice?: { manufacturer?: string; modelCode?: string; firmwareVersion?: string; operatingSystem?: string; operatingSystemVersion?: string; applicationVersion?: string; playerName?: string; playerVersion?: string; drmSystem?: string; displayOrHdrMode?: string };
+    mentionedPlayerEvents: string[];
+    descriptionExcerpt?: string;
     uncertainties: string[];
   };
+  abr?: import("../../abr/domain/assessment.js").AbrAssessment;
   dash?: {
     type: "static" | "dynamic";
+    periods: import("../../stream-tools/dash-mpd.js").DashManifestInspection["periods"];
+    adaptationSets: import("../../stream-tools/dash-mpd.js").DashManifestInspection["adaptationSets"];
     representations: Array<{
       id: string;
       periodIndex: number;
@@ -137,13 +144,28 @@ export type EvidenceBundleV2 = {
       width?: number;
       height?: number;
       frameRate?: string;
+      sar?: string;
+      baseUrl: string;
       timescale: number;
+      presentationTimeOffset: string;
+      initializationUrl?: string;
+      mediaTemplate?: string;
+      segmentAddressing: "template" | "list" | "base" | "unknown";
       segmentAlignment?: boolean;
+      subsegmentAlignment?: boolean;
+      startWithSap?: number;
+      subsegmentStartsWithSap?: number;
       bitstreamSwitching?: boolean;
+      contentProtection: import("../../stream-tools/dash-mpd.js").DashContentProtection[];
       segmentCount: number;
     }>;
     limitations: string[];
-    analysis?: import("../application/analyze-dash-forensics.js").DashForensicAnalysis;
+    /** Legacy report payload. New investigations use the protocol-neutral `abr` assessment. */
+    analysis?: unknown;
+    /** DASH/fMP4 specialization; `abr.transitions` carries protocol-neutral summaries. */
+    switches?: import("../../abr/domain/evidence.js").AbrSwitchEvidence[];
+    switchMatrix?: import("../../abr/domain/evidence.js").AbrSwitchMatrixEntry[];
+    reconfigurationSensitivity?: string;
   };
   hls?: {
     variants: HlsVariantEvidence[];

@@ -103,12 +103,99 @@ describe("HttpMediaSampleCollector", () => {
     const text = `<?xml version="1.0"?><MPD type="static" mediaPresentationDuration="PT12S"><Period duration="PT12S"><AdaptationSet contentType="video" mimeType="video/mp4"><SegmentTemplate timescale="1" media="$RepresentationID$-$Number$.m4s" initialization="$RepresentationID$.mp4" duration="4"/><Representation id="uhd" width="3840" height="2160"/><Representation id="fhd" width="1920" height="1080"/></AdaptationSet><AdaptationSet contentType="audio" mimeType="audio/mp4"><SegmentTemplate timescale="1" media="audio-$Number$.m4s" initialization="audio.mp4" duration="4"/><Representation id="audio"/></AdaptationSet></Period></MPD>`;
     const result = await collector.collect({
       manifests: [{ logicalKey: "manifest/root", role: "root", source: { requestedUrl: "https://stream.example/manifest.mpd", finalUrl: "https://stream.example/manifest.mpd", statusCode: 200 }, content: { bytes: new TextEncoder().encode(text) }, inspection: inspectManifest(text, "https://stream.example/manifest.mpd") }],
-      reportedContext: { approximateTimeSeconds: 4, reportsVideoFreeze: true, reportsAudioContinues: true, reportsAbrSwitch: true, reportsFourKToFullHd: true, uncertainties: [] },
+      reportedContext: { approximateTimeSeconds: 4, reportsVideoFreeze: true, reportsAudioContinues: true, reportsAbrSwitch: true, reportedAbrDirection: "DOWNSHIFT", reportedResolutionTransition: { sourceHeight: 2160, targetHeight: 1080 }, mentionedPlayerEvents: [], uncertainties: [] },
     });
     expect(result.samples.filter((sample) => sample.kind === "init-segment")).toHaveLength(3);
     const incident = result.samples.filter((sample) => sample.presentationStartSeconds === 4);
     expect(incident).toHaveLength(3);
     expect(incident.every((sample) => sample.source?.observedHashes?.length === 3)).toBe(true);
+  });
+
+  it("reports counted media_sample progress per segment in full mode", async () => {
+    const requester = vi.fn<PinnedRequester>(async (url) => response(url.pathname));
+    const collector = new HttpMediaSampleCollector(new SafeHttpClient({
+      resolver: async () => [{ address: "93.184.216.34", family: 4 }], requester,
+    }), { mode: "full", maxTotalBytes: 10_000 });
+    const text = ["#EXTM3U", ...Array.from({ length: 3 }, (_, index) => `#EXTINF:4,\nsegment-${index}.ts`), "#EXT-X-ENDLIST"].join("\n");
+    const steps: Array<{ stage: string; message: string; completed?: number; total?: number }> = [];
+
+    const result = await collector.collect({
+      manifests: [{
+        logicalKey: "manifest/root", role: "root",
+        source: { requestedUrl: "https://stream.example/index.m3u8", finalUrl: "https://stream.example/index.m3u8", statusCode: 200 },
+        content: { bytes: new TextEncoder().encode(text) },
+        inspection: inspectManifest(text, "https://stream.example/index.m3u8"),
+      }],
+    }, async (progress) => { steps.push(progress); });
+
+    expect(result.samples).toHaveLength(3);
+    expect(steps).toEqual([
+      { stage: "media_sample", message: "Sampling media segment 1 of 3 from manifest/root…", completed: 0, total: 3 },
+      { stage: "media_sample", message: "Sampling media segment 2 of 3 from manifest/root…", completed: 1, total: 3 },
+      { stage: "media_sample", message: "Sampling media segment 3 of 3 from manifest/root…", completed: 2, total: 3 },
+    ]);
+  });
+
+  it("centers the full-mode window around the reported incident time up to the time budget", async () => {
+    const requester = vi.fn<PinnedRequester>(async (url) => response(url.pathname));
+    const collector = new HttpMediaSampleCollector(new SafeHttpClient({
+      resolver: async () => [{ address: "93.184.216.34", family: 4 }], requester,
+    }), { mode: "full", maxTotalBytes: 1_000_000, maxSeconds: 40 });
+    const text = ["#EXTM3U", ...Array.from({ length: 20 }, (_, index) => `#EXTINF:10,\nsegment-${index}.ts`), "#EXT-X-ENDLIST"].join("\n");
+
+    const result = await collector.collect({
+      manifests: [{
+        logicalKey: "manifest/root", role: "root",
+        source: { requestedUrl: "https://stream.example/index.m3u8", finalUrl: "https://stream.example/index.m3u8", statusCode: 200 },
+        content: { bytes: new TextEncoder().encode(text) },
+        inspection: inspectManifest(text, "https://stream.example/index.m3u8"),
+      }],
+      reportedContext: { approximateTimeSeconds: 100, reportsVideoFreeze: true, reportsAudioContinues: true, reportsAbrSwitch: true, reportedAbrDirection: "DOWNSHIFT", reportedResolutionTransition: { sourceHeight: 2160, targetHeight: 1080 }, mentionedPlayerEvents: [], uncertainties: [] },
+    });
+
+    expect(result.limitations).toEqual([]);
+    // Target 100s sits in segment 10 (100..110s); the 40s budget keeps the centered window 80..120s.
+    expect(result.samples.map((sample) => sample.sampleIndex)).toEqual([8, 9, 10, 11]);
+  });
+
+  it("caps the full-mode window at the playlist start when no incident time is given", async () => {
+    const requester = vi.fn<PinnedRequester>(async (url) => response(url.pathname));
+    const collector = new HttpMediaSampleCollector(new SafeHttpClient({
+      resolver: async () => [{ address: "93.184.216.34", family: 4 }], requester,
+    }), { mode: "full", maxTotalBytes: 1_000_000, maxSeconds: 20 });
+    const text = ["#EXTM3U", ...Array.from({ length: 8 }, (_, index) => `#EXTINF:10,\nsegment-${index}.ts`), "#EXT-X-ENDLIST"].join("\n");
+
+    const result = await collector.collect({
+      manifests: [{
+        logicalKey: "manifest/root", role: "root",
+        source: { requestedUrl: "https://stream.example/index.m3u8", finalUrl: "https://stream.example/index.m3u8", statusCode: 200 },
+        content: { bytes: new TextEncoder().encode(text) },
+        inspection: inspectManifest(text, "https://stream.example/index.m3u8"),
+      }],
+    });
+
+    expect(result.samples.map((sample) => sample.sampleIndex)).toEqual([0, 1]);
+  });
+
+  it("notes when the reported incident time cannot be mapped to the HLS timeline", async () => {
+    const requester = vi.fn<PinnedRequester>(async (url) => response(url.pathname));
+    const collector = new HttpMediaSampleCollector(new SafeHttpClient({
+      resolver: async () => [{ address: "93.184.216.34", family: 4 }], requester,
+    }), { mode: "full", maxTotalBytes: 1_000_000, maxSeconds: 20 });
+    const text = ["#EXTM3U", ...Array.from({ length: 4 }, (_, index) => `segment-${index}.ts`), "#EXT-X-ENDLIST"].join("\n");
+
+    const result = await collector.collect({
+      manifests: [{
+        logicalKey: "manifest/root", role: "root",
+        source: { requestedUrl: "https://stream.example/index.m3u8", finalUrl: "https://stream.example/index.m3u8", statusCode: 200 },
+        content: { bytes: new TextEncoder().encode(text) },
+        inspection: inspectManifest(text, "https://stream.example/index.m3u8"),
+      }],
+      reportedContext: { approximateTimeSeconds: 30, reportsVideoFreeze: true, reportsAudioContinues: true, reportsAbrSwitch: true, reportedAbrDirection: "DOWNSHIFT", reportedResolutionTransition: { sourceHeight: 2160, targetHeight: 1080 }, mentionedPlayerEvents: [], uncertainties: [] },
+    });
+
+    expect(result.limitations[0]).toContain("reported incident time could not be mapped");
+    expect(result.samples).toHaveLength(4);
   });
 });
 

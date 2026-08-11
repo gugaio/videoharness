@@ -69,6 +69,31 @@ describe("HttpManifestCollector", () => {
     expect(result.manifests).toHaveLength(1);
     expect(result.manifests[0]).toMatchObject({ logicalKey: "manifest/root", role: "root" });
   });
+
+  it("reports real stages before each manifest fetch", async () => {
+    const requester = vi.fn<PinnedRequester>(async (url) => {
+      if (url.pathname.endsWith("master.m3u8")) {
+        return response([
+          "#EXTM3U",
+          '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Default",DEFAULT=YES,URI="audio-default.m3u8"',
+          '#EXT-X-STREAM-INF:BANDWIDTH=2000,AUDIO="audio"',
+          "high.m3u8",
+        ].join("\n"));
+      }
+      if (url.pathname.endsWith("high.m3u8")) return response("#EXTM3U\n#EXTINF:4,\nvideo.ts");
+      if (url.pathname.endsWith("audio-default.m3u8")) return response("#EXTM3U\n#EXTINF:4,\naudio.aac");
+      throw new Error(`unexpected request ${url.toString()}`);
+    });
+    const collector = new HttpManifestCollector(createHttpClient(requester));
+    const stages: string[] = [];
+
+    const result = await collector.collect("https://stream.example/live/master.m3u8", async (progress) => {
+      stages.push(progress.stage);
+    });
+
+    expect(stages).toEqual(["root_manifest", "variant_manifest", "rendition_manifest"]);
+    expect(result.manifests).toHaveLength(3);
+  });
 });
 
 function createHttpClient(requester: PinnedRequester): SafeHttpClient {

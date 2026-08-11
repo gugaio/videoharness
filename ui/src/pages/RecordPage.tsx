@@ -7,7 +7,9 @@ import {
   NORMAL_PLAYBACK_PROFILE,
   RecordingEventSchema,
   createRecordingPlaybackRun,
+  finishRecordingPlaybackRun,
   getRecording,
+  getLatestRecordingPlaybackRun,
   getRecordingRequests,
   startRecording,
   type DeliveryRequest,
@@ -93,7 +95,6 @@ export function RecordingPage(): JSX.Element {
   const client = useQueryClient();
   const [events, setEvents] = useState<RecordingEvent[]>([]);
   const [playback, setPlayback] = useState<PlaybackRun>();
-  const [playbackUrl, setPlaybackUrl] = useState<string>();
   const [copied, setCopied] = useState(false);
 
   const recording = useQuery({
@@ -104,9 +105,20 @@ export function RecordingPage(): JSX.Element {
   });
   const run = useMutation({
     mutationFn: (mode: PlaybackMode) => createRecordingPlaybackRun(recordingId, mode === "normal" ? NORMAL_PLAYBACK_PROFILE : mode === "control-1080p" ? CONTROL_1080P_PROFILE : ABR_PRESET_PROFILE),
-    onSuccess: ({ playbackUrl: url, run: created }) => {
+    onSuccess: ({ run: created }) => {
       setPlayback(created);
-      setPlaybackUrl(new URL(url, window.location.origin).toString());
+    },
+  });
+  const latestPlayback = useQuery({
+    queryKey: ["recording-latest-playback", recordingId],
+    queryFn: () => getLatestRecordingPlaybackRun(recordingId),
+    enabled: Boolean(recordingId) && recording.data?.state === "ready",
+  });
+  const finish = useMutation({
+    mutationFn: () => finishRecordingPlaybackRun(recordingId, playback!.id),
+    onSuccess: (completed) => {
+      setPlayback(completed);
+      void client.invalidateQueries({ queryKey: ["recording-latest-playback", recordingId] });
     },
   });
   const requests = useQuery({
@@ -132,12 +144,18 @@ export function RecordingPage(): JSX.Element {
     return () => source.close();
   }, [recordingId, client]);
 
+  useEffect(() => {
+    if (!latestPlayback.data) return;
+    setPlayback(latestPlayback.data.run);
+  }, [latestPlayback.data]);
+
   if (recording.isLoading) return <Shell><p className="mt-24 text-center text-sm text-harness-muted">Opening recording…</p></Shell>;
   if (recording.error) return <Shell><p className="mt-24 text-center text-rose-300">{recording.error.message}</p></Shell>;
   if (!recording.data) return <Shell />;
 
   const value = recording.data;
   const meta = STATE_META[value.state];
+  const fixedPlaybackUrl = new URL(`/streams/recordings/${value.id}/index.${value.protocol === "dash" ? "mpd" : "m3u8"}`, window.location.origin).toString();
 
   return (
     <Shell>
@@ -175,15 +193,17 @@ export function RecordingPage(): JSX.Element {
         {value.state === "ready" && (
           <ShapingPanel
             run={playback}
-            url={playbackUrl}
+            url={fixedPlaybackUrl}
             copied={copied}
             creating={run.isPending}
             protocol={value.protocol}
             error={run.error?.message}
             onStart={(mode) => run.mutate(mode)}
+            stopping={finish.isPending}
+            stopError={finish.error?.message}
+            onStop={() => finish.mutate()}
             onCopy={() => {
-              if (!playbackUrl) return;
-              void navigator.clipboard.writeText(playbackUrl).then(() => {
+              void navigator.clipboard.writeText(fixedPlaybackUrl).then(() => {
                 setCopied(true);
                 setTimeout(() => setCopied(false), 1600);
               });
@@ -213,6 +233,9 @@ function ShapingPanel(props: {
   protocol: "hls" | "dash";
   error?: string;
   onStart: (mode: PlaybackMode) => void;
+  stopping: boolean;
+  stopError?: string;
+  onStop: () => void;
   onCopy: () => void;
 }): JSX.Element {
   const profile = props.run?.profile;
@@ -227,36 +250,45 @@ function ShapingPanel(props: {
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-200/70">Playback mode</p>
             <h2 className="mt-1.5 text-xl font-semibold tracking-tight">{profile ? (is1080pControl ? "1080p control" : isNormal ? "Normal playback" : "Forced ABR") : "Choose how to start"}</h2>
             <p className="mt-2 max-w-xl text-sm leading-6 text-harness-muted">
-              {profile ? (is1080pControl ? "This DASH control exposes only the highest-bitrate 1920×1080 representation and the original audio. The fixed playback URL stays the same." : isNormal ? "The device receives a generous, stable local network profile with no intentional ABR pressure." : "The device sees a constrained interval followed by recovery, so its representation requests can reveal ABR behavior.") : "Use Normal for a control playback, Force ABR to introduce a constrained interval, or 1080p control to remove video adaptation entirely."}
+              {profile ? (is1080pControl ? "This DASH control exposes only the highest-bitrate 1920×1080 representation and the original audio." : isNormal ? "The device receives a generous, stable local network profile with no intentional ABR pressure." : "The device sees a constrained interval followed by recovery, so its representation requests can reveal ABR behavior.") : "Use Normal for a control playback, Force ABR to introduce a constrained interval, or 1080p control to remove video adaptation entirely."}
             </p>
           </div>
-          {!props.run && (
+          {(!props.run || isTerminal(props.run)) && (
             <div className="flex flex-wrap gap-2">
               <button className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-3 text-sm font-semibold text-white transition hover:border-white/30 disabled:opacity-45" disabled={props.creating} onClick={() => props.onStart("normal")}>{props.creating ? "Creating test…" : "Start normal"}</button>
               {props.protocol === "dash" && <button className="rounded-xl border border-emerald-300/30 bg-emerald-300/[0.08] px-4 py-3 text-sm font-semibold text-emerald-100 transition hover:border-emerald-300/60 disabled:opacity-45" disabled={props.creating} onClick={() => props.onStart("control-1080p")}>1080p control</button>}
               <button className="rounded-xl bg-gradient-to-r from-sky-200 to-violet-200 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:brightness-105 disabled:opacity-45" disabled={props.creating} onClick={() => props.onStart("force-abr")}>Force ABR</button>
             </div>
           )}
+          {props.run && !isTerminal(props.run) && (
+            <button className="rounded-xl border border-rose-300/35 bg-rose-300/[0.08] px-4 py-3 text-sm font-semibold text-rose-100 transition hover:border-rose-300/60 disabled:opacity-45" disabled={props.stopping} onClick={props.onStop}>
+              {props.stopping ? "Stopping…" : "Stop test run"}
+            </button>
+          )}
         </div>
 
         <ShapingStepper stages={stages} activeIndex={props.run ? undefined : 0} />
 
-        {props.url && (
-          <div className="mt-6 rounded-2xl border border-white/10 bg-black/25 p-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <p className="min-w-0 flex-1 break-all font-mono text-xs text-sky-100">{props.url}</p>
-              <button className="shrink-0 rounded-lg border border-white/15 bg-white/[0.06] px-3 py-1.5 text-xs text-white/80 transition hover:border-white/30 hover:text-white" onClick={props.onCopy}>
-                {props.copied ? "Copied" : "Copy playback URL"}
-              </button>
+          {props.url && (
+            <div className="mt-6 rounded-2xl border border-white/10 bg-black/25 p-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <p className="min-w-0 flex-1 break-all font-mono text-xs text-sky-100">{props.url}</p>
+                <button className="shrink-0 rounded-lg border border-white/15 bg-white/[0.06] px-3 py-1.5 text-xs text-white/80 transition hover:border-white/30 hover:text-white" onClick={props.onCopy}>
+                  {props.copied ? "Copied" : "Copy playback URL"}
+                </button>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-white/40">This URL is fixed for the recording and never changes. A test run applies its shaping while active; without a run the clone is served with the baseline profile.</p>
             </div>
-            <p className="mt-2 text-xs leading-5 text-white/40">Open this URL on the target device. The fixed endpoint now points to this run.</p>
-          </div>
-        )}
+          )}
+          {props.run && isTerminal(props.run) && <p className="mt-4 text-sm text-white/50">This test run is finished. The URL stays the same — start a new test to shape the next session.</p>}
         {props.error && <p className="mt-4 text-sm text-rose-300">{props.error}</p>}
+        {props.stopError && <p className="mt-4 text-sm text-rose-300">{props.stopError}</p>}
       </div>
     </section>
   );
 }
+
+function isTerminal(run: PlaybackRun): boolean { return run.state === "completed" || run.state === "expired" || run.state === "failed"; }
 
 function ShapingStepper({ stages, activeIndex }: { stages: readonly NetworkProfileStage[]; activeIndex?: number }): JSX.Element {
   return (

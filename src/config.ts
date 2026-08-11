@@ -17,8 +17,9 @@ const EnvironmentSchema = z.object({
     .optional()
     .transform((value) => value || undefined),
   VIDEO_HARNESS_MANIFEST_MAX_BYTES: z.coerce.number().int().min(1_024).max(10_485_760).default(1_048_576),
-  VIDEO_HARNESS_MEDIA_SAMPLE_MAX_BYTES: z.coerce.number().int().min(1_024).max(33_554_432).default(20_971_520),
-  VIDEO_HARNESS_MEDIA_SAMPLE_MAX_TOTAL_BYTES: z.coerce.number().int().min(1_024).max(67_108_864).default(20_971_520),
+  VIDEO_HARNESS_MEDIA_SAMPLE_MAX_BYTES: z.coerce.number().int().min(1_024).max(134_217_728).default(134_217_728),
+  VIDEO_HARNESS_MEDIA_SAMPLE_MAX_TOTAL_BYTES: z.coerce.number().int().min(1_024).max(1_073_741_824).default(536_870_912),
+  VIDEO_HARNESS_MEDIA_SAMPLE_MAX_SECONDS: z.coerce.number().int().min(1).max(600).default(60),
   VIDEO_HARNESS_MEDIA_SAMPLE_MODE: z.enum(["sample", "full"]).default("full"),
   VIDEO_HARNESS_RECORD_SEGMENT_MAX_BYTES: z.coerce.number().int().min(1_024).max(67_108_864).default(67_108_864),
   VIDEO_HARNESS_RECORD_MAX_TOTAL_BYTES: z.coerce.number().int().min(1_024).max(1_073_741_824).default(1_073_741_824),
@@ -48,6 +49,7 @@ export type VideoHarnessConfig = {
   manifestMaxBytes: number;
   mediaSampleMaxBytes: number;
   mediaSampleMaxTotalBytes: number;
+  mediaSampleMaxSeconds: number;
   mediaSampleMode: "sample" | "full";
   recordSegmentMaxBytes: number;
   recordMaxTotalBytes: number;
@@ -81,11 +83,12 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): VideoH
     manifestMaxBytes: parsed.VIDEO_HARNESS_MANIFEST_MAX_BYTES,
     mediaSampleMaxBytes: parsed.VIDEO_HARNESS_MEDIA_SAMPLE_MAX_BYTES,
     mediaSampleMaxTotalBytes: parsed.VIDEO_HARNESS_MEDIA_SAMPLE_MAX_TOTAL_BYTES,
+    mediaSampleMaxSeconds: parsed.VIDEO_HARNESS_MEDIA_SAMPLE_MAX_SECONDS,
     mediaSampleMode: parsed.VIDEO_HARNESS_MEDIA_SAMPLE_MODE,
     recordSegmentMaxBytes: parsed.VIDEO_HARNESS_RECORD_SEGMENT_MAX_BYTES,
     recordMaxTotalBytes: parsed.VIDEO_HARNESS_RECORD_MAX_TOTAL_BYTES,
-    recordMaxVariants: parsed.VIDEO_HARNESS_RECORD_MAX_VARIANTS,
-    ffprobeTimeoutMs: parsed.VIDEO_HARNESS_FFPROBE_TIMEOUT_MS,
+  recordMaxVariants: parsed.VIDEO_HARNESS_RECORD_MAX_VARIANTS,
+  ffprobeTimeoutMs: parsed.VIDEO_HARNESS_FFPROBE_TIMEOUT_MS,
     ...(parsed.VIDEO_HARNESS_LAB_SOCKET_PATH ? { labSocketPath: parsed.VIDEO_HARNESS_LAB_SOCKET_PATH } : {}),
     ...(parsed.VIDEO_HARNESS_LAB_TOKEN ? { labToken: parsed.VIDEO_HARNESS_LAB_TOKEN } : {}),
     labCommandTimeoutMs: parsed.VIDEO_HARNESS_LAB_COMMAND_TIMEOUT_MS,

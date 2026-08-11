@@ -116,9 +116,11 @@ export function HomePage(): JSX.Element {
               id="problem-description"
               value={problemDescription}
               onChange={(event) => setProblemDescription(event.target.value)}
+              maxLength={20_000}
               className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-white/10 bg-black/25 px-5 py-4 text-sm text-white outline-none backdrop-blur-xl placeholder:text-white/25 focus:border-white/30"
-              placeholder="My live freezes after 15 minutes on Samsung TVs."
+              placeholder="Example: quality oscillates on a stable connection, or video freezes during a quality change. Add player or device logs if available."
             />
+            <p className="mt-2 text-left text-xs leading-5 text-white/35">Only the stream URL is required. Device details and logs guide the diagnosis when supplied, but remain user-reported context rather than measured telemetry.</p>
             <button
               className="mt-5 h-14 w-full rounded-2xl bg-gradient-to-r from-sky-300 via-violet-300 to-fuchsia-300 text-base font-semibold text-[#0a0c12] shadow-lg shadow-violet-500/20 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
               disabled={!url.trim() || health.data?.ok !== true || start.isPending}

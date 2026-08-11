@@ -1,6 +1,6 @@
 # Project Status - Video Harness Space
 
-Ultima atualizacao: **2026-08-07**
+Ultima atualizacao: **2026-08-11**
 
 ## Resumo
 
@@ -8,9 +8,9 @@ Ultima atualizacao: **2026-08-07**
 - Estado: **em andamento**.
 - Repositorio: novo e independente.
 - Runtime: API, worker, UI e PostgreSQL executaveis.
-- Objetivo imediato: implementar o Slice 5 de Record: journal persistido de
-  requests e inferencia de transicoes ABR.
-- Investigate permanece funcional; sua proxima reorganizacao visual esta pausada.
+- Objetivo imediato: validar em MPD real/player externo a evidencia de switch ABR
+  agora produzida por Investigate e Record.
+- Investigate produz e apresenta um baseline de qualidade ABR para HLS e DASH.
 - DASH VOD esta em implementacao sobre o data plane ja comprovado.
 
 ## Fases
@@ -93,6 +93,24 @@ Ultima atualizacao: **2026-08-07**
 - Record R2 inicial: materializador DASH VOD estatico/fMP4, MPD local, init e
   segmentos registrados, URL `index.mpd` por playback run e seletor de protocolo
   no intake.
+- URLs de playback fixas por recording em `/streams/recordings/:recordingId/*`;
+  o run ativo e resolvido por request e o clone nunca fica inacessivel por
+  lifecycle de run.
+- Playback run aberto restaurado após refresh e encerramento explícito que
+  finaliza o run (shaping e journal terminam; a URL permanece servindo baseline).
+- ABR switching como entidade de primeira classe: candidatos URL-only e
+  transicoes observadas carregam proveniencia distinta no mesmo
+  `AbrSwitchEvidence`.
+- MPD efetivo, ISO BMFF INIT/moof, hvcC/VPS/SPS/PPS, HEVC IRAP/SAP, timeline
+  normalizada, semantic INIT diff, matrix e regras ABR com IDs estaveis.
+- `AbrAssessment` protocol-neutral com ladder, cobertura, verdict, findings,
+  transicoes e proximas medicoes em toda investigation HLS/DASH.
+- Especialista `abr-switch-investigator` sempre ativo, com pacote compacto e sem
+  exigir plataforma/player especificos; contexto colado na descricao permanece
+  explicitamente relatado.
+- Testes FFmpeg source standalone, target standalone, target boundary e switching
+  compatibility (quando autorizado) entram automaticamente no candidato
+  prioritario; falha da ferramenta vira limitacao, nao falha da investigation.
 
 ## Checklist da Fase 1
 
@@ -130,14 +148,431 @@ Ultima atualizacao: **2026-08-07**
 - [x] Importar/adaptar clone HLS VOD multi-variant do VHS.
 - [x] Implementar data plane por token e recursos registrados.
 - [x] Implementar shaping compartilhado com backpressure.
-- [ ] Persistir journal e derivar transicoes ABR.
+- [x] Persistir journal e derivar transicoes ABR.
 - [ ] Entregar UX Record e smoke em device/player externo (UX inicial entregue;
-  smoke e journal ABR ainda pendentes).
+  smoke externo ainda pendente).
 
 ## Proximo passo recomendado
 
-Fazer smoke de MPD DASH em player externo e concluir inferencia de transicoes
-ABR, compartilhada por HLS e DASH.
+Fazer smoke de MPD DASH em player externo e comparar os candidatos da URL com as
+transicoes observadas no journal, sem exigir logs de uma plataforma especifica.
+
+### 2026-08-11 - URL de playback fixa por recording
+
+Fases impactadas: Record R1/R2, API, UX Record e deploy.
+
+Entrega:
+
+- O data plane passa a servir `/streams/recordings/:recordingId/*`, uma URL fixa
+  por recording. Iniciar ou encerrar um playback run nunca muda a URL que o
+  device ja tem.
+- Cada request resolve o run aberto atual (`findLatestOpen`) para aplicar o
+  perfil de rede e atribuir o journal; sem run ativo o clone e servido com o
+  perfil baseline e sem journal.
+- `SignedPlaybackUrl`, `VIDEO_HARNESS_PLAYBACK_SIGNING_SECRET`, o stop marker no
+  filesystem e `isPlaybackRunStopped` foram removidos; `POST .../finish` apenas
+  finaliza o run no banco e o botao de parada virou `Stop test run`.
+- A UI deriva a URL fixa do recording e a exibe sempre que o recording esta
+  pronto; o texto deixa explicito que a URL nao muda e que shaping vale somente
+  durante um run ativo.
+- A migration `010_remove_playback_token_hash.sql` permanece (o hash legado ja
+  nao existe e nao voltara a ser consultado).
+
+Arquivos-chave:
+
+- `src/api/routes/streams.ts`;
+- `src/api/routes/recordings.ts`;
+- `src/record/application/playback-runs.ts`;
+- `src/record/adapters/filesystem-recording-store.ts`;
+- `ui/src/pages/RecordPage.tsx`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 32 arquivos, 147 testes;
+- [x] `npm --prefix ui run check`;
+- [x] testes de rota: URL fixa serve com run ativo e sem run; 404 para path
+  desconhecido e traversal; 400 para recordingId invalido.
+
+Pendencia:
+
+- Smoke real em device externo: manter a mesma URL aberta no player enquanto se
+  inicia/para runs no dashboard e confirmar que a URL nao muda e que o shaping
+  segue o run ativo.
+
+### 2026-08-09 - Reconfiguracao esperada deixa de ser falso risco ABR
+
+Fases impactadas: 2, 3, Record R2 e semantica do report.
+
+Entrega:
+
+- corrigido `ABR_INIT_001`, que tratava mais de uma mudanca em parameter sets
+  como risco `HIGH`; largura, altura e HEVC level esperados em 4K↔1080p eram
+  suficientes para o falso positivo;
+- agora somente diferencas explicitamente `RISKY_DECODER_RECONFIGURATION`
+  acionam a regra;
+- prompts do ABR Quality Investigator e Lead proíbem usar mudanca esperada de
+  resolucao/level/INIT/SPS como causa ou recomendar ladder de resolucao fixa sem
+  contrato incompatível, decode falhando, capability mismatch ou falha observada;
+- regressao cobre multiplas mudancas SPS esperadas sem finding e sem risco.
+
+Arquivos-chave:
+
+- `src/abr/application/rules.ts`;
+- `src/abr/application/rules.test.ts`;
+- `src/agents/domain/prompts.ts`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 33 arquivos, 150 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - sucesso, com aviso conhecido de chunk acima
+  de 500 kB;
+- [x] `git diff --check`;
+- [x] `docker compose up -d --build worker` - API healthy e worker reiniciado com
+  a regra/prompt novos.
+
+Pendencia:
+
+- repetir a URL em uma nova investigation; o report anterior preserva a regra e
+  a sintese historicas.
+
+### 2026-08-09 - Fan-out limitado corrige falhas simultaneas do provider
+
+Fase impactada: 3 e runtime da equipe de IA.
+
+Entrega:
+
+- diagnostico do smoke `5a525992-5508-4219-b1e2-d1a16d6912f8`: quatro
+  especialistas iniciavam juntos; Mara e o ABR Quality Investigator falharam em
+  paralelo nas duas tentativas, enquanto Pip, Coda e depois o Lead concluiram;
+- fan-out dos especialistas limitado a duas chamadas simultaneas, preservando
+  paralelismo sem exceder a capacidade observada do provider;
+- retry agora espera um segundo antes da segunda tentativa;
+- erro do SDK passa por classificacao/redacao segura para rate limit, 5xx,
+  contexto, autenticacao ou transporte, sem persistir resposta bruta;
+- regressao mede a concorrencia maxima e mantem os cinco lifecycle runs reais.
+
+Arquivos-chave:
+
+- `src/agents/application/run-agent-team.ts`;
+- `src/agents/adapters/pi-model-runner.ts`;
+- `src/agents/domain/errors.ts`;
+- `src/investigation/adapters/pi-investigation-ai.test.ts`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 33 arquivos, 149 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - sucesso, com aviso conhecido de chunk acima
+  de 500 kB;
+- [x] `git diff --check`;
+- [x] `docker compose up -d --build worker` - imagem reconstruida, API healthy e
+  worker reiniciado com a configuracao de IA esperada.
+
+Pendencia:
+
+- repetir o smoke em uma nova investigation; investigations concluidas nao sao
+  reexecutadas automaticamente.
+
+### 2026-08-08 - AbrAssessment protocol-neutral e especialista sempre ativo
+
+Fases impactadas: 2, 3, Record R2, API e UX Investigate.
+
+Entrega:
+
+- `AbrAssessment` virou a raiz do diagnostico ABR para HLS e DASH, com ladder
+  canonica, cobertura, verdict, findings determinísticos, transicoes/matrix e
+  medicoes recomendadas;
+- regras gerais detectam ladder ausente, bandwidth faltante, progressao
+  inconsistente, gaps, duplicacoes e mistura de familias de codec;
+- o problema relatado prioriza direcao, resolucoes e horario sem limitar o
+  baseline nem transformar texto em telemetria;
+- a selecao DASH deixa de fixar 4K/Full HD e distribui a amostra pela ladder ou
+  segue uma transicao explicitamente relatada;
+- o ABR Quality Investigator roda em toda investigation, recebe ferramentas de
+  inspecao preservada e distingue candidato estatico, selecao por request e
+  decode/render nao medidos;
+- a UI apresenta `ABR quality` em qualquer protocolo e mantem fallback para
+  reports historicos;
+- parsing de contexto relatado saiu de `stream-tools` e passou para application
+  de Investigation; schemas backend/UI aceitam o formato atual e o legado.
+
+Arquivos-chave:
+
+- `src/abr/domain/assessment.ts`;
+- `src/abr/application/assess-stream-abr.ts`;
+- `src/agents/application/abr-quality-investigator-agent.ts`;
+- `src/investigation/application/build-manifest-evidence.ts`;
+- `src/investigation/application/parse-reported-context.ts`;
+- `src/contracts/abr.ts` e `src/contracts/investigation.ts`;
+- `ui/src/components/InvestigationReport.tsx` e `ui/src/lib/api.ts`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 32 arquivos, 146 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - sucesso, com aviso conhecido de chunk acima
+  de 500 kB;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- HLS avalia a ladder declarada inteira, mas ainda amostra media de uma variant;
+  seguranca cross-variant permanece declarada como nao medida;
+- o endpoint de Record continua expondo transicoes request-level; consolidar o
+  comportamento observado de um run em `AbrAssessment` e follow-up;
+- smoke com manifests reais e player/device externo.
+
+Proximo passo recomendado:
+
+- adicionar coleta alinhada de duas variants HLS para promover seguranca de
+  transicao HLS de limitacao declarada para evidencia deterministica.
+
+### 2026-08-08 - Coleta de media por tempo, bytes como seguranca
+
+Fases impactadas: 2 e 3.
+
+Entrega:
+
+- O modo `full` passa a selecionar uma janela contigua de ate
+  `VIDEO_HARNESS_MEDIA_SAMPLE_MAX_SECONDS` (default 60s) por variant/representacao,
+  centrada no horario de incidente relatado quando existir; sem horario, a janela
+  parte do inicio da playlist. Antes, `full` baixava todos os segmentos ate o
+  budget agregado, o que com 20 MiB cobria apenas ~1s de 4K ou ~9min de bitrate
+  baixo.
+- A selecao usa o tempo declarado no manifest: duracao cumulativa dos segmentos
+  HLS (com fallback para `targetDuration`) e `presentationStart/EndSeconds` no
+  DASH. Janela balanceada em torno do incidente via `contiguousWindow`.
+- Limites de bytes sao agora redes de seguranca: `MAX_TOTAL_BYTES` default 20 MiB
+  para 512 MiB e `MAX_BYTES` (por fetch) de 20 MiB para 128 MiB, evitando que um
+  segmento gigante ou abuso de download derrube o worker.
+- Novas envs e defaults em `src/config.ts`, `compose.yml`, `compose.prod.yml` e
+  `.env.example`; worker repassa `maxSeconds` ao coletor.
+- Limitation nova quando o horario relatado nao mapeia para a timeline HLS (sem
+  duracoes declaradas); DASH alinha a janela ao budget de tempo mantendo a
+  revalidacao de hashes do segmento incidente.
+
+Arquivos-chave:
+
+- `src/investigation/adapters/http-media-sample-collector.ts`
+- `src/config.ts`
+- `src/worker/index.ts`
+- `src/investigation/adapters/http-media-sample-collector.test.ts`
+- `src/config.test.ts`
+- `compose.yml`, `compose.prod.yml`, `.env.example`
+- `docs/architecture/README.md`, `docs/architecture/phases/phase-2.md`
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 140 testes;
+- [ ] `npm run build` e validacao via UI/Compose - pendentes nesta tarefa.
+
+Pendencias:
+
+- Samples continuam segurados inteiros em memoria durante a coleta; streaming para
+  disco fica como follow-up quando os budgets subirem mais.
+- Smoke com um HLS VOD longo para confirmar a janela de 60s na UI.
+
+Proximo passo recomendado:
+
+- Rodar o build final e um smoke manual com VOD longo.
+
+### 2026-08-08 - ABR switch first-class com entrada URL-only
+
+Fases impactadas: 2, 3, Record R2, API e UX Investigate.
+
+Entrega:
+
+- `AbrSwitchEvidence` diferencia candidato estatico de transicao observada;
+- parsers/diffs/timeline/rules deterministas cobrem MPD, INIT, HEVC e fragment;
+- Investigate gera matriz e candidatos com apenas a URL e usa a descricao
+  opcional como contexto relatado;
+- o agente ABR roda condicionalmente sobre o candidato mais relevante, sem dump
+  indiscriminado de packets/frames;
+- Record expoe a correlacao request-level em `GET .../abr-switches`;
+- fixtures A--K cobrem switch geral/bitstream valido, violações, gaps, skew,
+  decoder reconfiguration risk e o gate estrito de `PLATFORM_SUSPECTED`.
+
+Arquivos-chave:
+
+- `src/abr/`;
+- `src/stream-tools/dash-mpd.ts` e `src/stream-tools/isobmff.ts`;
+- `src/investigation/application/build-manifest-evidence.ts`;
+- `src/agents/application/abr-switch-investigator-agent.ts`;
+- `src/record/application/build-abr-switch-evidence.ts`;
+- `ui/src/components/InvestigationReport.tsx`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 136 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - sucesso, com aviso conhecido de chunk acima
+  de 500 kB;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- smoke com MPD real e player externo;
+- integrar o adapter opcional DASH-IF a uma instalacao real do validator;
+- evidencia especifica de Samsung continua opcional; sem reproducao/device o
+  resultado nao pode ser `PLATFORM_SUSPECTED`.
+
+### 2026-08-08 - Auditoria de prompts e evidencia da equipe de IA
+
+Fases impactadas: 3, API e UX Investigate.
+
+Entrega:
+
+- Cada chamada efetiva ao modelo (inclusive retry) preserva o system prompt, o
+  pacote final de analise/evidencia, provider, modelo, ferramentas disponiveis
+  e estado publico; raciocinio interno nao e armazenado.
+- `GET /v1/investigations/:id/ai-runs` expoe a auditoria somente no workspace.
+- O report abre o prompt e a evidencia por especialista, com progressive
+  disclosure e tentativas separadas.
+
+Arquivos-chave:
+
+- `src/agents/application/run-agent-team.ts`;
+- `src/agents/domain/types.ts`;
+- `src/api/routes/investigations.ts`;
+- `ui/src/components/InvestigationReport.tsx`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm test` - 106 testes;
+- [x] `npm --prefix ui run build` - aviso conhecido de bundle acima de 500 kB;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- Nenhuma pendencia especifica desta entrega.
+
+### 2026-08-08 - Dominio agents extraido do adapter Pi
+
+Fases impactadas: 3.
+
+Entrega:
+
+- O core de agentes de IA saiu de `pi-investigation-ai.ts` para o dominio
+  `src/agents/`: roster fixo (3 especialistas + Lead), prompts, parsing
+  tolerante, classificacao de erros e orquestracao `runAgentTeam`.
+- Novo port `AgentModelRunner` separa a equipe do provider LLM; o adapter Pi
+  concentra `@earendil-works/pi-agent-core` e `@earendil-works/pi-ai`.
+- `pi-investigation-ai.ts` ficou adeligado: continua implementando
+  `InvestigationAI`, mas agora monta packet/tools/medicoes de sintoma e delega a
+  execucao da equipe ao dominio.
+- `InvestigationAI` reexporta os tipos compartilhados do dominio
+  (`AiFinding`, `AiAgentRun`, `AiAgentProgress`, `AiInvestigationResult`); os
+  demais modulos de investigation nao mudaram de import.
+
+Arquivos-chave:
+
+- `src/agents/domain/{types,profiles,prompts,parsing,errors}.ts`;
+- `src/agents/ports/agent-model-runner.ts`;
+- `src/agents/application/run-agent-team.ts`;
+- `src/agents/adapters/pi-model-runner.ts`;
+- `src/investigation/adapters/pi-investigation-ai.ts`;
+- `src/investigation/ports/investigation-ai.ts`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 105 testes;
+- [x] `npm run build`;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- Nenhuma.
+
+Proximo passo recomendado:
+
+- Revisar se `unavailableResult` e o retry de 2 tentativas devem ganhar testes
+  proprios no novo dominio.
+
+### 2026-08-08 - Restauracao e parada de playback run
+
+Fases impactadas: Record R1/R2, API e UX Record.
+
+Entrega:
+
+- `GET /v1/recordings/:id/playback-runs/latest` restaura o último run
+  `created`/`active` e sua URL assinada após refresh.
+- `POST .../finish` encerra o run e grava marcador persistente no storage;
+  requests posteriores recebem `410 PLAYBACK_RUN_FINISHED` sem lookup no banco.
+- A UI mostra `Stop streaming` durante o run e oferece novo teste somente depois
+  de encerrá-lo.
+
+Arquivos-chave:
+
+- `src/api/routes/recordings.ts`;
+- `src/record/adapters/postgres-playback-run.ts`;
+- `src/record/adapters/filesystem-recording-store.ts`;
+- `ui/src/pages/RecordPage.tsx`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 105 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - aviso conhecido de bundle acima de 500 kB;
+- [x] `git diff --check`;
+- [x] API local reconstruida; `GET .../playback-runs/latest` confirmou um run
+  aberto e sua URL assinada.
+
+Pendencias:
+
+- Smoke manual: abrir a tela em outro navegador, atualizar e usar `Stop
+  streaming` enquanto o device ainda solicita segmentos.
+
+### 2026-08-07 - URLs de playback assinadas e sem lookup no data plane
+
+Fases impactadas: Record R1/R2, API, UX Record e deploy.
+
+Entrega:
+
+- Cada playback run devolve uma URL propria em `/streams/:signedPlaybackToken/*`;
+  o payload HMAC-SHA256 inclui run, recording, profile e expiracao de 24 horas.
+- A migration `010_remove_playback_token_hash.sql` removeu o hash opaco legado:
+  o token assinado tambem nao e salvo no banco.
+- O data plane valida assinatura e expiracao em memoria e le apenas o arquivo
+  publicado dentro do recording assinado, sem resolver run ou recurso no banco.
+- O journal continua best-effort e assincrono, portanto nao atrasa a entrega.
+- O alias global `/streams/fixed/*` foi removido; a UI copia a URL unica e deixa
+  a validade de 24 horas explicita.
+- A chave obrigatoria `VIDEO_HARNESS_PLAYBACK_SIGNING_SECRET` tem minimo de 32
+  caracteres e esta documentada para Compose e deploy.
+- API e worker recebem a mesma chave no Compose; sem ela o worker nao inicializa
+  e recordings permanecem em `queued`.
+
+Arquivos-chave:
+
+- `src/record/application/signed-playback-url.ts`;
+- `src/api/routes/streams.ts`;
+- `src/record/adapters/filesystem-recording-store.ts`;
+- `compose.yml`, `compose.prod.yml` e `.env.example`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] testes direcionados de API, config e assinatura HMAC - 19 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - aviso conhecido de bundle acima de 500 kB;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- Definir `VIDEO_HARNESS_PLAYBACK_SIGNING_SECRET` com valor aleatorio estavel
+  antes de subir Compose; trocar a chave invalida URLs ainda abertas.
 
 ### 2026-08-06 - Record DASH VOD estatico
 
@@ -302,6 +737,53 @@ Validacoes:
 - [x] `git diff --check`.
 
 ## Registro de atualizacoes
+
+### 2026-08-08 - Progresso real de coleta na linha Investigate
+
+Fases impactadas: 2, 4, API e UX Investigate.
+
+Entrega:
+
+- O worker passou a transicionar explicitamente para `collecting` logo apos
+  `validating` e a publicar uma observacao `stage: "collection"` por etapa real de
+  coleta, em vez de permanecer mudo no estado `validating`.
+- Etapas: `root_manifest`, `variant_manifest`, `rendition_manifest`,
+  `media_sample` (um evento por segmento/init, com `completed`/`total` contados do
+  manifest) e `media_probe` (um por amostra antes do FFprobe).
+- Ports `ManifestCollector` e `MediaSampleCollector` aceitam `onProgress`
+  opcional; falha do callback nao derruba a coleta.
+- A UI mostra um card vivo durante `collecting` com o passo atual, contador/barra
+  reais e chips das etapas concluidas; eventos de coleta ficam persistidos
+  (auditaveis via API) mas nao viram posts individuais na timeline.
+
+Arquivos-chave:
+
+- `src/investigation/ports/manifest-collector.ts`;
+- `src/investigation/ports/media-sample-collector.ts`;
+- `src/investigation/adapters/http-manifest-collector.ts`;
+- `src/investigation/adapters/http-media-sample-collector.ts`;
+- `src/investigation/application/run-investigation.ts`;
+- `ui/src/components/InvestigationFeed.tsx`;
+- `docs/api.md`;
+- `docs/ui/UI-GUIDE.md`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 109 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - aviso conhecido de bundle acima de 500 kB;
+- [ ] `git diff --check`.
+
+Pendencias:
+
+- Smoke manual com uma origin HLS real para confirmar a sequencia de eventos
+  `collection` e o card vivo na tela do caso.
+
+Proximo passo recomendado:
+
+- Validar o smoke e avaliar se a granularidade por segmento deve ser limitada em
+  streams muito longas.
 
 ### 2026-08-07 - Workflow de push para GHCR
 

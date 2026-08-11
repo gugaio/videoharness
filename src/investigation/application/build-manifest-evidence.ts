@@ -7,7 +7,10 @@ import type {
 } from "../ports/manifest-collector.js";
 import type { MediaSample } from "../ports/media-sample-collector.js";
 import type { AiInvestigationResult } from "../ports/investigation-ai.js";
-import { analyzeDashForensics } from "./analyze-dash-forensics.js";
+import { analyzeDashSwitchCandidates } from "../../abr/application/analyze-dash-switch-candidates.js";
+import { buildAbrSwitchMatrix, reconfigurationSensitivitySummary } from "../../abr/application/switch-matrix.js";
+import { buildAbrAssessment } from "../../abr/application/assess-stream-abr.js";
+import type { AbrReportedPriority, AbrRepresentation } from "../../abr/domain/assessment.js";
 
 export function buildManifestEvidence(collection: ManifestCollection): EvidenceBundleV2 {
   const root = collection.manifests.find((manifest) => manifest.role === "root");
@@ -15,6 +18,9 @@ export function buildManifestEvidence(collection: ManifestCollection): EvidenceB
   requireArtifact(root);
   const rootHls = root.inspection.hls;
   const rootDash = root.inspection.dash;
+  const dashSwitches = rootDash ? analyzeDashSwitchCandidates(rootDash, collection.mediaSamples ?? [], collection.reportedContext) : [];
+  const switchMatrix = rootDash ? buildAbrSwitchMatrix(rootDash.representations.filter((entry) => entry.contentType === "video").map((entry) => ({ evidenceId: `representation:${entry.id}`, id: entry.id, periodIndex: entry.periodIndex, adaptationSetIndex: entry.adaptationSetIndex, ...(entry.bandwidth === undefined ? {} : { bandwidth: entry.bandwidth }), ...(entry.codecs ? { codecs: entry.codecs } : {}), ...(entry.width === undefined ? {} : { width: entry.width }), ...(entry.height === undefined ? {} : { height: entry.height }), ...(entry.frameRate ? { frameRate: entry.frameRate } : {}), timescale: entry.timescale, presentationTimeOffset: String(entry.presentationTimeOffset) })), dashSwitches) : [];
+  const reconfigurationSensitivity = reconfigurationSensitivitySummary(switchMatrix);
   const variant = collection.manifests.find((manifest) => manifest.role === "variant");
   const audio = collection.manifests.find((manifest) =>
     manifest.logicalKey === "manifest/rendition/audio/0");
@@ -45,6 +51,18 @@ export function buildManifestEvidence(collection: ManifestCollection): EvidenceB
       message: `Sampled audio starts ${formatOffset(avOffset)} relative to sampled video.`,
     });
   }
+  const abr = buildAbrAssessment({
+    protocol: root.inspection.protocol,
+    representations: rootDash ? dashAbrRepresentations(rootDash.representations) : hlsAbrRepresentations(rootHls?.variants ?? []),
+    audioRenditionCount: rootDash ? rootDash.representations.filter((entry) => entry.contentType === "audio").length : rootHls?.renditions.filter((entry) => entry.type.toUpperCase() === "AUDIO").length ?? 0,
+    mediaSampleCount: collection.mediaSamples?.length ?? 0,
+    transitions: dashSwitches,
+    transitionMatrix: switchMatrix,
+    reportedPriority: abrReportedPriority(collection.reportedContext),
+    coverageLimitations: root.inspection.protocol === "hls" && (rootHls?.variants.length ?? 0) > 1
+      ? ["HLS media was sampled from one representative variant; cross-variant boundary safety was not measured."]
+      : [],
+  });
 
   return {
     schemaVersion: 2,
@@ -58,9 +76,12 @@ export function buildManifestEvidence(collection: ManifestCollection): EvidenceB
     },
     manifests: collection.manifests.map(toManifestEvidence),
     mediaSamples: (collection.mediaSamples ?? []).map(toMediaSampleEvidence),
+    abr,
     ...(collection.reportedContext ? { reportedContext: collection.reportedContext } : {}),
     ...(rootDash ? { dash: {
       type: rootDash.type,
+      periods: rootDash.periods,
+      adaptationSets: rootDash.adaptationSets,
       representations: rootDash.representations.map((representation) => ({
         id: representation.id,
         periodIndex: representation.periodIndex,
@@ -71,13 +92,25 @@ export function buildManifestEvidence(collection: ManifestCollection): EvidenceB
         ...(representation.width === undefined ? {} : { width: representation.width }),
         ...(representation.height === undefined ? {} : { height: representation.height }),
         ...(representation.frameRate ? { frameRate: representation.frameRate } : {}),
+        ...(representation.sar ? { sar: representation.sar } : {}),
+        baseUrl: representation.baseUrl,
         timescale: representation.timescale,
+        presentationTimeOffset: String(representation.presentationTimeOffset),
+        ...(representation.initializationUrl ? { initializationUrl: representation.initializationUrl } : {}),
+        ...(representation.mediaTemplate ? { mediaTemplate: representation.mediaTemplate } : {}),
+        segmentAddressing: representation.segmentAddressing,
         ...(representation.segmentAlignment === undefined ? {} : { segmentAlignment: representation.segmentAlignment }),
+        ...(representation.subsegmentAlignment === undefined ? {} : { subsegmentAlignment: representation.subsegmentAlignment }),
+        ...(representation.startWithSap === undefined ? {} : { startWithSap: representation.startWithSap }),
+        ...(representation.subsegmentStartsWithSap === undefined ? {} : { subsegmentStartsWithSap: representation.subsegmentStartsWithSap }),
         ...(representation.bitstreamSwitching === undefined ? {} : { bitstreamSwitching: representation.bitstreamSwitching }),
+        contentProtection: representation.contentProtection,
         segmentCount: representation.segments.length,
       })),
       limitations: rootDash.limitations,
-      analysis: analyzeDashForensics(rootDash, collection.mediaSamples ?? [], collection.reportedContext),
+      switches: dashSwitches,
+      switchMatrix,
+      ...(reconfigurationSensitivity ? { reconfigurationSensitivity } : {}),
     } } : {}),
     ...(rootHls ? {
       hls: {
@@ -126,10 +159,6 @@ export function buildManifestReport(
   const selectedVariant = evidence.hls?.selection
     ? evidence.hls.variants.find((variant) => variant.index === evidence.hls?.selection?.variantIndex)
     : undefined;
-  const dashAnalysis = evidence.dash?.analysis;
-  const candidateBoundary = dashAnalysis?.boundaries.find((boundary) =>
-    boundary.sourceRepresentationId === dashAnalysis.candidate?.sourceRepresentationId
-      && boundary.destinationRepresentationId === dashAnalysis.candidate?.destinationRepresentationId);
   return {
     placeholder: false,
     title: evidence.dash ? "DASH representation-boundary evidence collected" : `${evidence.source.protocol.toUpperCase()} media evidence collected`,
@@ -157,11 +186,11 @@ export function buildManifestReport(
         status: "observed" as const,
         explanation: `${evidence.dash.representations.filter((representation) => representation.contentType === "video").length} video and ${evidence.dash.representations.filter((representation) => representation.contentType === "audio").length} audio representations were expanded from the MPD.`,
       }] : []),
-      ...(candidateBoundary ? [{
-        title: "Candidate representation boundary",
-        status: candidateBoundary.classification === "continuous" ? "observed" as const : "limitation" as const,
-        explanation: `${candidateBoundary.sourceRepresentationId} → ${candidateBoundary.destinationRepresentationId}: ${candidateBoundary.classification}${candidateBoundary.firstFrameKind ? `; first destination frame ${candidateBoundary.firstFrameKind}` : ""}${candidateBoundary.initCompatible === false ? "; init configuration differs" : ""}.${candidateBoundary.reasons.length ? ` ${candidateBoundary.reasons.join(" ")}` : ""}`,
-      }] : []),
+      {
+        title: "ABR quality baseline",
+        status: evidence.abr?.verdict === "ISSUES_FOUND" || evidence.abr?.verdict === "INCONCLUSIVE" ? "limitation" as const : "observed" as const,
+        explanation: evidence.abr ? describeAbrAssessment(evidence.abr) : "ABR assessment is unavailable for this historical report.",
+      },
       ...(evidence.mediaSamples.filter((sample) => sample.probe).map((sample) => ({
         title: `Media sample ${sample.logicalKey}`,
         status: "observed" as const,
@@ -192,6 +221,49 @@ export function buildManifestReport(
     generatedBy: "deterministic-media-v1",
   };
 }
+
+function hlsAbrRepresentations(variants: NonNullable<Manifest["inspection"]["hls"]>["variants"]): AbrRepresentation[] {
+  return variants.map((variant) => {
+    const resolution = parseResolution(variant.resolution);
+    return {
+      evidenceId: `hls-variant:${variant.index}`,
+      id: `variant-${variant.index}`,
+      groupId: "hls:video",
+      ...(variant.bandwidth === undefined ? {} : { bandwidth: variant.bandwidth }),
+      ...(variant.averageBandwidth === undefined ? {} : { averageBandwidth: variant.averageBandwidth }),
+      ...(resolution ? { width: resolution.width, height: resolution.height } : {}),
+      ...(variant.frameRate === undefined ? {} : { frameRate: variant.frameRate }),
+      ...(variant.codecs ? { codecs: variant.codecs } : {}),
+      ...(variant.audioGroupId ? { audioGroupId: variant.audioGroupId } : {}),
+    };
+  });
+}
+
+function dashAbrRepresentations(representations: NonNullable<Manifest["inspection"]["dash"]>["representations"]): AbrRepresentation[] {
+  return representations.filter((entry) => entry.contentType === "video").map((entry) => ({
+    evidenceId: `representation:${entry.id}`,
+    id: entry.id,
+    groupId: `dash:p${entry.periodIndex}:a${entry.adaptationSetIndex}`,
+    ...(entry.bandwidth === undefined ? {} : { bandwidth: entry.bandwidth }),
+    ...(entry.width === undefined ? {} : { width: entry.width }),
+    ...(entry.height === undefined ? {} : { height: entry.height }),
+    ...(entry.frameRate && Number.isFinite(Number(entry.frameRate)) ? { frameRate: Number(entry.frameRate) } : {}),
+    ...(entry.codecs ? { codecs: entry.codecs } : {}),
+    segmentCount: entry.segments.length,
+  }));
+}
+
+function abrReportedPriority(context: ManifestCollection["reportedContext"]): AbrReportedPriority {
+  return {
+    abrProblemReported: context?.reportsAbrSwitch ?? false,
+    ...(context?.reportedAbrDirection ? { direction: context.reportedAbrDirection } : {}),
+    ...(context?.reportedResolutionTransition ? { sourceHeight: context.reportedResolutionTransition.sourceHeight, targetHeight: context.reportedResolutionTransition.targetHeight } : {}),
+    ...(context?.approximateTimeSeconds === undefined ? {} : { approximateTimeSeconds: context.approximateTimeSeconds }),
+  };
+}
+
+function parseResolution(value: string | undefined): { width: number; height: number } | undefined { const match = /^(\d+)x(\d+)$/i.exec(value ?? ""); if (!match) return undefined; return { width: Number(match[1]), height: Number(match[2]) }; }
+function describeAbrAssessment(assessment: NonNullable<EvidenceBundleV2["abr"]>): string { const verdict = assessment.verdict === "NO_ISSUE_DETECTED" ? "No ABR issue was detected" : assessment.verdict === "ISSUES_FOUND" ? "ABR risks were found" : assessment.verdict === "NOT_APPLICABLE" ? "Video ABR is not applicable to the observed topology" : "The ABR assessment is inconclusive"; return `${verdict}. ${assessment.ladder.videoRepresentationCount} video quality${assessment.ladder.videoRepresentationCount === 1 ? "" : "ies"}, ${assessment.findings.length} deterministic finding${assessment.findings.length === 1 ? "" : "s"}, coverage ${assessment.coverage.level.toLowerCase().replaceAll("_", " ")}.`; }
 
 function toMediaSampleEvidence(sample: MediaSample): EvidenceBundleV2["mediaSamples"][number] {
   if (!sample.artifact) throw new Error(`Media sample ${sample.logicalKey} has not been stored as an artifact`);

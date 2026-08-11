@@ -48,9 +48,10 @@ URL HLS VOD
 2. Clone HLS VOD completo e protegido. **Implementado para master clear/MPEG-TS
    com 2--8 variants e renditions de audio vinculadas; os recursos e playlists
    locais sao registrados antes de marcar o recording como pronto.**
-3. Data plane com URL opaca e recursos registrados. **Implementado para GET sem
-   shaping: o token fica somente como hash no banco e a rota resolve apenas um
-   `RecordedResource` publicado.**
+3. Data plane com URL fixa e recursos publicados. **Implementado para GET:
+   `/streams/recordings/:recordingId/*` e estavel por recording; cada request
+   resolve o run aberto atual e a rota le somente arquivos publicados daquele
+   recording.**
 4. Network shaping reproduzivel. **Implementado: profile v1 validado e
    persistido, latencia por resposta e token bucket compartilhado por run. O
    contador de requests ainda e efemero ate o journal do Slice 5.**

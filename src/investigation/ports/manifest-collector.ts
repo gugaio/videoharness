@@ -1,7 +1,7 @@
 import type { HlsManifestSelection } from "../../stream-tools/hls-manifest.js";
 import type { ManifestInspection } from "../../stream-tools/manifest.js";
 import type { MediaSample } from "./media-sample-collector.js";
-import type { ReportedContext } from "../../stream-tools/reported-context.js";
+import type { ReportedContext } from "../application/parse-reported-context.js";
 
 export type Manifest = {
   logicalKey: string;
@@ -32,6 +32,14 @@ export type ManifestCollection = {
   reportedContext?: ReportedContext;
 };
 
+/** Deterministic, counted progress for a collection step. Totals come from the parsed manifest, never from estimates. */
+export type CollectionProgress = {
+  stage: "root_manifest" | "variant_manifest" | "rendition_manifest" | "media_sample" | "media_probe";
+  message: string;
+  completed?: number;
+  total?: number;
+};
+
 export interface ManifestCollector {
-  collect(sourceUrl: string): Promise<ManifestCollection>;
+  collect(sourceUrl: string, onProgress?: (progress: CollectionProgress) => Promise<void>): Promise<ManifestCollection>;
 }

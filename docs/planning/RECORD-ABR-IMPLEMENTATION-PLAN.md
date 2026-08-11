@@ -119,14 +119,16 @@ Ele serve somente recursos previamente registrados.
 Representa um experimento sobre um recording pronto.
 
 - `id` e `recordingId`;
-- token opaco de playback, armazenado somente como hash;
+- URL de playback fixa por recording em `/streams/recordings/:recordingId/*`;
+  cada request resolve o run aberto atual para shaping e journal;
 - profile de rede versionado;
 - `state`: `created | active | completed | expired | failed`;
 - inicio ancorado no primeiro request de media;
 - expiracao e limite de duracao;
 - resumo das trocas observadas.
 
-Cada run possui uma URL unica para evitar cache compartilhado e separar devices.
+A URL nao muda entre runs; sem run ativo o clone e servido com o perfil
+baseline.
 
 ### DeliveryRequest
 
@@ -288,12 +290,14 @@ Control plane:
 
 Data plane, fora do prefixo `/v1`:
 
-- `GET|HEAD /streams/:playbackToken/index.m3u8`;
-- `GET|HEAD /streams/:playbackToken/*` somente para recursos registrados;
-- `OPTIONS /streams/:playbackToken/*` para CORS.
+- `GET /streams/recordings/:recordingId/index.m3u8`;
+- `GET /streams/recordings/:recordingId/*` somente para recursos publicados
+  daquele recording; o run aberto atual define shaping e journal;
+- CORS simples nos `GET` de playback.
 
-O token aparece somente na URL devolvida ao criador do run. PostgreSQL armazena
-seu hash. Logs de aplicacao substituem o token por um identificador redigido.
+A URL e estavel por recording e nunca muda entre runs. PostgreSQL resolve o run
+ativo uma vez por request; o recordingId aparece na URL e os logs de aplicacao
+podem redigi-lo conforme policy.
 
 ## Plano incremental
 
@@ -326,10 +330,11 @@ seu hash. Logs de aplicacao substituem o token por um identificador redigido.
 
 ### Slice 3 - Origem HTTP persistente
 
-- token opaco por PlaybackRun;
+- URL fixa por recording em `/streams/recordings/:recordingId/*`, com o run
+  ativo resolvido por request;
 - rotas de manifest e recursos registrados;
 - GET, HEAD, OPTIONS, CORS, content types e Range;
-- `Cache-Control: no-store` e URL unica por run;
+- `Cache-Control: no-store`; a URL nunca muda entre runs;
 - nenhum estado necessario apenas em memoria para restaurar apos restart;
 - teste em player externo na LAN.
 
@@ -345,12 +350,18 @@ seu hash. Logs de aplicacao substituem o token por um identificador redigido.
 
 ### Slice 5 - Request evidence e ABR
 
+- `AbrAssessment` e o resumo comum de qualidade: ladder, cobertura, findings,
+  transicoes, matrix e proximas medicoes; Investigate o produz sempre e Record
+  alimenta sua camada de comportamento observado conforme o journal evoluir;
 - journal append-only de delivery requests;
 - mapeamento request -> variant/bitrate/resolucao/sequence;
 - transicoes observed e sustained;
 - correlacao com stage de rede;
 - status final `observed | not_observed | inconclusive`;
 - UI mostra requests e transicoes sem alegar render/decode.
+- Para DASH, o correlator enriquece cada mudanca observada com INIT semantic
+  diff, SAP/IRAP, timeline normalizada e findings deterministas; telemetria de
+  player/device nao e requisito e permanece ausente quando nao fornecida.
 
 ### Slice 6 - UX Record
 
@@ -378,6 +389,12 @@ seu hash. Logs de aplicacao substituem o token por um identificador redigido.
 - adicionar parser/materializador MPD e mapeamento de representation;
 - preservar init/media fMP4 e reescrever MPD local;
 - fixture com pelo menos tres representations alinhadas.
+- compartilhar `AbrSwitchEvidence` entre candidatos URL-only de Investigate e
+  transicoes request-level de Record, mantendo `CANDIDATE` e `OBSERVED`
+  explicitamente distintos;
+- executar o especialista ABR em toda investigation sobre `AbrAssessment`; o
+  boundary compacto entra quando disponivel e modelo, firmware ou logs
+  eventualmente colados na descricao sao apenas contexto relatado.
 
 ## Ordem sugerida de arquivos
 

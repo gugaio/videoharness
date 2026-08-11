@@ -251,6 +251,144 @@ Consequencia:
 - O report nao afirma que uma troca ocorreu; identifica uma sequencia candidata e
   classifica sua seguranca estrutural.
 
+## 2026-08-08 - ABR switch com proveniencia explicita e prompt compacto
+
+Decisao:
+
+- `AbrSwitchEvidence` e a entidade canonica para uma transicao, tanto no fluxo de
+  URL quanto no journal de um playback run.
+- Evidencia somente da URL e marcada `URL_STATIC_ANALYSIS/CANDIDATE`; somente uma
+  mudanca no journal recebe `PLAYBACK_NETWORK_OBSERVED/OBSERVED`.
+- Logs, modelo e firmware colados em `problemDescription` ficam em
+  `reportedPlayerContext`, nunca em `avplayEvidence` ou capability evidence.
+- Parsers deterministas produzem MPD efetivo, boxes ISO BMFF, HEVC NAL/parameter
+  sets, timeline normalizada, diffs semanticos e findings antes do LLM.
+- O especialista ABR recebe somente evidencia compacta do boundary. Artifacts
+  brutos permanecem disponiveis para drill-down.
+
+Motivo:
+
+- A investigacao precisa produzir valor com apenas uma URL sem fingir que possui
+  telemetria da TV.
+- Binary INIT diff, `key_frame=true` e tfdt bruto nao bastam para avaliar uma
+  troca HEVC entre timescales/configuracoes diferentes.
+
+Consequencia:
+
+- A ausencia de logs Samsung limita apenas conclusoes de device/plataforma; nao
+  bloqueia checks de authoring, contrato, SAP/IRAP, INIT e timeline.
+- `PLATFORM_SUSPECTED` exige reproducao, device identificado e checks positivos
+  de conteúdo/delivery/decode/conformance; texto relatado sozinho nao satisfaz a
+  regra.
+
+## 2026-08-08 - AbrAssessment protocol-neutral e especialista sempre ativo
+
+Decisao:
+
+- `AbrAssessment` passa a ser a raiz do diagnostico ABR para HLS e DASH, com
+  ladder canonica, cobertura, verdict, findings, transicoes e medicoes faltantes.
+- Toda investigation executa o baseline deterministico e o ABR Quality
+  Investigator. Um sintoma ABR relatado altera a priorizacao, nao a existencia da
+  analise.
+- `AbrSwitchEvidence` permanece como especializacao profunda de uma transicao;
+  DASH/fMP4 possui hoje a cobertura mais rica, sem contaminar o modelo raiz com
+  resolucao, fabricante, sistema operacional ou player fixos.
+- Parsing de `problemDescription` pertence a application de Investigation, nao a
+  `stream-tools`.
+
+Motivo:
+
+- A qualidade adaptativa faz parte da saude de qualquer stream e nao deve herdar
+  as premissas do incidente Tizen que originou o primeiro corte.
+- Separar baseline, especializacoes e explicacao agentica permite aumentar a
+  cobertura de HLS e comportamento observado sem reescrever o contrato central.
+
+Consequencia:
+
+- Reports novos carregam `evidence.abr`; campos DASH antigos permanecem aceitos
+  apenas para leitura de reports historicos.
+- `NO_ISSUE_DETECTED` vale somente dentro da cobertura declarada e nunca equivale
+  a playback perfeito.
+
+## 2026-08-09 - Fan-out de agentes limitado na fronteira do provider
+
+Decisao:
+
+- Os quatro especialistas continuam independentes, mas no maximo duas chamadas
+  ao provider ficam ativas simultaneamente.
+- A segunda tentativa espera um backoff fixo de um segundo; retry imediato nao
+  compete com requests ainda em andamento.
+- Falhas retornadas pelo SDK sao classificadas de forma segura como rate limit,
+  erro 5xx, limite de contexto, autenticacao, transporte ou desconhecida. O texto
+  bruto do provider nao e persistido nem mostrado.
+
+Motivo:
+
+- O smoke real mostrou duas de quatro chamadas simultaneas falhando juntas,
+  enquanto as outras duas e o Lead concluiam. O retry imediato repetia a falha
+  antes de liberar capacidade do provider.
+
+Consequencia:
+
+- A etapa de especialistas pode durar mais, mas deixa de transformar limite de
+  concorrencia em falha deterministica de Mara e do especialista ABR.
+- Eventos `started` continuam representando chamadas reais, nao fila ficticia.
+
+## 2026-08-09 - Reconfiguracao esperada nao e risco ABR
+
+Decisao:
+
+- `EXPECTED_RESOLUTION_SWITCH` e `EXPECTED_DECODER_RECONFIGURATION` permanecem
+  evidencia descritiva e nao geram finding de risco por quantidade de mudancas
+  em INIT/SPS.
+- `ABR_INIT_001` exige ao menos uma diferenca semanticamente classificada como
+  `RISKY_DECODER_RECONFIGURATION`.
+- Agentes nao podem recomendar resolucao fixa, separar Periods ou bloquear
+  4K↔1080p apenas porque dimensoes, HEVC level, INIT ou SPS mudam.
+
+Motivo:
+
+- Reinitialization e comportamento normal em muitas ladders ABR. Contar largura,
+  altura e level como tres mudancas promovia uma transicao valida a risco `HIGH`
+  e induzia falsa causa raiz.
+
+Consequencia:
+
+- Uma fronteira com timeline continua, SAP/IRAP valido e apenas reconfiguracao
+  esperada passa na matriz estrutural.
+- Risco requer contrato incompatível, diferenca explicitamente anormal, falha de
+  decode, capability mismatch ou falha real do player correlacionada.
+
+## 2026-08-11 - URL de playback fixa por recording, run resolvido por request
+
+Decisao:
+
+- O data plane passa a servir `/streams/recordings/:recordingId/*`, uma URL fixa
+  por recording, em vez de um token HMAC novo por playback run.
+- Cada request resolve o run aberto atual (`findLatestOpen`) para escolher o
+  perfil de rede e atribuir o journal; sem run ativo o clone e servido com o
+  perfil baseline e sem journal.
+- `VIDEO_HARNESS_PLAYBACK_SIGNING_SECRET`, `SignedPlaybackUrl` e o stop marker no
+  filesystem sao removidos; encerrar um run apenas finaliza o run no banco.
+
+Motivo:
+
+- A URL por run mudava a cada experimento e quebrava players/device que
+  cacheiam a URL. O requisito do lab e uma URL estavel que nunca dependa do
+  lifecycle do run.
+- Com a resolucao do run por request, o estado do run no PostgreSQL ja e a
+  fonte de verdade; o token auto-contido e o marker ficam redundantes e o
+  segredo de assinatura deixa de ser configuracao obrigatoria do deploy.
+
+Consequencia:
+
+- A URL nunca muda: iniciar ou encerrar um run mantem o device funcional; o run
+  ativo determina shaping e journal, e o baseline e sempre alcançavel.
+- O data plane volta a consultar PostgreSQL uma vez por request (query indexada
+  simples) para resolver o run ativo; perde-se a leitura 100% stateless.
+- O recordingId (UUID) atua como capability da URL; caminho invalido retorna 400
+  e paths desconhecidos continuam 404 sem tocar o filesystem fora do recording.
+
 ## 2026-08-05 - Record entra na validacao atual por HLS VOD
 
 Decisao:
@@ -335,3 +473,31 @@ Adaptacoes obrigatorias:
 - validar alinhamento e `MEDIA-SEQUENCE` entre variants;
 - trocar servidor efemero por data plane persistente;
 - adicionar Range, shaping e request journal.
+
+## 2026-08-08 - Coleta de media por tempo, bytes como seguranca
+
+Decisao:
+
+- A unidade de coleta de media na investigacao passa de bytes para tempo: no modo
+  `full`, cada variant/representacao contribui uma janela contigua de ate
+  `VIDEO_HARNESS_MEDIA_SAMPLE_MAX_SECONDS` (default 60s), centrada no horario de
+  incidente relatado quando existir; sem horario, a janela parte do inicio.
+- Os limites de bytes continuam obrigatorios como rede de seguranca contra
+  downloads sem limite, SSRF/abuso e estouro de memoria do worker; eles nao
+  definem a cobertura normal.
+
+Motivo:
+
+- Cobertura por bytes e inconsistente: a 4K ~20 Mbps, 20 MiB cobre ~1,3s; a 300
+  kbps, ~8,8min. Tempo garante a mesma janela de conteudo entre investigacoes e
+  alinha a coleta ao objetivo de forense (ver a janela em volta do incidente).
+- Tempo puro, sem teto de bytes, permitiria centenas de MB por investigacao em
+  bitrates extremos, violando a regra de downloads sem limite e estourando a RAM
+  (samples segurados em memoria).
+
+Consequencias:
+
+- Selecao usa tempo declarado no manifest (duracao HLS cumulativa, com fallback
+  para `targetDuration`; `presentationStart/EndSeconds` no DASH).
+- Defaults novos: 60s por variant, 512 MiB totais, 128 MiB por fetch.
+- Samples continuam em memoria durante a coleta; streaming para disco e follow-up.

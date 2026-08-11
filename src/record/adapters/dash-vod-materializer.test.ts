@@ -26,7 +26,9 @@ describe("DashVodMaterializer", () => {
     expect(result.resources.filter((resource) => resource.kind === "video-segment")).toHaveLength(4);
     expect(await fs.readFile(path.join(directory, "index.mpd"), "utf8")).toContain('media="video-0/segments/$Number$.m4s"');
     expect(await fs.readFile(path.join(directory, "video-0/segments/2.m4s"), "utf8")).toBe("low-2.m4s");
-    expect(result.resources.find((resource) => resource.logicalPath === "video-0/segments/2.m4s")?.metadata).toMatchObject({ targetId: "video-0", mediaSequence: 2, bandwidth: 800000, resolution: "640x360" });
+    expect(result.resources.find((resource) => resource.logicalPath === "video-0/segments/2.m4s")?.metadata).toMatchObject({ targetId: "video-0", mediaSequence: 2, bandwidth: 800000, resolution: "640x360", fragment: { boundarySamples: [], structuralErrors: expect.any(Array) } });
+    expect(result.resources.find((resource) => resource.logicalPath === "video-0/init.mp4")?.metadata).toMatchObject({ init: { sha256: expect.stringMatching(/^[a-f0-9]{64}$/), tracks: [] } });
+    expect(result.resources.find((resource) => resource.logicalPath === "index.mpd")?.metadata).toMatchObject({ switchingContract: { mode: "UNKNOWN", representations: ["video-0", "video-1"] } });
   });
 
   it("rejects a dynamic MPD before storing media", async () => {

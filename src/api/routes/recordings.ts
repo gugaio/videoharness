@@ -8,6 +8,7 @@ import { ApiError } from "../errors.js";
 import { CreatePlaybackRunRequestSchema } from "../../contracts/recording.js";
 import type { CreatePlaybackRun } from "../../record/application/playback-runs.js";
 import type { PlaybackRunRepository } from "../../record/ports/playback-run.js";
+import { buildPlaybackRunAbrSwitchEvidence } from "../../record/application/build-abr-switch-evidence.js";
 
 /** Registered by the production composition root after an HLS materializer is configured. */
 export function registerRecordingRoutes(server: FastifyInstance, dependencies: { startRecording: StartRecording; queries: RecordingQueries; createPlaybackRun?: CreatePlaybackRun; playbackRuns?: PlaybackRunRepository }): void {
@@ -94,17 +95,58 @@ export function registerRecordingRoutes(server: FastifyInstance, dependencies: {
     if (!parsed.success) throw new ApiError(400, "INVALID_PLAYBACK_RUN", "Playback duration must be between 30 and 900 seconds");
     const created = await dependencies.createPlaybackRun({ recordingId, maxDurationSeconds: parsed.data.maxDurationSeconds, profile: parsed.data.profile });
     if (created === "recording_not_ready") throw new ApiError(409, "RECORDING_NOT_READY", "Playback is available when the recording is ready");
-    return reply.status(201).send({ run: created.run, playbackUrl: `/streams/fixed/${created.manifestPath}` });
+    return reply.status(201).send({ run: created.run, playbackUrl: fixedPlaybackUrl(recordingId, created.manifestPath) });
+  });
+
+  server.get<{ Params: { id: string } }>("/v1/recordings/:id/playback-runs/latest", async (request) => {
+    if (!dependencies.playbackRuns) throw new ApiError(503, "PLAYBACK_UNAVAILABLE", "Playback delivery is not configured");
+    const recordingId = parseRecordingId(request.params.id);
+    const recording = await dependencies.queries.getRecording(recordingId);
+    if (!recording) throw new ApiError(404, "RECORDING_NOT_FOUND", "Recording not found");
+    const run = await dependencies.playbackRuns.findLatestOpen(recordingId);
+    if (!run) return { playback: null };
+    const manifestPath = recording.protocol === "dash" ? "index.mpd" : "index.m3u8";
+    return { playback: { run, playbackUrl: fixedPlaybackUrl(recordingId, manifestPath) } };
+  });
+
+  server.post<{ Params: { id: string; runId: string } }>("/v1/recordings/:id/playback-runs/:runId/finish", async (request) => {
+    if (!dependencies.playbackRuns) throw new ApiError(503, "PLAYBACK_UNAVAILABLE", "Playback delivery is not configured");
+    const recordingId = parseRecordingId(request.params.id);
+    const runId = parsePlaybackRunId(request.params.runId);
+    const run = await dependencies.playbackRuns.finish(recordingId, runId);
+    if (!run) throw new ApiError(409, "PLAYBACK_RUN_NOT_OPEN", "Playback run is no longer active");
+    return { run };
   });
 
   server.get<{ Params: { id: string; runId: string }; Querystring: { limit?: string } }>("/v1/recordings/:id/playback-runs/:runId/requests", async (request) => {
     if (!dependencies.playbackRuns) throw new ApiError(503, "PLAYBACK_UNAVAILABLE", "Playback delivery is not configured");
     const recordingId = parseRecordingId(request.params.id);
-    if (!/^[0-9a-f-]{36}$/i.test(request.params.runId)) throw new ApiError(400, "INVALID_PLAYBACK_RUN_ID", "Playback run ID is invalid");
+    parsePlaybackRunId(request.params.runId);
     const raw = Number(request.query.limit ?? 10);
     const limit = Number.isSafeInteger(raw) ? Math.min(100, Math.max(1, raw)) : 10;
     return { requests: await dependencies.playbackRuns.listDeliveries(recordingId, request.params.runId, limit) };
   });
+
+  server.get<{ Params: { id: string; runId: string } }>("/v1/recordings/:id/playback-runs/:runId/abr-switches", async (request) => {
+    if (!dependencies.playbackRuns) throw new ApiError(503, "PLAYBACK_UNAVAILABLE", "Playback delivery is not configured");
+    const recordingId = parseRecordingId(request.params.id); const runId = parsePlaybackRunId(request.params.runId);
+    if (!await dependencies.playbackRuns.findById(recordingId, runId)) throw new ApiError(404, "PLAYBACK_RUN_NOT_FOUND", "Playback run not found");
+    const switches = await buildPlaybackRunAbrSwitchEvidence({ recordingId, runId, repository: dependencies.playbackRuns });
+    if (switches === "unavailable") throw new ApiError(503, "ABR_SWITCH_EVIDENCE_UNAVAILABLE", "ABR switch evidence is not configured");
+    return { switches };
+  });
+}
+
+/** The playback URL is stable per recording; a new run never changes it. */
+function fixedPlaybackUrl(recordingId: string, manifestPath: "index.m3u8" | "index.mpd"): string {
+  return `/streams/recordings/${recordingId}/${manifestPath}`;
+}
+
+function parsePlaybackRunId(value: string): string {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+    throw new ApiError(400, "INVALID_PLAYBACK_RUN_ID", "Playback run ID is invalid");
+  }
+  return value;
 }
 
 function parseRecordingId(value: string): string {

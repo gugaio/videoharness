@@ -11,6 +11,7 @@ import type { InvestigationJobRepository } from "../ports/investigation-job.js";
 import type { ManifestCollector } from "../ports/manifest-collector.js";
 import type { MediaProbe, MediaSampleCollector } from "../ports/media-sample-collector.js";
 import type { ManifestCollection } from "../ports/manifest-collector.js";
+import type { CollectionProgress } from "../ports/manifest-collector.js";
 import type {
   AiAgentProgress,
   AiAgentRun,
@@ -21,7 +22,9 @@ import {
   buildManifestEvidence,
   buildManifestReport,
 } from "./build-manifest-evidence.js";
-import { parseReportedContext } from "../../stream-tools/reported-context.js";
+import { parseReportedContext } from "./parse-reported-context.js";
+import type { AbrDecodeTester } from "../../abr/ports/abr-decode-tester.js";
+import { attachPriorityAbrDecodeTests } from "../../abr/application/run-decode-tests.js";
 
 export type InvestigationWorker = {
   runNext(): Promise<boolean>;
@@ -33,6 +36,7 @@ export function createInvestigationWorker(input: {
   artifactStore: ArtifactStore;
   mediaCollector?: MediaSampleCollector;
   mediaProbe?: MediaProbe;
+  abrDecodeTester?: AbrDecodeTester;
   labWorkspace?: { prepare(investigationId: string, collection: ManifestCollection): Promise<void> };
   ai?: InvestigationAI;
   workerId: string;
@@ -72,16 +76,36 @@ export function createInvestigationWorker(input: {
           input.leaseMs,
           buildValidatingTransition(job),
         );
-        const collection = await input.collector.collect(job.investigation.sourceUrl);
-        collection.reportedContext = parseReportedContext(job.investigation.problemDescription);
+        const onCollectionProgress: (progress: CollectionProgress) => Promise<void> = (progress) =>
+          input.repository.transition(job.id, input.workerId, input.leaseMs, {
+            state: "collecting",
+            event: buildCollectionProgressEvent(progress),
+          });
+        await input.repository.transition(
+          job.id,
+          input.workerId,
+          input.leaseMs,
+          buildCollectingTransition(job),
+        );
+        const collection = await input.collector.collect(job.investigation.sourceUrl, onCollectionProgress);
+        if (job.investigation.problemDescription) {
+          collection.reportedContext = parseReportedContext(job.investigation.problemDescription);
+        }
         if (input.mediaCollector && input.mediaProbe) {
-          const collectedSamples = await input.mediaCollector.collect(collection);
+          const collectedSamples = await input.mediaCollector.collect(collection, onCollectionProgress);
           collection.mediaSamples = collectedSamples.samples;
           collection.mediaLimitations = collectedSamples.limitations;
-          for (const sample of collection.mediaSamples.filter((entry) => entry.kind === "media-segment")) {
+          const mediaSamples = collection.mediaSamples.filter((entry) => entry.kind === "media-segment");
+          for (const [index, sample] of mediaSamples.entries()) {
             const init = collection.mediaSamples.find((entry) =>
               entry.kind === "init-segment" && entry.sourceManifestLogicalKey === sample.sourceManifestLogicalKey
                 && entry.representationId === sample.representationId);
+            await onCollectionProgress({
+              stage: "media_probe",
+              message: `Inspecting ${sample.logicalKey} with FFprobe…`,
+              completed: index,
+              total: mediaSamples.length,
+            });
             try {
               sample.probe = await input.mediaProbe.probe({
                 investigationId: job.investigation.id,
@@ -126,6 +150,13 @@ export function createInvestigationWorker(input: {
           sample.artifact = { id: artifactId, storageKey: stored.storageKey, sizeBytes: stored.sizeBytes, ...(stored.sha256 ? { sha256: stored.sha256 } : {}) };
         }
         const evidence = buildManifestEvidence(collection);
+        if (input.abrDecodeTester && evidence.dash?.switches?.length) {
+          try {
+            await attachPriorityAbrDecodeTests(evidence, collection.mediaSamples ?? [], input.abrDecodeTester);
+          } catch (error) {
+            evidence.limitations.push(`ABR decode tests were unavailable: ${formatProbeFailure(error)}`);
+          }
+        }
         const rootManifest = evidence.manifests[0]!;
         const recorded = await input.repository.recordEvidenceBatch(
           job.id,
@@ -265,6 +296,41 @@ function buildValidatingTransition(job: ClaimedInvestigationJob): InvestigationT
   };
 }
 
+function buildCollectingTransition(job: ClaimedInvestigationJob): InvestigationTransition {
+  return {
+    state: "collecting",
+    event: {
+      type: "investigation.state_changed",
+      actor: "Media Agent",
+      message: "Collecting manifests and bounded media samples as evidence.",
+      payload: { state: "collecting", attempt: job.attempts },
+    },
+  };
+}
+
+const COLLECTION_PROGRESS_ACTORS: Record<CollectionProgress["stage"], string> = {
+  root_manifest: "Network Agent",
+  variant_manifest: "Network Agent",
+  rendition_manifest: "Network Agent",
+  media_sample: "Media Agent",
+  media_probe: "Media Agent",
+};
+
+function buildCollectionProgressEvent(progress: CollectionProgress): InvestigationTransition["event"] {
+  return {
+    type: "investigation.observation",
+    actor: COLLECTION_PROGRESS_ACTORS[progress.stage],
+    message: progress.message,
+    payload: {
+      state: "collecting",
+      stage: "collection",
+      collectionStage: progress.stage,
+      ...(progress.completed === undefined ? {} : { completed: progress.completed }),
+      ...(progress.total === undefined ? {} : { total: progress.total }),
+    },
+  };
+}
+
 function buildAnalyzingTransition(evidence: EvidenceBundleV2): InvestigationTransition {
   const rootManifest = evidence.manifests[0]!;
   const count = rootManifest.variantCount
@@ -303,6 +369,7 @@ const AI_AGENT_LABELS: Record<AiAgentRun["id"], string> = {
   "timeline-playback": "Timeline & Playback",
   "container-encoding": "Container & Encoding",
   "manifest-delivery": "Manifest & Delivery",
+  "abr-switch-investigator": "ABR Quality Investigator",
   "lead-investigator": "Lead Investigator",
 };
 

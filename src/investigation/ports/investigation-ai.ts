@@ -1,43 +1,14 @@
 import type { EvidenceBundleV2, EvidenceBundleV3 } from "../domain/evidence.js";
+import type { AiAgentProgress, AiInvestigationResult } from "../../agents/domain/types.js";
 
-export type AiFinding = {
-  title: string;
-  severity: "info" | "warning" | "error";
-  explanation: string;
-  evidenceIds: string[];
-  confidence: number;
-};
-
-export type AiAgentRun = {
-  id: "timeline-playback" | "container-encoding" | "manifest-delivery" | "lead-investigator";
-  state: "completed" | "failed" | "unavailable";
-  summary?: string;
-  limitation?: string;
-};
-
-export type AiInvestigationResult = {
-  available: boolean;
-  summary?: string;
-  likelyCause?: string;
-  confidence?: number;
-  findings: AiFinding[];
-  recommendations: string[];
-  limitations: string[];
-  agents: AiAgentRun[];
-};
+export type { AiFinding, AiAgentRun, AiAgentProgress, AiInvestigationResult } from "../../agents/domain/types.js";
 
 /**
- * Real lifecycle progress of one AI agent run. `completed`/`total` count the
- * bounded, known set of agent runs (specialists plus Lead), never an estimate.
+ * AI analysis boundary for an investigation. Implementations must not leak
+ * provider SDK types; they receive serializable evidence and return a
+ * structured, bounded result. Without a provider key the result keeps
+ * `available: false` and the deterministic evidence remains authoritative.
  */
-export type AiAgentProgress = {
-  agent: AiAgentRun["id"];
-  stage: "started" | "completed" | "failed";
-  completed: number;
-  total: number;
-  limitation?: string;
-};
-
 export interface InvestigationAI {
   investigate(input: {
     investigationId: string;
