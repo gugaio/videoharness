@@ -16,7 +16,11 @@ describe("loadConfig", () => {
     expect(config.mediaSampleMaxSeconds).toBe(60);
     expect(config.mediaSampleMaxTotalBytes).toBe(536_870_912);
     expect(config.recordSegmentMaxBytes).toBe(67_108_864);
+    expect(config.recordRequestTimeoutMs).toBe(60_000);
     expect(config.recordMaxVariants).toBe(8);
+    expect(config.experimentMaxClonesPerIteration).toBe(4);
+    expect(config.experimentMaxIterations).toBe(3);
+    expect(config.experimentMaxClonesTotal).toBe(12);
   });
 
   it("rejects an invalid port", () => {
@@ -35,5 +39,24 @@ describe("loadConfig", () => {
   it("loads a configured media sample time budget", () => {
     expect(loadConfig({ VIDEO_HARNESS_MEDIA_SAMPLE_MAX_SECONDS: "120" }).mediaSampleMaxSeconds).toBe(120);
     expect(() => loadConfig({ VIDEO_HARNESS_MEDIA_SAMPLE_MAX_SECONDS: "0" })).toThrow();
+  });
+
+  it("validates configurable experiment budgets", () => {
+    const config = loadConfig({
+      VIDEO_HARNESS_EXPERIMENT_MAX_CLONES_PER_ITERATION: "3",
+      VIDEO_HARNESS_EXPERIMENT_MAX_ITERATIONS: "4",
+      VIDEO_HARNESS_EXPERIMENT_MAX_CLONES_TOTAL: "10",
+    });
+    expect(config.experimentMaxClonesPerIteration).toBe(3);
+    expect(config.experimentMaxIterations).toBe(4);
+    expect(config.experimentMaxClonesTotal).toBe(10);
+    expect(() => loadConfig({ VIDEO_HARNESS_EXPERIMENT_MAX_CLONES_PER_ITERATION: "0" })).toThrow();
+  });
+
+  it("separates bounded recording downloads from investigation request timeouts", () => {
+    const config = loadConfig({ VIDEO_HARNESS_STREAM_TIMEOUT_MS: "25000", VIDEO_HARNESS_RECORD_REQUEST_TIMEOUT_MS: "90000" });
+    expect(config.streamTimeoutMs).toBe(25_000);
+    expect(config.recordRequestTimeoutMs).toBe(90_000);
+    expect(() => loadConfig({ VIDEO_HARNESS_RECORD_REQUEST_TIMEOUT_MS: "121000" })).toThrow();
   });
 });

@@ -389,6 +389,68 @@ Consequencia:
 - O recordingId (UUID) atua como capability da URL; caminho invalido retorna 400
   e paths desconhecidos continuam 404 sem tocar o filesystem fora do recording.
 
+## 2026-08-11 - Experiment como camada sobre Investigation e Record
+
+Decisao:
+
+- `Experiment` passa a representar a pergunta diagnostica, hipoteses, iteracoes,
+  testes e conclusao. Um clone experimental continua sendo um `Recording`
+  materializado pelo worker/storage existentes.
+- `CloneSpec` v1 e persistido antes da execucao e compilado para um plano
+  declarativo. O dominio nao recebe command lines; processos futuros exigem
+  binary allowlisted e array de argumentos.
+- O primeiro corte executa somente `recorded_snapshot` + `manifest_only` com
+  CONTROL, selecao de representation e selecao de audio que realmente diferem do
+  controle. Modos sem pipeline seguro ficam modelados e explicitamente
+  indisponiveis.
+- REST e a superficie programatica. MCP/skill nao entram enquanto REST cobre o
+  workflow e o escopo do repositorio continua proibindo infraestrutura de agente
+  adicional.
+
+Motivo:
+
+- Investigation ja possui a evidencia deterministica e Record ja possui SSRF,
+  fila recuperavel, storage atomico e delivery. Duplicar essas fronteiras
+  aumentaria risco sem melhorar o experimento.
+- O requisito e fechar o loop de diagnostico no produto, nao construir um novo
+  executor de media ou framework de agentes.
+
+Consequencia:
+
+- A migration 011 adiciona os agregados do experimento e apenas dois campos
+  opcionais em `recordings` (`clone_spec`, `clone_plan`). O intake legado nao muda.
+- O observer pos-Record verifica o manifest/recursos deterministicamente e somente
+  entao promove o clone experimental a `READY`.
+- Repackage/transcode, HLS fMP4, live proxy e DRM transform nao sao prometidos
+  pelo primeiro slice. Signalling DRM continua analisavel; bypass/decryption nao.
+
+## 2026-08-11 - Uma URL fixa por Experiment, tratamento selecionado no control plane
+
+Decisao:
+
+- Todos os TestRequests de um Experiment usam
+  `/streams/experiments/:experimentId/index.m3u8|index.mpd`.
+- `POST /v1/test-requests/:id/activate` altera atomicamente
+  `experiments.active_test_request_id`; o device repete a mesma URL para CONTROL
+  e tratamentos.
+- Cada request resolve o recording `READY` selecionado e le somente recursos
+  publicados. `Cache-Control: no-store` reduz reuso do manifest anterior.
+
+Motivo:
+
+- Trocar URL no device pode exigir build/deploy ou reconfiguracao fora do Harness.
+  A escolha deve acontecer na UI, como a escolha de profile ABR atual.
+- Uma URL por clone transforma configuracao do device em variavel acidental do
+  experimento.
+
+Consequencia:
+
+- O operador segue a sequencia selecionar -> reproduzir novamente -> registrar
+  resultado. A UI so habilita o resultado para o TestRequest selecionado.
+- Se a selecao mudar enquanto um playback ainda esta em curso, requests futuros
+  seguem a nova selecao; a UX orienta encerrar uma observacao antes de selecionar
+  outra. O corte atual e serial por Experiment/device.
+
 ## 2026-08-05 - Record entra na validacao atual por HLS VOD
 
 Decisao:
@@ -501,3 +563,61 @@ Consequencias:
   para `targetDuration`; `presentationStart/EndSeconds` no DASH).
 - Defaults novos: 60s por variant, 512 MiB totais, 128 MiB por fetch.
 - Samples continuam em memoria durante a coleta; streaming para disco e follow-up.
+
+## 2026-08-11 - Manifest obrigatorio, amostra de media degradavel
+
+Decisao:
+
+- O manifest raiz continua sendo evidencia obrigatoria e falhas transientes nessa
+  fronteira seguem a politica limitada de retry do job.
+- Depois que o manifest foi validado, timeout, bloqueio ou limite de uma amostra
+  de init/media vira uma limitation atribuida aquela representation. A coleta
+  preserva as demais evidencias em vez de reiniciar todo o pipeline.
+- A primeira falha de media interrompe somente a janela daquela representation,
+  evitando acumular varios timeouts consecutivos no mesmo target lento.
+
+Motivo:
+
+- Uma amostra complementar lenta nao invalida MPD/HLS, ladder e outras amostras
+  ja obtidas. Reiniciar tudo desperdicava rede, repetia eventos e podia terminar
+  sem report mesmo com evidencia deterministica util.
+
+Consequencia:
+
+- Reports podem concluir com cobertura parcial explicitamente documentada.
+- Cada falha degradada publica um evento persistido com tipo de recurso,
+  representation/logical key, segmento de origem quando aplicavel e error code;
+  URLs e credenciais nao entram nesse payload.
+- Falha de manifest obrigatorio continua falhando a tentativa, mas a mensagem
+  publica identifica root manifest, variant HLS ou audio rendition.
+- Erros inesperados de programacao continuam falhando o job; somente erros
+  tipados da fronteira segura de streaming sao degradados para limitation.
+
+## 2026-08-11 - Retry DASH nao atravessa fronteira de workspace
+
+Decisao:
+
+- O materializador DASH pode baixar um conjunto pequeno de chunks em paralelo,
+  mas uma falha aguarda todos os workers ja iniciados terminarem antes de ser
+  devolvida ao recording worker.
+- Init/chunk com erro transiente recebe ate tres tentativas locais, registradas
+  como `recording.resource_retry`, antes de acionar o retry do job completo.
+- Fetches de Record usam budget de tempo proprio (60s por request por default),
+  separado dos 25s da amostragem de Investigate; um chunk integral de bitrate
+  alto nao e semanticamente equivalente a uma amostra curta.
+- Escritas continuam usando criacao exclusiva (`wx`); nao sobrescrever arquivos
+  e uma invariante de integridade, nao um erro a ser silenciado.
+
+Motivo:
+
+- `Promise.all` rejeitava no primeiro timeout enquanto downloads irmaos ainda
+  podiam gravar. O job limpava e recriava o mesmo workspace para o retry, e um
+  worker antigo podia escrever na nova tentativa, causando `EEXIST` ou mistura
+  de proveniencia.
+
+Consequencia:
+
+- Nenhuma tentativa anterior permanece gravando quando cleanup/retry comeca.
+- Instabilidade pontual de CDN/DNS pode ser recuperada no recurso afetado sem
+  descartar toda a ladder ja baixada naquela tentativa.
+- Falha depois do limite continua explicita e segue a politica duravel do job.

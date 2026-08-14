@@ -1,4 +1,5 @@
 import type { RecordingState } from "./recording.js";
+import type { CloneExecutionPlan } from "../../experiment/domain/clone-spec.js";
 
 export type ClaimedRecordingJob = {
   id: string;
@@ -10,6 +11,7 @@ export type ClaimedRecordingJob = {
     protocol: "hls" | "dash";
     requestedDurationSeconds: number;
     requestedStartSeconds: number;
+    clonePlan?: CloneExecutionPlan;
   };
 };
 

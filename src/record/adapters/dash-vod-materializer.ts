@@ -14,7 +14,7 @@ type Selection = { segment: DashSegmentReference; start: number; end: number };
 
 /** Clones the explicitly supported static DASH SegmentTemplate subset into a local MPD. */
 export class DashVodMaterializer implements RecordingMaterializer {
-  constructor(private readonly http: SafeHttpClient, private readonly options: { maxVariants?: number; maxTotalBytes?: number; maxConcurrentDownloads?: number } = {}) {}
+  constructor(private readonly http: SafeHttpClient, private readonly options: { maxVariants?: number; maxTotalBytes?: number; maxConcurrentDownloads?: number; maxRequestAttempts?: number; retryDelayMs?: number } = {}) {}
 
   async materialize(input: Parameters<RecordingMaterializer["materialize"]>[0]): Promise<MaterializedRecording> {
     if (input.job.recording.protocol !== "dash") throw unsupported("Only DASH recordings are supported by this collector");
@@ -25,7 +25,7 @@ export class DashVodMaterializer implements RecordingMaterializer {
     if (/<(?:[A-Za-z_][\w.-]*:)?ContentProtection\b/i.test(response.text)) throw unsupported("Record DASH does not support protected content");
     if (/<(?:[A-Za-z_][\w.-]*:)?SegmentBase\b/i.test(response.text)) throw unsupported("Record DASH requires SegmentTemplate, not SegmentBase");
 
-    const targets = selectTargets(root.dash.representations, this.options.maxVariants ?? 8);
+    const targets = selectTargets(root.dash.representations, this.options.maxVariants ?? 8, input.job.recording.clonePlan);
     const selected = targets.map((target) => ({ target, segments: selectWindow(target.source.segments, input.job.recording.requestedStartSeconds, input.job.recording.requestedDurationSeconds) }));
     if (selected.some((entry) => !entry.target.source.initializationUrl || entry.segments.length === 0)) throw unsupported("Every DASH representation needs an init segment and media in the requested window");
     const coverageSeconds = Math.min(...selected.map((entry) => entry.segments.at(-1)!.end - entry.segments[0]!.start));
@@ -36,7 +36,7 @@ export class DashVodMaterializer implements RecordingMaterializer {
     for (const entry of selected) {
       const { target, segments } = entry;
       await input.onProgress?.({ type: "recording.variant_started", message: `Recording ${target.id}: ${segments.length} chunks in the requested window.`, payload: { targetId: target.id, targetKind: target.kind, segmentCount: segments.length } });
-      const init = await this.http.getBytes(target.source.initializationUrl!);
+      const init = await this.getBytesWithRetry(target.source.initializationUrl!, input.onProgress, { targetId: target.id, targetKind: target.kind, resourceKind: "init_segment" });
       const initPath = `${target.id}/init.mp4`;
       await writeWorkspaceFile(input.workspace.path, initPath, init.bytes);
       totalBytes = addBytes(totalBytes, init.bytes.byteLength, this.options.maxTotalBytes ?? 1_073_741_824);
@@ -45,7 +45,7 @@ export class DashVodMaterializer implements RecordingMaterializer {
 
       const downloaded = await mapConcurrent(segments, this.options.maxConcurrentDownloads ?? 3, async (selection) => {
         if (!selection.segment.url || selection.segment.range) throw unsupported(`DASH ${target.id} uses an unresolved URL or byte range`);
-        const bytes = await this.http.getBytes(selection.segment.url);
+        const bytes = await this.getBytesWithRetry(selection.segment.url, input.onProgress, { targetId: target.id, targetKind: target.kind, resourceKind: "media_segment", sourceSegment: selection.segment.number });
         const logicalPath = `${target.id}/segments/${selection.segment.number}.m4s`;
         await writeWorkspaceFile(input.workspace.path, logicalPath, bytes.bytes);
         return { bytes: bytes.bytes, logicalPath, selection, fragment: inspectFmp4Fragment(bytes.bytes, initInspection.nalLengthSize ?? 4) };
@@ -65,16 +65,45 @@ export class DashVodMaterializer implements RecordingMaterializer {
     resources.push(resource(input.job.recording.id, "index.mpd", "master", mpdBytes, "application/dash+xml", { variantCount: selectedVideo.length, audioRenditionCount: selected.filter((entry) => entry.target.kind === "audio").length, ...(sourceAdaptation ? { switchingContract: { ...sourceAdaptation.switchingContract, representations: selectedVideo.map((entry) => entry.target.id) } } : {}), representations: selectedVideo.map((entry) => representationMetadata(entry.target)) }));
     return { coverageSeconds, totalBytes, resources };
   }
+
+  private async getBytesWithRetry(
+    url: string,
+    onProgress: Parameters<RecordingMaterializer["materialize"]>[0]["onProgress"],
+    context: { targetId: string; targetKind: "video" | "audio"; resourceKind: "init_segment" | "media_segment"; sourceSegment?: number },
+  ) {
+    const maxAttempts = Math.max(1, Math.min(4, this.options.maxRequestAttempts ?? 3));
+    const retryDelayMs = Math.max(0, Math.min(2_000, this.options.retryDelayMs ?? 250));
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await this.http.getBytes(url);
+      } catch (error) {
+        if (!(error instanceof StreamCollectionError) || !error.retryable || attempt === maxAttempts) throw error;
+        await onProgress?.({
+          type: "recording.resource_retry",
+          message: `Retrying ${context.resourceKind === "init_segment" ? "init" : `segment ${context.sourceSegment}`} for ${context.targetId} after ${error.code}.`,
+          payload: { ...context, errorCode: error.code, nextAttempt: attempt + 1, maxAttempts },
+        });
+        if (retryDelayMs > 0) await delay(retryDelayMs * attempt);
+      }
+    }
+    throw new Error("DASH resource retry loop ended unexpectedly");
+  }
 }
 
-function selectTargets(representations: DashRepresentation[], maxVariants: number): Target[] {
+function selectTargets(representations: DashRepresentation[], maxVariants: number, plan?: import("../../experiment/domain/clone-spec.js").CloneExecutionPlan): Target[] {
   const videoGroups = groupBy(representations.filter((item) => item.contentType === "video"), (item) => `${item.periodIndex}:${item.adaptationSetIndex}`);
-  const video = [...videoGroups.values()].sort((a, b) => b.length - a.length)[0] ?? [];
-  if (video.length < 2) throw unsupported("Record DASH requires two video representations in one adaptation set for ABR");
-  if (video.length > maxVariants) throw unsupported(`The DASH adaptation set exceeds the ${maxVariants} representation limit`);
+  const sourceVideo = [...videoGroups.values()].sort((a, b) => b.length - a.length)[0] ?? [];
+  if (sourceVideo.length < 2) throw unsupported("Record DASH requires two video representations in one adaptation set for ABR");
+  if (sourceVideo.length > maxVariants) throw unsupported(`The DASH adaptation set exceeds the ${maxVariants} representation limit`);
+  const video = plan ? sourceVideo.filter((item) => plan.selection.videoRepresentationIds.includes(item.id)) : sourceVideo;
+  if (video.length === 0) throw unsupported("The CloneSpec did not select a DASH video representation");
   const audioGroups = groupBy(representations.filter((item) => item.contentType === "audio"), (item) => `${item.periodIndex}:${item.adaptationSetIndex}`);
-  const audio = [...audioGroups.values()].sort((a, b) => b.length - a.length)[0] ?? [];
-  return [...video.map((source, index) => ({ id: `video-${index}`, kind: "video" as const, source })), ...audio.map((source, index) => ({ id: `audio-${index}`, kind: "audio" as const, source }))];
+  const sourceAudio = [...audioGroups.values()].sort((a, b) => b.length - a.length)[0] ?? [];
+  const audio = plan?.selection.audioMode === "single" ? sourceAudio.slice(0, 1) : sourceAudio;
+  return [
+    ...video.map((source) => ({ id: `video-${sourceVideo.indexOf(source)}`, kind: "video" as const, source })),
+    ...audio.map((source) => ({ id: `audio-${sourceAudio.indexOf(source)}`, kind: "audio" as const, source })),
+  ];
 }
 
 function selectWindow(segments: DashSegmentReference[], startSeconds: number, durationSeconds: number): Selection[] {
@@ -127,4 +156,23 @@ async function writeWorkspaceFile(workspace: string, logicalPath: string, bytes:
 function unsupported(message: string): StreamCollectionError { return new StreamCollectionError("UNSUPPORTED_MANIFEST", message, false); }
 function escapeXml(value: string): string { return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]!); }
 function groupBy<T>(values: T[], key: (value: T) => string): Map<string, T[]> { const result = new Map<string, T[]>(); for (const value of values) result.set(key(value), [...(result.get(key(value)) ?? []), value]); return result; }
-async function mapConcurrent<Input, Output>(values: Input[], limit: number, mapper: (value: Input) => Promise<Output>): Promise<Output[]> { const results = new Array<Output>(values.length); let next = 0; await Promise.all(Array.from({ length: Math.min(Math.max(1, limit), values.length) }, async () => { for (;;) { const index = next++; if (index >= values.length) return; results[index] = await mapper(values[index]!); } })); return results; }
+async function mapConcurrent<Input, Output>(values: Input[], limit: number, mapper: (value: Input) => Promise<Output>): Promise<Output[]> {
+  const results = new Array<Output>(values.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(Math.max(1, limit), values.length) }, async () => {
+    for (;;) {
+      const index = next++;
+      if (index >= values.length) return;
+      results[index] = await mapper(values[index]!);
+    }
+  });
+  // Promise.all rejects as soon as one download fails, leaving sibling workers
+  // writing into a workspace that the recording worker may already be cleaning
+  // and recreating for a retry. Settle every in-flight worker before exposing
+  // the failure so no previous attempt can write into the next attempt.
+  const settled = await Promise.allSettled(workers);
+  const failure = settled.find((entry): entry is PromiseRejectedResult => entry.status === "rejected");
+  if (failure) throw failure.reason;
+  return results;
+}
+function delay(milliseconds: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }

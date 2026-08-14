@@ -20,7 +20,7 @@ export class HttpManifestCollector implements ManifestCollector {
 
   async collect(sourceUrl: string, onProgress?: (progress: CollectionProgress) => Promise<void>) {
     await onProgress?.({ stage: "root_manifest", message: "Fetching the root manifest through the safe network boundary…" });
-    const response = await this.http.getText(sourceUrl);
+    const response = await fetchManifest(this.http, sourceUrl, "The root manifest");
     const root = toManifest(response, "manifest/root", "root");
     const manifests: Manifest[] = [root];
     const hls = root.inspection.hls;
@@ -56,7 +56,8 @@ export class HttpManifestCollector implements ManifestCollector {
     logicalKey: string,
     role: "variant" | "rendition",
   ): Promise<Manifest> {
-    const response = await this.http.getText(url);
+    const subject = role === "variant" ? "The selected HLS video variant manifest" : "The selected HLS audio rendition manifest";
+    const response = await fetchManifest(this.http, url, subject);
     const manifest = toManifest(response, logicalKey, role);
     if (manifest.inspection.protocol !== "hls" || manifest.inspection.kind !== "media") {
       throw new StreamCollectionError(
@@ -66,6 +67,15 @@ export class HttpManifestCollector implements ManifestCollector {
       );
     }
     return manifest;
+  }
+}
+
+async function fetchManifest(http: SafeHttpClient, url: string, subject: string): Promise<Awaited<ReturnType<SafeHttpClient["getText"]>>> {
+  try {
+    return await http.getText(url);
+  } catch (error) {
+    if (!(error instanceof StreamCollectionError)) throw error;
+    throw new StreamCollectionError(error.code, `${subject} could not be fetched: ${error.message}`, error.retryable, { cause: error });
   }
 }
 

@@ -318,7 +318,7 @@ const COLLECTION_PROGRESS_ACTORS: Record<CollectionProgress["stage"], string> = 
 
 function buildCollectionProgressEvent(progress: CollectionProgress): InvestigationTransition["event"] {
   return {
-    type: "investigation.observation",
+    type: progress.limitation ? "investigation.collection_limited" : "investigation.observation",
     actor: COLLECTION_PROGRESS_ACTORS[progress.stage],
     message: progress.message,
     payload: {
@@ -327,6 +327,7 @@ function buildCollectionProgressEvent(progress: CollectionProgress): Investigati
       collectionStage: progress.stage,
       ...(progress.completed === undefined ? {} : { completed: progress.completed }),
       ...(progress.total === undefined ? {} : { total: progress.total }),
+      ...(progress.limitation ? { limitation: progress.limitation } : {}),
     },
   };
 }

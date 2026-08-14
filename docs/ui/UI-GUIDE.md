@@ -63,6 +63,12 @@ Record e um fluxo dedicado, nao uma opcao escondida no formulario de Investigate
   por SSE, mostra cobertura/bytes e nunca oferece run durante falha ou coleta.
 - Quando `ready`, o preset `Good -> constrained -> recovery` cria o playback run
   e permite copiar sua URL local para o device.
+- A mesma tela oferece um smoke explícito no browser: hls.js para HLS e dash.js
+  para DASH. O player nunca inicia sozinho e seus requests participam do profile
+  e do journal do run ativo.
+- Antes de baixar segmentos DASH, a UI consulta o MPD local e testa os codecs
+  declarados com `MediaSource.isTypeSupported`. Codec recusado pelo browser vira
+  estado `Unsupported`, sem ser confundido com CORS nem com falha do recording.
 - A tela declara as limitacoes atuais; o journal mostra selecao de rede real e a
   evidencia correlacionada de switch fica disponivel no control plane sem fingir
   decode/render ou eventos de player ausentes.
@@ -107,6 +113,11 @@ Record e um fluxo dedicado, nao uma opcao escondida no formulario de Investigate
 - Ao recarregar a rota do recording, a tela consulta o último run aberto e
   restaura seu perfil e journal; ela não volta a oferecer `Start` enquanto
   esse run existir.
+- O card `Play this recording here` inicia somente por CTA. Ele comunica estados
+  checking, ready, playing, buffering, unsupported e error, mostra o resultado
+  MSE por codec e permite parar/reiniciar sem mudar a URL do recording.
+- A checagem MSE comprova somente que o browser aceita criar o pipeline daquele
+  codec; nao comprova decode em hardware nem frames renderizados.
 
 ### Recording screen (dashboard)
 
@@ -172,11 +183,53 @@ Record e um fluxo dedicado, nao uma opcao escondida no formulario de Investigate
   Eventos `started` alimentam somente o checklist; conclusoes e falhas viram
   posts na timeline com a persona do especialista.
 - Durante `collecting`, o card de trabalho mostra o passo atual da coleta
-  (ex.: "Sampling media segment 12 of 40…"), contador e barra reais derivados dos
+  (ex.: "Sampling media sample 2 of 3…"), contador e barra reais derivados dos
   eventos `collection`, alem dos chips das etapas ja concluidas (root manifest,
   video variant, audio rendition, media samples, FFprobe). Os eventos de coleta
   nao viram posts individuais na timeline; o milestone `evidence_found` resume o
   que foi preservado ao final.
+- Contadores de sample sao locais a cada representation (`2 of 3`) e o numero do
+  segmento de origem aparece separadamente. Timeout de uma amostra vira coverage
+  limitation; nao volta a timeline para `Validating` quando o manifest ja e valido.
+- A limitation de coleta permanece como card amarelo na timeline e mostra chips
+  para tipo do recurso (`init segment`, `media segment` ou `repeat hash`),
+  representation/logical key, segmento de origem e codigo do erro. Assim o
+  usuario distingue falha de manifest de falha em chunk sem revelar a URL
+  assinada da origem.
+
+### Experiments na Investigation
+
+- A secao `Experiments` vive na mesma tela, depois do report/playback validation;
+  nao cria um dashboard paralelo.
+- O composer pede goal, hipotese, rationale e environment opcional. O primeiro
+  plano padrao e pequeno: CONTROL + uma selecao de representation.
+- Assim que clones passam na verificacao, a secao mostra uma unica URL permanente
+  do Experiment. Essa URL e copiada uma vez para o device e nunca muda entre
+  CONTROL, treatments ou iteracoes.
+- Cada card mostra label curta, CONTROL/TREATMENT, estado real do worker,
+  `What changed`, hipotese, discriminating signal e provenance avancada.
+- Os cards existem desde a fila: antes do TestRequest, mostram `QUEUED`,
+  `BUILDING`, `VERIFYING` ou `FAILED`, a mudanca planejada e a explicacao do
+  trabalho atual. Selecao e registro de resultado aparecem somente depois de
+  `READY`, sem esconder quais tratamentos estao sendo preparados.
+- Se a criacao interromper depois de persistir o Experiment, `DRAFT` e
+  `PLANNED` mostram uma acao de continuacao idempotente no nivel da UX. `DRAFT`
+  nunca e descrito como clone em build: a tela diferencia plano nao salvo,
+  plano salvo, fila/build/verificacao e falha.
+- `Select this treatment` muda o conteudo servido pela URL permanente. Somente o
+  card selecionado habilita `Works`, `Fails`, `Inconclusive` ou `Unable to test`;
+  a ordem visivel e selecionar, reproduzir novamente e registrar.
+- Falha abre stage estruturado (manifest, startup, video, audio, DRM, stall, ABR,
+  seek, A/V sync, subtitles ou other) e notes opcionais. Nenhum resultado e
+  inferido do manifest, metadata ou ausencia de clique.
+- Progresso usa contagens reais da iteracao (`N clones`, `X/N tested`). Quando
+  todos os requests possuem resultado, a UI habilita `Evaluate`.
+- Evaluation apresenta status/confidence/summary estruturados. Em
+  `FOLLOWUP_REQUIRED`, a UI permite uma iteracao focada em uma representation e
+  preserva todo o historico anterior.
+- Environments salvos podem ser reutilizados e ficam associados ao Experiment e
+  aos TestResults. QR code nao foi adicionado porque o repositorio nao possuia
+  dependencia e copiar a URL unica atende ao fluxo com menor superficie.
 
 Proibido:
 

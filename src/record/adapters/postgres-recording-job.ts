@@ -1,10 +1,13 @@
 import type pg from "pg";
+import { CloneExecutionPlanSchema } from "../../contracts/experiment.js";
+import type { CloneExecutionPlan } from "../../experiment/domain/clone-spec.js";
 import { RecordingJobLeaseLostError, type ClaimedRecordingJob, type RecordingLifecycleEvent, type RecordingTransition } from "../domain/recording-job.js";
 import type { RecordingJobFailureDisposition, RecordingJobRepository } from "../ports/recording-job.js";
 
 type ClaimedRow = {
   id: string; attempts: number; max_attempts: number; recording_id: string; source_url: string;
   protocol: "hls" | "dash"; requested_duration_seconds: number; requested_start_seconds: number;
+  clone_plan: unknown | null;
 };
 
 export class PostgresRecordingJobRepository implements RecordingJobRepository {
@@ -26,7 +29,8 @@ export class PostgresRecordingJobRepository implements RecordingJobRepository {
             FROM candidate WHERE job.id = candidate.id RETURNING job.*
          )
          SELECT claimed.id, claimed.attempts, claimed.max_attempts, claimed.recording_id,
-                recording.source_url, recording.protocol, recording.requested_duration_seconds, recording.requested_start_seconds
+                recording.source_url, recording.protocol, recording.requested_duration_seconds, recording.requested_start_seconds,
+                recording.clone_plan
            FROM claimed JOIN recordings AS recording ON recording.id = claimed.recording_id`,
         [workerId, leaseMs],
       );
@@ -35,6 +39,7 @@ export class PostgresRecordingJobRepository implements RecordingJobRepository {
       return row ? { id: row.id, attempts: row.attempts, maxAttempts: row.max_attempts, recording: {
         id: row.recording_id, sourceUrl: row.source_url, protocol: row.protocol,
         requestedDurationSeconds: row.requested_duration_seconds, requestedStartSeconds: row.requested_start_seconds,
+        ...(row.clone_plan === null ? {} : { clonePlan: CloneExecutionPlanSchema.parse(row.clone_plan) as unknown as CloneExecutionPlan }),
       } } : null;
     } catch (error) {
       await client.query("ROLLBACK").catch(() => undefined);

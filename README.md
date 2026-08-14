@@ -3,14 +3,15 @@
 Video Harness Space (VHS) e um workspace assistido por IA para investigar
 problemas em sistemas de video streaming.
 
-O MVP valida um fluxo deliberadamente pequeno:
+O MVP preserva o fluxo de investigacao e agora fecha um primeiro loop controlado:
 
 ```text
-Paste URL -> AI investigates -> Receive an excellent report
+URL -> deterministic evidence -> hypotheses -> controlled clones
+    -> same device URL -> attributed results -> conclusion or follow-up
 ```
 
-O projeto esta na Fase 1: thin slice persistente. A fundacao executavel ja inclui
-API Fastify, worker Node.js, PostgreSQL, migration inicial e UI React/Vite.
+A fundacao executavel inclui API Fastify, worker Node.js, PostgreSQL, UI
+React/Vite, Record HLS/DASH VOD e Experiments sobre as mesmas fronteiras.
 
 ## Documentacao
 

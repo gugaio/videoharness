@@ -429,3 +429,110 @@ export async function failPlaybackSession(id: string, sessionId: string, code: s
   const response = await fetch(`/v1/investigations/${encodeURIComponent(id)}/playback-sessions/${encodeURIComponent(sessionId)}/fail`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, message }) });
   await parseResponse(response, z.object({ session: PlaybackSessionSchema }));
 }
+
+const ExperimentStatusSchema = z.enum(["DRAFT", "PLANNED", "BUILDING_CLONES", "AWAITING_TESTS", "EVALUATING", "FOLLOWUP_REQUIRED", "CONCLUDED", "FAILED", "CANCELLED"]);
+const HypothesisSchema = z.object({
+  id: z.string().uuid(), experimentId: z.string().uuid(), statement: z.string(), rationale: z.string(),
+  evidenceFor: z.array(z.string()), evidenceAgainst: z.array(z.string()), status: z.enum(["OPEN", "SUPPORTED", "WEAKENED", "REJECTED", "UNRESOLVED"]),
+  createdAt: z.string(), updatedAt: z.string(),
+});
+const ClonePlanSchema = z.object({
+  version: z.literal("1"), protocol: z.enum(["hls", "dash"]), sourceMode: z.enum(["recorded_snapshot", "live_proxy"]),
+  transformations: z.array(z.object({ kind: z.string(), description: z.string(), representationIds: z.array(z.string()).optional() })),
+  selection: z.object({ videoRepresentationIds: z.array(z.string()), audioMode: z.enum(["preserve", "single"]), expectedAudioRenditionCount: z.number().int().nonnegative() }),
+  processes: z.array(z.object({ binary: z.string(), args: z.array(z.string()) })), whatChanged: z.string(), expectedDiscriminatingSignal: z.string(),
+}).passthrough();
+const TestResultSchema = z.object({
+  id: z.string().uuid(), testRequestId: z.string().uuid(), outcome: z.enum(["PASS", "FAIL", "INCONCLUSIVE", "NOT_TESTED"]),
+  failureStage: z.enum(["LOAD_MANIFEST", "STARTUP", "VIDEO_DECODE", "AUDIO_DECODE", "DRM", "STALL", "ABR_SWITCH", "SEEK", "AV_SYNC", "SUBTITLES", "UNKNOWN"]).optional(),
+  errorCode: z.string().optional(), timeToFirstFrameMs: z.number().optional(), stallObserved: z.boolean().optional(), audioObserved: z.boolean().optional(), videoObserved: z.boolean().optional(),
+  avSyncIssue: z.boolean().optional(), seekIssue: z.boolean().optional(), notes: z.string().optional(), evidenceArtifactIds: z.array(z.string().uuid()), reportedBy: z.string(),
+  reportedVia: z.enum(["USER", "AGENT", "DEVICE", "TRUSTED_TEST"]), testEnvironmentId: z.string().uuid().optional(), occurredAt: z.string(), createdAt: z.string(), updatedAt: z.string(),
+});
+const TestRequestSchema = z.object({
+  id: z.string().uuid(), experimentId: z.string().uuid(), iterationId: z.string().uuid(), cloneId: z.string().uuid(), shortLabel: z.string(), testUrl: z.string(),
+  instructions: z.string(), hypothesisIds: z.array(z.string().uuid()), environmentId: z.string().uuid().optional(), status: z.enum(["PENDING", "COMPLETED", "EXPIRED", "CANCELLED"]),
+  expiresAt: z.string().optional(), result: TestResultSchema.optional(), createdAt: z.string(), updatedAt: z.string(),
+});
+const ExperimentSummarySchema = z.object({
+  id: z.string().uuid(), investigationId: z.string().uuid(), goal: z.string(), status: ExperimentStatusSchema, createdBy: z.string(),
+  targetEnvironmentId: z.string().uuid().optional(), activeTestRequestId: z.string().uuid().optional(), createdAt: z.string(), updatedAt: z.string(),
+});
+const TestEnvironmentSchema = z.object({
+  id: z.string().uuid(), name: z.string(), platform: z.string().optional(), platformVersion: z.string().optional(), manufacturer: z.string().optional(), model: z.string().optional(),
+  firmwareVersion: z.string().optional(), applicationName: z.string().optional(), applicationVersion: z.string().optional(), playerEngine: z.string().optional(), networkNotes: z.string().optional(),
+  createdAt: z.string(), updatedAt: z.string(),
+});
+const ExperimentDetailSchema = ExperimentSummarySchema.extend({
+  targetEnvironment: TestEnvironmentSchema.optional(), hypotheses: z.array(HypothesisSchema),
+  iterations: z.array(z.object({ id: z.string().uuid(), experimentId: z.string().uuid(), iterationNumber: z.number().int(), rationale: z.string(), cloneSpecs: z.array(z.unknown()), status: z.enum(["PLANNED", "BUILDING_CLONES", "AWAITING_TESTS", "EVALUATING", "COMPLETED", "FAILED"]), createdAt: z.string(), updatedAt: z.string() })),
+  clones: z.array(z.object({
+    id: z.string().uuid(), experimentId: z.string().uuid(), iterationId: z.string().uuid(), recordingId: z.string().uuid(), shortLabel: z.string(), isControl: z.boolean(),
+    state: z.enum(["QUEUED", "BUILDING", "VERIFYING", "READY", "FAILED"]), spec: z.unknown(), specHash: z.string(), executionPlan: ClonePlanSchema,
+    provenance: z.record(z.string(), z.unknown()), verification: z.object({ verifiedAt: z.string(), status: z.enum(["PASSED", "FAILED"]), warnings: z.array(z.string()), errors: z.array(z.string()), outputArtifactIds: z.array(z.string().uuid()) }).passthrough().optional(),
+    errorCode: z.string().optional(), errorMessage: z.string().optional(), createdAt: z.string(), updatedAt: z.string(), completedAt: z.string().optional(),
+  })),
+  testRequests: z.array(TestRequestSchema),
+  evaluations: z.array(z.object({
+    id: z.string().uuid(), experimentId: z.string().uuid(), iterationId: z.string().uuid(), status: z.enum(["CONCLUDED", "MORE_TESTS_REQUIRED", "INCONCLUSIVE"]),
+    confidence: z.enum(["LOW", "MEDIUM", "HIGH"]), summary: z.string(), hypothesisUpdates: z.array(z.object({ hypothesisId: z.string().uuid(), status: z.string(), evidenceFor: z.array(z.string()), evidenceAgainst: z.array(z.string()), explanation: z.string() })),
+    evidenceBundle: z.record(z.string(), z.unknown()), proposedNextExperimentPlan: z.object({ rationale: z.string(), remainingHypothesisIds: z.array(z.string().uuid()), guidance: z.array(z.string()) }).optional(), createdAt: z.string(),
+  })),
+});
+
+export type ExperimentSummary = z.infer<typeof ExperimentSummarySchema>;
+export type ExperimentDetail = z.infer<typeof ExperimentDetailSchema>;
+export type ExperimentTestRequest = z.infer<typeof TestRequestSchema>;
+export type TestEnvironment = z.infer<typeof TestEnvironmentSchema>;
+
+export async function listInvestigationExperiments(investigationId: string): Promise<ExperimentSummary[]> {
+  const response = await fetch(`/v1/investigations/${encodeURIComponent(investigationId)}/experiments`);
+  return (await parseResponse(response, z.object({ experiments: z.array(ExperimentSummarySchema) }))).experiments;
+}
+export async function getExperiment(id: string): Promise<ExperimentDetail> {
+  const response = await fetch(`/v1/experiments/${encodeURIComponent(id)}`);
+  return (await parseResponse(response, z.object({ experiment: ExperimentDetailSchema }))).experiment;
+}
+export async function createExperiment(investigationId: string, input: { goal: string; hypothesis: string; rationale: string; targetEnvironmentId?: string }): Promise<ExperimentDetail> {
+  const response = await fetch(`/v1/investigations/${encodeURIComponent(investigationId)}/experiments`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      goal: input.goal, createdBy: "workspace-user", ...(input.targetEnvironmentId ? { targetEnvironmentId: input.targetEnvironmentId } : {}),
+      hypotheses: [{ statement: input.hypothesis, rationale: input.rationale, evidenceFor: [], evidenceAgainst: [] }],
+    }),
+  });
+  return (await parseResponse(response, z.object({ experiment: ExperimentDetailSchema }))).experiment;
+}
+export async function previewCloneRecipe(input: { recipe: "control" | "single_video_representation" | "force_representation" | "single_audio"; investigationId: string; shortLabel: string; hypothesisIds: string[]; representationId?: string }): Promise<{ spec: Record<string, unknown>; plan: z.infer<typeof ClonePlanSchema> }> {
+  const response = await fetch("/v1/clone-specs/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ recipe: input }) });
+  return parseResponse(response, z.object({ spec: z.record(z.string(), z.unknown()), plan: ClonePlanSchema }));
+}
+export async function createExperimentIteration(experimentId: string, rationale: string, cloneSpecs: unknown[]): Promise<{ id: string }> {
+  const response = await fetch(`/v1/experiments/${encodeURIComponent(experimentId)}/iterations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rationale, cloneSpecs }) });
+  return (await parseResponse(response, z.object({ iteration: z.object({ id: z.string().uuid() }).passthrough() }))).iteration;
+}
+export async function queueExperimentClones(experimentId: string, iterationId: string): Promise<void> {
+  const response = await fetch(`/v1/experiments/${encodeURIComponent(experimentId)}/clones`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ iterationId }) });
+  await parseResponse(response, z.object({ experiment: ExperimentDetailSchema.nullable() }));
+}
+export async function activateExperimentTest(testRequestId: string): Promise<{ testRequest: ExperimentTestRequest; playbackUrl: string }> {
+  const response = await fetch(`/v1/test-requests/${encodeURIComponent(testRequestId)}/activate`, { method: "POST" });
+  return parseResponse(response, z.object({ testRequest: TestRequestSchema, playbackUrl: z.string() }));
+}
+export async function submitExperimentTestResult(testRequestId: string, input: { outcome: "PASS" | "FAIL" | "INCONCLUSIVE" | "NOT_TESTED"; failureStage?: z.infer<typeof TestResultSchema>["failureStage"]; notes?: string; testEnvironmentId?: string }): Promise<void> {
+  const response = await fetch(`/v1/test-requests/${encodeURIComponent(testRequestId)}/results`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...input, evidenceArtifactIds: [], reportedBy: "workspace-user", reportedVia: "USER", occurredAt: new Date().toISOString() }),
+  });
+  await parseResponse(response, z.object({ result: TestResultSchema }));
+}
+export async function evaluateExperiment(id: string): Promise<void> {
+  const response = await fetch(`/v1/experiments/${encodeURIComponent(id)}/evaluate`, { method: "POST" });
+  await parseResponse(response, z.object({ evaluation: z.unknown() }));
+}
+export async function listTestEnvironments(): Promise<TestEnvironment[]> {
+  const response = await fetch("/v1/test-environments");
+  return (await parseResponse(response, z.object({ environments: z.array(TestEnvironmentSchema) }))).environments;
+}
+export async function createTestEnvironment(input: { name: string; platform?: string; model?: string; firmwareVersion?: string }): Promise<TestEnvironment> {
+  const response = await fetch("/v1/test-environments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
+  return (await parseResponse(response, z.object({ environment: TestEnvironmentSchema }))).environment;
+}

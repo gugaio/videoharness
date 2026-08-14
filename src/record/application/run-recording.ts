@@ -3,6 +3,7 @@ import { StreamCollectionError } from "../../stream-tools/errors.js";
 import type { RecordingJobRepository } from "../ports/recording-job.js";
 import type { RecordingMaterializer } from "../ports/recording-materializer.js";
 import type { RecordingStore } from "../ports/recording-store.js";
+import type { RecordingObserver } from "../ports/recording-observer.js";
 
 export type RecordingWorker = { runNext(): Promise<boolean> };
 
@@ -14,6 +15,7 @@ export function createRecordingWorker(input: {
   workerId: string;
   leaseMs: number;
   heartbeatMs?: number;
+  observer?: RecordingObserver;
 }): RecordingWorker {
   const heartbeatMs = input.heartbeatMs ?? Math.max(1_000, Math.floor(input.leaseMs / 3));
   return {
@@ -35,6 +37,7 @@ export function createRecordingWorker(input: {
       const heartbeatTimer = setInterval(() => void heartbeat(), heartbeatMs);
 
       try {
+        await input.observer?.started({ job }).catch(() => undefined);
         await input.repository.transition(job.id, input.workerId, input.leaseMs, validatingTransition(job));
         const workspace = await input.store.prepareWorkspace(job.recording.id);
         await input.repository.transition(job.id, input.workerId, input.leaseMs, collectingTransition(job));
@@ -58,11 +61,18 @@ export function createRecordingWorker(input: {
           message: `The ${job.recording.protocol.toUpperCase()} VOD recording is ready to be served locally.`,
           payload: { state: "ready", coverageSeconds: result.coverageSeconds, totalBytes: result.totalBytes, resourceCount: result.resources.length },
         });
+        try {
+          await input.observer?.completed({ job, result });
+        } catch (observerError) {
+          const message = observerError instanceof Error ? observerError.message : "Experiment clone observer failed";
+          await input.observer?.failed({ job, errorCode: "CLONE_OBSERVER_FAILED", errorMessage: message.slice(0, 500) }).catch(() => undefined);
+        }
       } catch (error) {
         await input.store.discardWorkspace(job.recording.id).catch(() => undefined);
         if (published) await input.store.removePublished(job.recording.id).catch(() => undefined);
         const failure = classifyFailure(error);
-        await input.repository.fail(job.id, input.workerId, failure.code, failure.message, failure.retryable);
+        const disposition = await input.repository.fail(job.id, input.workerId, failure.code, failure.message, failure.retryable);
+        if (disposition === "failed") await input.observer?.failed({ job, errorCode: failure.code, errorMessage: failure.message }).catch(() => undefined);
       } finally {
         clearInterval(heartbeatTimer);
         await activeHeartbeat;

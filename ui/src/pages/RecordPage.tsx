@@ -18,6 +18,7 @@ import {
   type RecordingEvent,
 } from "../lib/api";
 import { formatBytes, shortId } from "../lib/format";
+import { RecordingBrowserPlayer } from "../components/RecordingBrowserPlayer";
 
 type RecordingState = "queued" | "validating" | "collecting" | "ready" | "failed";
 type PlaybackMode = "normal" | "force-abr" | "control-1080p";
@@ -191,24 +192,27 @@ export function RecordingPage(): JSX.Element {
         </div>
 
         {value.state === "ready" && (
-          <ShapingPanel
-            run={playback}
-            url={fixedPlaybackUrl}
-            copied={copied}
-            creating={run.isPending}
-            protocol={value.protocol}
-            error={run.error?.message}
-            onStart={(mode) => run.mutate(mode)}
-            stopping={finish.isPending}
-            stopError={finish.error?.message}
-            onStop={() => finish.mutate()}
-            onCopy={() => {
-              void navigator.clipboard.writeText(fixedPlaybackUrl).then(() => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1600);
-              });
-            }}
-          />
+          <>
+            <ShapingPanel
+              run={playback}
+              url={fixedPlaybackUrl}
+              copied={copied}
+              creating={run.isPending}
+              protocol={value.protocol}
+              error={run.error?.message}
+              onStart={(mode) => run.mutate(mode)}
+              stopping={finish.isPending}
+              stopError={finish.error?.message}
+              onStop={() => finish.mutate()}
+              onCopy={() => {
+                void navigator.clipboard.writeText(fixedPlaybackUrl).then(() => {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1600);
+                });
+              }}
+            />
+            <RecordingBrowserPlayer protocol={value.protocol} url={fixedPlaybackUrl} />
+          </>
         )}
 
         {playback && <AbrDashboard run={playback} items={requests.data ?? []} />}

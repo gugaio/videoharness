@@ -283,9 +283,10 @@ describe("recording routes", () => {
     await fs.writeFile(path.join(workspace.path, "index.m3u8"), "#EXTM3U\n");
     await store.publish(workspace);
     const run = { id: runId, recordingId, state: "created" as const, maxDurationSeconds: 300, profile: { schemaVersion: 1 as const, name: "baseline", stages: [{ afterVideoRequests: 0, bandwidthKbps: 100000, latencyMs: 0 }] }, createdAt: "2026-08-06T12:00:00.000Z", expiresAt: "2026-08-07T12:00:00.000Z" };
+    let openRunLookups = 0;
     const server = buildApiServer({
       database: { check: async () => undefined }, startInvestigation, investigationQueries,
-      playbackRuns: { create: async () => "recording_not_ready", findById: async () => run, findLatestOpen: async () => run, finish: async () => null, recordDelivery: async () => undefined, listDeliveries: async () => [] },
+      playbackRuns: { create: async () => "recording_not_ready", findById: async () => run, findLatestOpen: async () => { openRunLookups += 1; return run; }, finish: async () => null, recordDelivery: async () => undefined, listDeliveries: async () => [] },
       recordingStore: store,
     });
 
@@ -293,9 +294,47 @@ describe("recording routes", () => {
     expect(active.statusCode).toBe(200);
     expect(active.body).toBe("#EXTM3U\n");
     expect(active.headers["cache-control"]).toBe("no-store");
+    expect(active.headers["access-control-allow-origin"]).toBe("*");
+    expect(active.headers["access-control-expose-headers"]).toBe("Accept-Ranges, Content-Length, Content-Range");
+    expect(active.headers["accept-ranges"]).toBe("bytes");
+    expect(openRunLookups).toBe(1);
+
+    const preflight = await server.inject({
+      method: "OPTIONS",
+      url: `/streams/recordings/${recordingId}/index.m3u8`,
+      headers: { origin: "https://player.example", "access-control-request-method": "GET", "access-control-request-headers": "range" },
+    });
+    expect(preflight.statusCode).toBe(204);
+    expect(preflight.headers["access-control-allow-methods"]).toBe("GET, HEAD, OPTIONS");
+    expect(preflight.headers["access-control-allow-headers"]).toBe("Range");
+    expect(preflight.headers["access-control-max-age"]).toBe("86400");
+    expect(openRunLookups).toBe(1);
+
+    const head = await server.inject({ method: "HEAD", url: `/streams/recordings/${recordingId}/index.m3u8` });
+    expect(head.statusCode).toBe(200);
+    expect(head.body).toBe("");
+    expect(head.headers["content-length"]).toBe("8");
+    expect(openRunLookups).toBe(1);
+
+    const range = await server.inject({ method: "GET", url: `/streams/recordings/${recordingId}/index.m3u8`, headers: { range: "bytes=1-4" } });
+    expect(range.statusCode).toBe(206);
+    expect(range.body).toBe("EXTM");
+    expect(range.headers["content-length"]).toBe("4");
+    expect(range.headers["content-range"]).toBe("bytes 1-4/8");
+
+    const suffixRange = await server.inject({ method: "GET", url: `/streams/recordings/${recordingId}/index.m3u8`, headers: { range: "bytes=-2" } });
+    expect(suffixRange.statusCode).toBe(206);
+    expect(suffixRange.body).toBe("U\n");
+
+    const invalidRange = await server.inject({ method: "GET", url: `/streams/recordings/${recordingId}/index.m3u8`, headers: { range: "bytes=40-50" } });
+    expect(invalidRange.statusCode).toBe(416);
+    expect(invalidRange.headers["content-range"]).toBe("bytes */8");
+    expect(invalidRange.headers["access-control-allow-origin"]).toBe("*");
+    expect(invalidRange.json()).toMatchObject({ error: { code: "INVALID_PLAYBACK_RANGE" } });
 
     const missing = await server.inject({ method: "GET", url: `/streams/recordings/${recordingId}/missing.m3u8` });
     expect(missing.statusCode).toBe(404);
+    expect(missing.headers["access-control-allow-origin"]).toBe("*");
 
     const traversal = await server.inject({ method: "GET", url: `/streams/recordings/${recordingId}/../outside` });
     expect(traversal.statusCode).toBe(404);

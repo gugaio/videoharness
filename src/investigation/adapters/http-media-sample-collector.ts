@@ -41,13 +41,26 @@ export class HttpMediaSampleCollector implements MediaSampleCollector {
         continue;
       }
       if (hls.initSegment?.url) {
-        await onProgress?.({ stage: "media_sample", message: `Fetching the initialization segment of ${manifest.logicalKey}…`, completed: samples.length });
-        const init = await this.fetch({
-          logicalKey: sampleKey(manifest.logicalKey, "init"),
-          kind: "init-segment",
-          sourceManifestLogicalKey: manifest.logicalKey,
-          url: hls.initSegment.url,
-        });
+        await onProgress?.({ stage: "media_sample", message: `Fetching the initialization segment of ${manifest.logicalKey}…` });
+        let init: MediaSample;
+        try {
+          init = await this.fetch({
+            logicalKey: sampleKey(manifest.logicalKey, "init"),
+            kind: "init-segment",
+            sourceManifestLogicalKey: manifest.logicalKey,
+            url: hls.initSegment.url,
+          });
+        } catch (error) {
+          await recordSampleFailure({
+            error,
+            subject: `The initialization segment of ${manifest.logicalKey}`,
+            limitations,
+            onProgress,
+            resourceKind: "init_segment",
+            logicalKey: manifest.logicalKey,
+          });
+          continue;
+        }
         if (totalBytes + init.content.bytes.byteLength > this.maxTotalBytes) {
           limitations.push(`${manifest.logicalKey} init segment exceeds the investigation byte budget.`);
           continue;
@@ -60,19 +73,34 @@ export class HttpMediaSampleCollector implements MediaSampleCollector {
         limitations.push(`${manifest.logicalKey} declares no segment durations; the reported incident time could not be mapped, so the full playlist window was sampled.`);
       }
       const indexes = window.indexes;
-      for (const index of indexes) {
+      for (const [position, index] of indexes.entries()) {
         const segment = segments[index]!;
         if (!segment.url) continue;
-        await onProgress?.({ stage: "media_sample", message: `Sampling media segment ${index + 1} of ${indexes.length} from ${manifest.logicalKey}…`, completed: samples.length, total: indexes.length });
-        const media = await this.fetch({
-          logicalKey: sampleKey(manifest.logicalKey, `media/${index}`),
-          kind: "media-segment",
-          sourceManifestLogicalKey: manifest.logicalKey,
-          sampleIndex: index,
-          url: segment.url,
-          ...(segment.sequence === undefined ? {} : { sequence: segment.sequence }),
-          ...(segment.duration === undefined ? {} : { declaredDuration: segment.duration }),
-        });
+        const sourceSegment = segment.sequence ?? index;
+        await onProgress?.({ stage: "media_sample", message: `Sampling media sample ${position + 1} of ${indexes.length} from ${manifest.logicalKey} (source segment ${sourceSegment})…`, completed: position, total: indexes.length });
+        let media: MediaSample;
+        try {
+          media = await this.fetch({
+            logicalKey: sampleKey(manifest.logicalKey, `media/${index}`),
+            kind: "media-segment",
+            sourceManifestLogicalKey: manifest.logicalKey,
+            sampleIndex: index,
+            url: segment.url,
+            ...(segment.sequence === undefined ? {} : { sequence: segment.sequence }),
+            ...(segment.duration === undefined ? {} : { declaredDuration: segment.duration }),
+          });
+        } catch (error) {
+          await recordSampleFailure({
+            error,
+            subject: `${manifest.logicalKey} source segment ${sourceSegment}`,
+            limitations,
+            onProgress,
+            resourceKind: "media_segment",
+            logicalKey: manifest.logicalKey,
+            sourceSegment,
+          });
+          break;
+        }
         if (totalBytes + media.content.bytes.byteLength > this.maxTotalBytes) {
           limitations.push(`${manifest.logicalKey} media sample collection stopped at segment ${index}; the investigation byte budget was reached.`);
           break;
@@ -147,27 +175,66 @@ export class HttpMediaSampleCollector implements MediaSampleCollector {
     for (const representation of selected) {
       if (!representation.initializationUrl) limitations.push(`Representation ${representation.id} has no initialization URL in its SegmentTemplate.`);
       else {
-        await onProgress?.({ stage: "media_sample", message: `Fetching the initialization segment of DASH representation ${representation.id}…`, completed: samples.length });
-        const init = await this.fetch({ logicalKey: `sample/dash/${safeKey(representation.id)}/init`, kind: "init-segment", sourceManifestLogicalKey, representationId: representation.id, periodIndex: representation.periodIndex, adaptationSetIndex: representation.adaptationSetIndex, url: representation.initializationUrl });
+        await onProgress?.({ stage: "media_sample", message: `Fetching the initialization segment of DASH representation ${representation.id}…` });
+        let init: MediaSample;
+        try {
+          init = await this.fetch({ logicalKey: `sample/dash/${safeKey(representation.id)}/init`, kind: "init-segment", sourceManifestLogicalKey, representationId: representation.id, periodIndex: representation.periodIndex, adaptationSetIndex: representation.adaptationSetIndex, url: representation.initializationUrl });
+        } catch (error) {
+          await recordSampleFailure({
+            error,
+            subject: `The initialization segment of DASH representation ${representation.id}`,
+            limitations,
+            onProgress,
+            resourceKind: "init_segment",
+            representationId: representation.id,
+          });
+          continue;
+        }
         if (totalBytes + init.content.bytes.byteLength <= this.maxTotalBytes) { totalBytes += init.content.bytes.byteLength; samples.push(init); }
         else { limitations.push(`The initialization segment for ${representation.id} exceeds the investigation byte budget.`); continue; }
       }
       const segmentIndexes = dashWindowIndexes(representation.segments, targetSeconds, this.maxSeconds);
-      for (const index of segmentIndexes) {
+      for (const [position, index] of segmentIndexes.entries()) {
         const segment = representation.segments[index];
         if (!segment?.url) continue;
-        await onProgress?.({ stage: "media_sample", message: `Sampling media segment ${index + 1} of ${segmentIndexes.length} from DASH representation ${representation.id}…`, completed: samples.length, total: segmentIndexes.length });
-        const media = await this.fetch({
-          logicalKey: `sample/dash/${safeKey(representation.id)}/media/${segment.number}`,
-          kind: "media-segment", sourceManifestLogicalKey, sampleIndex: index, sequence: segment.number,
-          declaredDuration: segment.presentationEndSeconds - segment.presentationStartSeconds,
-          representationId: representation.id, periodIndex: representation.periodIndex, adaptationSetIndex: representation.adaptationSetIndex,
-          presentationStartSeconds: segment.presentationStartSeconds, presentationEndSeconds: segment.presentationEndSeconds, url: segment.url,
-        });
+        await onProgress?.({ stage: "media_sample", message: `Sampling media sample ${position + 1} of ${segmentIndexes.length} from DASH representation ${representation.id} (source segment ${segment.number})…`, completed: position, total: segmentIndexes.length });
+        let media: MediaSample;
+        try {
+          media = await this.fetch({
+            logicalKey: `sample/dash/${safeKey(representation.id)}/media/${segment.number}`,
+            kind: "media-segment", sourceManifestLogicalKey, sampleIndex: index, sequence: segment.number,
+            declaredDuration: segment.presentationEndSeconds - segment.presentationStartSeconds,
+            representationId: representation.id, periodIndex: representation.periodIndex, adaptationSetIndex: representation.adaptationSetIndex,
+            presentationStartSeconds: segment.presentationStartSeconds, presentationEndSeconds: segment.presentationEndSeconds, url: segment.url,
+          });
+        } catch (error) {
+          await recordSampleFailure({
+            error,
+            subject: `DASH representation ${representation.id} source segment ${segment.number}`,
+            limitations,
+            onProgress,
+            resourceKind: "media_segment",
+            representationId: representation.id,
+            sourceSegment: segment.number,
+          });
+          break;
+        }
         if (targetSeconds !== undefined && segment.presentationStartSeconds <= targetSeconds && segment.presentationEndSeconds >= targetSeconds) {
-          const observedHashes = await this.repeatHashes(segment.url, media.source!.sha256);
-          media.source = { ...media.source!, observedHashes };
-          if (new Set(observedHashes).size > 1) limitations.push(`Critical delivery evidence: ${representation.id} segment ${segment.number} returned different SHA-256 values across repeated requests.`);
+          try {
+            const observedHashes = await this.repeatHashes(segment.url, media.source!.sha256);
+            media.source = { ...media.source!, observedHashes };
+            if (new Set(observedHashes).size > 1) limitations.push(`Critical delivery evidence: ${representation.id} segment ${segment.number} returned different SHA-256 values across repeated requests.`);
+          } catch (error) {
+            await recordSampleFailure({
+              error,
+              subject: `Repeated hash observation for DASH representation ${representation.id} source segment ${segment.number}`,
+              limitations,
+              onProgress,
+              resourceKind: "repeat_hash",
+              representationId: representation.id,
+              sourceSegment: segment.number,
+            });
+          }
         }
         if (totalBytes + media.content.bytes.byteLength > this.maxTotalBytes) { limitations.push(`DASH collection stopped before ${representation.id} segment ${segment.number}; the investigation byte budget was reached.`); break; }
         totalBytes += media.content.bytes.byteLength;
@@ -264,3 +331,31 @@ function contiguousWindow(length: number, starts: number[], ends: number[], pivo
   return [...selected].sort((leftIndex, rightIndex) => leftIndex - rightIndex);
 }
 function safeKey(value: string): string { return value.replace(/[^a-z0-9._-]+/gi, "-").slice(0, 80) || "representation"; }
+function sampleFailure(error: unknown, subject: string): { errorCode: string; message: string } {
+  if (!(error instanceof StreamCollectionError)) throw error;
+  return { errorCode: error.code, message: `${subject} could not be sampled (${error.code}): ${error.message}` };
+}
+async function recordSampleFailure(input: {
+  error: unknown;
+  subject: string;
+  limitations: string[];
+  onProgress: ((progress: CollectionProgress) => Promise<void>) | undefined;
+  resourceKind: NonNullable<CollectionProgress["limitation"]>["resourceKind"];
+  logicalKey?: string;
+  representationId?: string;
+  sourceSegment?: number;
+}): Promise<void> {
+  const failure = sampleFailure(input.error, input.subject);
+  input.limitations.push(`${failure.message}.`);
+  await input.onProgress?.({
+    stage: "media_sample",
+    message: `${failure.message}. Remaining deterministic evidence will continue.`,
+    limitation: {
+      errorCode: failure.errorCode,
+      resourceKind: input.resourceKind,
+      ...(input.logicalKey ? { logicalKey: input.logicalKey } : {}),
+      ...(input.representationId ? { representationId: input.representationId } : {}),
+      ...(input.sourceSegment === undefined ? {} : { sourceSegment: input.sourceSegment }),
+    },
+  });
+}

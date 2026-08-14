@@ -32,12 +32,17 @@ Indice de onboarding para humanos e agentes.
 - O worker usa claim transacional, lease, heartbeat e retry limitado.
 - Homepage cria o caso e a tela restaura eventos e apresenta a conclusao.
 - Fase ativa: **Record R2 - DASH VOD**.
+- Um slice vertical de Experiments fecha o loop Investigation -> CloneSpec ->
+  Recording -> teste real -> evaluation, sem substituir o Record existente.
 - A linha Investigate continua funcional e auditavel; sua proxima reorganizacao
   visual fica pausada enquanto o primeiro slice Record e construido.
-- Record materializara uma janela VOD de todas as variants suportadas, publicara
-  uma URL por playback run e registrara requests do device sob profiles de rede.
+- Record materializa uma janela VOD das variants suportadas, publica uma URL
+  fixa por recording e registra requests do device sob profiles de rede.
 - DASH VOD Record usa o mesmo data plane/journal de HLS e ja correlaciona
   mudancas reais de Representation em `AbrSwitchEvidence` observado.
+- Experiments usam uma unica `/streams/experiments/:experimentId/*` por device;
+  a UI seleciona CONTROL/tratamento no servidor antes de cada replay e atribui o
+  resultado ao TestRequest selecionado.
 - A primeira fatia real coleta manifests HLS/DASH por uma fronteira protegida
   contra SSRF, persiste artifact + evidence bundle e gera report deterministico.
 - Artifacts agora possuem identidade logica por investigation, sao registrados em

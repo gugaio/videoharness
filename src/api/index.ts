@@ -15,21 +15,39 @@ import { createRecordingQueries } from "../record/application/recording-queries.
 import { PostgresPlaybackRuns } from "../record/adapters/postgres-playback-run.js";
 import { createPlaybackRun } from "../record/application/playback-runs.js";
 import { FilesystemRecordingStore } from "../record/adapters/filesystem-recording-store.js";
+import { PostgresExperimentRepository } from "../experiment/adapters/postgres-experiment-repository.js";
+import { createExperimentService } from "../experiment/application/experiments.js";
 
 const config = loadConfig();
 const pool = createDatabasePool(config.databaseUrl);
 const investigationQuery = new PostgresInvestigationQuery(pool);
+const investigationQueries = createInvestigationQueries(investigationQuery);
+const experimentRepository = new PostgresExperimentRepository(pool);
+const playbackRuns = new PostgresPlaybackRuns(pool);
+const experimentService = createExperimentService({
+  repository: experimentRepository,
+  investigations: investigationQueries,
+  policy: {
+    maxClonesPerIteration: config.experimentMaxClonesPerIteration,
+    maxIterations: config.experimentMaxIterations,
+    maxClonesPerExperiment: config.experimentMaxClonesTotal,
+    requireFirstIterationControl: true,
+  },
+  logger,
+});
 const server = buildApiServer({
   database: createDatabaseHealth(pool),
   startInvestigation: createStartInvestigation(new PostgresInvestigationIntake(pool)),
-  investigationQueries: createInvestigationQueries(investigationQuery),
+  investigationQueries,
   playbackSessions: new PostgresPlaybackSessions(pool),
   artifactStore: new FilesystemArtifactStore(config.dataDir),
   startRecording: createStartRecording(new PostgresRecordingIntake(pool)),
   recordingQueries: createRecordingQueries(new PostgresRecordingQuery(pool)),
-  createPlaybackRun: createPlaybackRun(new PostgresPlaybackRuns(pool)),
-  playbackRuns: new PostgresPlaybackRuns(pool),
+  createPlaybackRun: createPlaybackRun(playbackRuns),
+  playbackRuns,
   recordingStore: new FilesystemRecordingStore(config.dataDir),
+  experimentService,
+  experimentStreams: experimentRepository,
   version: process.env.npm_package_version ?? "0.1.0",
 });
 

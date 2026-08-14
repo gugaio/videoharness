@@ -16,7 +16,7 @@ flowchart LR
     Worker --> AI[AI provider]
     Worker --> FS[(Local artifacts)]
     API --> FS
-    Device[Device/player] -->|signed playback URL, 24 h| Delivery[Record data plane]
+    Device[Device/player] -->|fixed recording or experiment URL| Delivery[Record data plane]
     Delivery --> FS
     Delivery --> DB
 ```
@@ -44,6 +44,11 @@ Casos de uso esperados:
 - `createPlaybackRun`;
 - `serveRecordedResource`;
 - `finishPlaybackRun`.
+- `createExperiment`;
+- `compileCloneSpec`;
+- `activateTestRequest`;
+- `submitTestResult`;
+- `evaluateExperiment`;
 - `assessStreamAbr`;
 - `analyzeDashSwitchCandidates`;
 - `correlateAbrSwitches`.
@@ -59,6 +64,8 @@ Casos de uso esperados:
 - `RecordingRepository`;
 - `RecordingJobRepository`;
 - `RecordingStore`.
+- `ExperimentRepository`;
+- `ExperimentStreamResolver`.
 
 ### Adapters
 
@@ -164,8 +171,8 @@ sequenceDiagram
     K->>F: stage full supported ladder
     K->>D: publish resources + recording ready
     U->>A: POST /playback-runs with network profile
-    A->>D: run + token hash
-    A-->>U: opaque playback URL
+    A->>D: run + network profile
+    A-->>U: fixed recording playback URL
     P->>S: master, variants and chunks
     S->>F: registered local resource
     S-->>P: paced bytes under shared run budget
@@ -173,8 +180,46 @@ sequenceDiagram
     U->>A: inspect or finish run
 ```
 
-`Recording` e uma origem imutavel e reutilizavel. `PlaybackRun` e um experimento
-com token, profile e evidencia proprios. Um run nunca altera os bytes gravados.
+`Recording` e uma origem imutavel e reutilizavel. `PlaybackRun` e uma execucao
+com profile e evidencia proprios. Um run nunca altera os bytes gravados.
+
+## Fluxo de Experiment
+
+```mermaid
+sequenceDiagram
+    participant U as User/REST client
+    participant A as Shared application services
+    participant D as PostgreSQL
+    participant K as Existing Record worker
+    participant F as Recording storage
+    participant P as Device/player
+
+    U->>A: Investigation + diagnostic goal + hypotheses
+    A->>D: Experiment DRAFT
+    U->>A: small iteration of versioned CloneSpecs
+    A->>A: validate + compile declarative plans
+    A->>D: iteration + Record jobs + provenance
+    K->>F: materialize selected local resources
+    K->>A: deterministic post-clone verification
+    A->>D: clone READY + TestRequests
+    U->>A: activate CONTROL
+    P->>F: same /streams/experiments/:id URL
+    U->>A: attributed TestResult
+    U->>A: activate treatment, replay same URL, result
+    U->>A: evaluate complete evidence bundle
+    A->>D: conclusion or FOLLOWUP_REQUIRED
+```
+
+`Experiment` e a abstracao diagnostica; `ExperimentClone` referencia um
+`Recording` como tratamento controlado. O modulo `experiment/` nao duplica
+download, storage, fila ou data plane: ele compila selecoes para o contrato do
+Record, observa seu lifecycle e mantem hipoteses/results/evaluation. UI e REST
+chamam o mesmo application service.
+
+O URL do experiment e permanente. `active_test_request_id` seleciona qual
+recording publicado a rota entrega. Essa selecao e controle, nao mutacao dos bytes;
+paths continuam locais e registrados, sem origin fetch. `TestResult` e sempre uma
+observacao atribuida e nunca e derivado de metadata ou texto remoto.
 
 ## Estado e persistencia
 
@@ -188,6 +233,8 @@ PostgreSQL e a fonte de verdade para:
 - recordings, recording jobs e recording events;
 - recorded resource metadata;
 - playback runs e delivery requests.
+- experiments, hypotheses, iterations, experimental clones, test environments,
+  test requests/results e evaluations.
 
 O filesystem armazena arquivos, nunca o estado principal do workflow. Cada
 investigacao ou recording usa um workspace isolado.
@@ -268,6 +315,11 @@ src/
     ports/
     adapters/
     stream-tools/
+  experiment/
+    domain/
+    application/
+    ports/
+    adapters/
   abr/
     domain/
     application/

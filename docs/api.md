@@ -1,13 +1,14 @@
 # API - Video Harness Space
 
-Status: Investigate, clone HLS VOD e DASH VOD estatico e data plane de Record
-estao implementados. Investigate produz transicoes ABR candidatas a partir da
+Status: Investigate, experiments controlados, clone HLS VOD e DASH VOD estatico
+e data plane de Record estao implementados. Investigate produz transicoes ABR candidatas a partir da
 URL; Record correlaciona transicoes efetivamente observadas no journal. Evidencia
 de player/device permanece opcional e nunca e inferida quando ausente. Toda
 investigation nova inclui um `AbrAssessment` HLS ou DASH.
 
 Prefixo do control plane: `/v1`. O data plane consumido pelo device usa
-`/streams/recordings/:recordingId/*`. A URL e fixa por recording: iniciar ou
+`/streams/recordings/:recordingId/*` e `/streams/experiments/:experimentId/*`.
+A URL e fixa por recording ou experiment: iniciar ou
 encerrar um playback run nunca muda a URL que o device ja tem. Cada request
 resolve o run aberto atual para aplicar o perfil de rede e atribuir o journal;
 sem run ativo, o clone e servido com o perfil baseline.
@@ -40,7 +41,17 @@ flowchart TD
     Client --> Run[GET /v1/recordings/:id/playback-runs/:runId]
     Client --> Requests[GET /v1/recordings/:id/playback-runs/:runId/requests]
     Client --> AbrSwitches[GET /v1/recordings/:id/playback-runs/:runId/abr-switches]
-    Device[Device/player] --> DataPlane[GET /streams/recordings/:recordingId/*]
+    Client --> Experiment[POST/GET /v1/investigations/:id/experiments]
+    Experiment --> Iteration[POST /v1/experiments/:id/iterations]
+    Iteration --> CloneJobs[POST /v1/experiments/:id/clones]
+    CloneJobs --> RecordingWorker
+    Client --> SelectTreatment[POST /v1/test-requests/:id/activate]
+    Client --> TestResult[POST /v1/test-requests/:id/results]
+    Client --> Evaluate[POST /v1/experiments/:id/evaluate]
+    SelectTreatment --> ExperimentDataPlane[GET/HEAD/OPTIONS /streams/experiments/:experimentId/*]
+    Device --> ExperimentDataPlane
+    ExperimentDataPlane --> RecordingStore
+    Device[Browser/device player] --> DataPlane[GET/HEAD/OPTIONS /streams/recordings/:recordingId/*]
     DataPlane --> RecordingStore
     DataPlane --> Requests
     Requests --> AbrSwitches
@@ -73,6 +84,24 @@ flowchart TD
 | Implementado R2 | GET | `/v1/recordings/:id/playback-runs/:runId/abr-switches` | `AbrSwitchEvidence` por transicao observada no journal |
 | Implementado R1 | POST | `/v1/recordings/:id/playback-runs/:runId/finish` | Encerrar run e congelar o resumo |
 | Implementado R1/R2 | GET | `/streams/recordings/:recordingId/*` | URL fixa por recording; serve recursos publicados com shaping do run ativo |
+| Implementado R1/R2 | HEAD | `/streams/recordings/:recordingId/*` | Consulta headers, tamanho e Range sem shaping ou journal |
+| Implementado R1/R2 | OPTIONS | `/streams/recordings/:recordingId/*` | Preflight CORS para GET/HEAD e header `Range` |
+| Implementado | POST | `/v1/investigations/:id/experiments` | Criar Experiment e hipoteses estruturadas |
+| Implementado | GET | `/v1/investigations/:id/experiments` | Listar experiments do caso |
+| Implementado | GET | `/v1/experiments/:id` | Agregado com hipoteses, iteracoes, clones, requests e avaliacoes |
+| Implementado | POST | `/v1/experiments/:id/iterations` | Persistir um plano pequeno de CloneSpecs |
+| Implementado | GET | `/v1/experiments/:id/iterations/:iterationId` | Consultar uma iteracao e seus clones/tests |
+| Implementado | POST | `/v1/experiments/:id/clones` | Enfileirar clones no worker Record existente |
+| Implementado | GET | `/v1/clones/:id` | Estado, plano, verificacao e provenance do clone |
+| Implementado | GET | `/v1/experiments/:id/test-requests` | Listar testes humanos/device |
+| Implementado | POST | `/v1/test-requests/:id/activate` | Selecionar o tratamento entregue pela URL fixa do experiment |
+| Implementado | POST | `/v1/test-requests/:id/results` | Registrar resultado atribuido e estruturado |
+| Implementado | POST | `/v1/experiments/:id/evaluate` | Avaliar evidencias e concluir ou pedir follow-up |
+| Implementado | GET/POST | `/v1/test-environments` | Listar ou salvar environments reutilizaveis |
+| Implementado | GET | `/v1/clone-capabilities` | Operacoes realmente suportadas e limites atuais |
+| Implementado | POST | `/v1/clone-specs/validate` | Validacao tipada sem executar media |
+| Implementado | POST | `/v1/clone-specs/preview` | CloneSpec/recipe para plano declarativo sem executar |
+| Implementado | GET/HEAD/OPTIONS | `/streams/experiments/:experimentId/*` | URL unica; resolve o TestRequest selecionado para recursos publicados |
 
 ## Criar investigacao
 
@@ -134,6 +163,7 @@ Eventos previstos no contrato:
 - `investigation.snapshot`;
 - `investigation.state_changed`;
 - `investigation.observation`;
+- `investigation.collection_limited`;
 - `investigation.evidence_found`;
 - `investigation.hypothesis_updated`;
 - `investigation.report_ready`;
@@ -208,6 +238,29 @@ etapas de manifest nao possuem contador. As observacoes de coleta sao
 persistidas e auditaveis pela API, mas a UI nao as exibe como posts individuais:
 durante a coleta um card vivo mostra o passo atual e, ao final, o evento
 `investigation.evidence_found` resume o que foi preservado.
+
+Uma falha tipada de init/media sample nao reinicia uma coleta cujo manifest ja
+foi validado. Ela publica `investigation.collection_limited`, visivel na
+timeline, e preserva a atribuicao sem expor a URL da origem:
+
+```json
+{
+  "state": "collecting",
+  "stage": "collection",
+  "collectionStage": "media_sample",
+  "limitation": {
+    "errorCode": "STREAM_REQUEST_TIMEOUT",
+    "resourceKind": "media_segment",
+    "representationId": "video-1080p",
+    "sourceSegment": 277
+  }
+}
+```
+
+`resourceKind` pode ser `init_segment`, `media_segment` ou `repeat_hash`.
+Quando a falha e de manifest obrigatorio, o job conserva o retry limitado e a
+mensagem identifica se falhou o manifest raiz, a variant HLS ou a rendition de
+audio; a falha terminal inclui a ultima causa.
 
 ## Consultar investigacao
 
@@ -443,10 +496,15 @@ adicionara sao:
 - `recording.ladder_discovered`;
 - `recording.variant_started`;
 - `recording.variant_completed`;
+- `recording.resource_retry`;
 - `recording.published`;
 - `recording.failed`.
 
 Contagens publicadas representam trabalho real. Nao existe percentual estimado.
+No Record DASH, `recording.resource_retry` identifica `targetId`, tipo de
+recurso, numero do segmento quando aplicavel, error code e tentativa limitada;
+nao inclui a URL assinada. Downloads concorrentes ja iniciados sao encerrados
+antes de uma tentativa inteira liberar e recriar seu workspace.
 
 ### Criar playback run
 
@@ -456,10 +514,9 @@ Sem `profile`, a API usa `baseline` (100.000 Kbps, 0 ms): o modo normal. A UI
 envia esse profile explicitamente para `Start normal`; `Force ABR` envia o preset
 com os tres stages Good, constrained e recovery.
 
-Para separar defeito de representation de uma troca ABR, o perfil de run
-`1080p control (no ABR)` faz a URL assinada daquele run entregar um MPD derivado
-somente de recursos locais. Ele mantem a representation 1920x1080 de maior
-bitrate (e o audio), sem outra representation de video para o player escolher.
+O profile do playback run controla somente throughput/latencia. Se o teste
+precisa remover ABR ou fixar uma representation, use um Experiment/CloneSpec;
+trocar apenas o nome do profile nao altera o manifest publicado.
 
 ```http
 POST /v1/recordings/:id/playback-runs
@@ -530,15 +587,13 @@ GET /v1/recordings/:id/playback-runs/:runId
 POST /v1/recordings/:id/playback-runs/:runId/finish
 ```
 
-`GET /v1/recordings/:id/playback-runs/latest` retorna o último run ainda aberto
-e reemite deterministicamente sua mesma URL assinada. Retorna `{ "playback": null }`
+`GET /v1/recordings/:id/playback-runs/latest` retorna o ultimo run ainda aberto
+com a mesma URL fixa do recording. Retorna `{ "playback": null }`
 quando não existe run aberto. A tela Record usa esse endpoint ao carregar para
 restaurar um stream ativo após refresh.
 
-`POST .../finish` muda o run para `completed` e grava um marcador de revogação
-durável no storage. O data plane verifica esse marcador antes de abrir o arquivo,
-então uma URL válida recebe `410 PLAYBACK_RUN_FINISHED` imediatamente após parar,
-sem consulta ao PostgreSQL.
+`POST .../finish` muda o run para `completed`. A URL continua servindo o recording
+com baseline; somente shaping e journal daquele run terminam.
 
 State machine:
 
@@ -577,9 +632,8 @@ O GET inclui contagens de requests, stage atual, bytes entregues e o resumo:
 `status` pode ser `observed`, `not_observed` ou `inconclusive`. `confidence` de
 uma transicao pode ser `observed` ou `sustained`.
 
-`finish` impede novos downloads depois de um curto grace period, marca o run como
-`completed` e congela o resumo. Runs vencidos retornam `410 PLAYBACK_RUN_EXPIRED`
-no data plane.
+`finish` marca o run como `completed` e congela seu resumo. Runs vencidos deixam
+de aplicar shaping; a URL fixa continua servindo baseline.
 
 ### Journal de requests
 
@@ -625,19 +679,28 @@ historicos.
 
 ```http
 GET /streams/recordings/:recordingId/index.m3u8
+GET /streams/recordings/:recordingId/index.mpd
 GET /streams/recordings/:recordingId/variants/:variantId/index.m3u8
 GET /streams/recordings/:recordingId/variants/:variantId/segments/:sequence.ts
 ```
 
-Tambem aceita `HEAD` e `OPTIONS`; recursos de media suportam um unico `Range`
-valido quando o container/player exigir. A URL e fixa por recording e nunca muda
-entre runs. Paths sao resolvidos exclusivamente pelos recursos publicados daquele
-recording; o run aberto atual define o perfil de shaping e o runId do journal.
+Tambem aceita `HEAD` e `OPTIONS`; qualquer recurso publicado suporta um unico
+`Range: bytes=start-end`, aberto ou por sufixo. Range valido retorna `206` com
+`Content-Range`; range multiplo, malformado ou fora do recurso retorna
+`416 INVALID_PLAYBACK_RANGE` e `Content-Range: bytes */<total>`. A URL e fixa por
+recording e nunca muda entre runs. Paths sao resolvidos exclusivamente pelos
+recursos publicados daquele recording; o run aberto atual define o perfil de
+shaping e o runId do journal.
 
 Regras:
 
 - nunca buscar a origem durante playback;
-- `Cache-Control: no-store` e CORS explicito;
+- `Cache-Control: no-store`, `Accept-Ranges: bytes` e CORS explicito;
+- respostas de playback usam `Access-Control-Allow-Origin: *`, permitem
+  `GET, HEAD, OPTIONS` e o request header `Range`, e expoem `Accept-Ranges`,
+  `Content-Length` e `Content-Range` ao browser;
+- `HEAD` e `OPTIONS` nunca consomem throughput, avancam o profile ou entram no
+  journal; somente `GET` representa delivery;
 - manifests recebem a latencia do stage, mas nao consomem throughput de media;
 - media concorrente compartilha um token bucket por run (recording no baseline);
 - bytes respeitam backpressure e desconexao;
@@ -648,8 +711,227 @@ Regras:
 
 O deploy deve rotear `/streams/*` sem buffering ou compressao que altere o paced
 delivery. No Compose local, o Nginx da porta web encaminha explicitamente
-`/streams/*` para a API; sem essa regra, o fallback SPA devolveria `index.html`
-e players como VLC nao conseguiriam interpretar o manifesto.
+`/streams/*` para a API. O Vite de desenvolvimento usa o mesmo proxy para
+`/streams`; sem essa regra, o fallback SPA devolveria `index.html` e players nao
+conseguiriam interpretar o manifesto.
+
+## Experiments controlados
+
+`Experiment` pertence a uma investigation concluida e responde uma pergunta
+diagnostica. Cada iteracao persiste seus `CloneSpec`s antes de enfileirar os
+`recording_jobs`; cada clone experimental referencia um `Recording` real, sem
+substituir o fluxo legado de `/v1/recordings`.
+
+State machine:
+
+```text
+DRAFT -> PLANNED -> BUILDING_CLONES -> AWAITING_TESTS -> EVALUATING
+                                                          |       |
+                                                          |       +-> CONCLUDED
+                                                          +-> FOLLOWUP_REQUIRED -> PLANNED
+BUILDING_CLONES -> FAILED
+qualquer estado mutavel -> CANCELLED (dominio; rota de cancelamento ainda nao exposta)
+```
+
+O primeiro corte executavel usa `recorded_snapshot` e `manifest_only` sobre os
+materializadores existentes:
+
+- `CONTROL`: preserva a ladder/media suportada ao passar pelo caminho Record;
+- `force_representation`, `single_video_representation` e `fixed_bitrate`/
+  `fixed_resolution`: selecionam uma representation ja comprovada na evidencia;
+- `single_audio`: somente quando mais de uma rendition vinculada torna a mudanca
+  discriminante.
+
+`live_proxy`, transcode, remux/repackage, conversao HLS fMP4/MPEG-TS, AAC stereo,
+frame rate, GOP e DASH demuxed aparecem em capabilities como nao suportados. A
+API falha explicitamente; nao converte live em VOD silenciosamente nem oferece
+shell/FFmpeg arbitrario. `minimal_hls` tambem fica indisponivel porque o Record ja
+normaliza todos os manifests locais e, portanto, nao diferiria de CONTROL.
+
+### CloneSpec v1
+
+Campos opcionais de video/audio/packaging existem para evolucao do contrato, mas
+o compiler atual rejeita operacoes que o worker nao executa com seguranca:
+
+```json
+{
+  "version": "1",
+  "source": {
+    "investigationId": "uuid",
+    "mode": "recorded_snapshot",
+    "snapshotDurationSeconds": 120
+  },
+  "mode": "manifest_only",
+  "abr": {
+    "mode": "single_representation",
+    "representationIds": ["variant-0"]
+  },
+  "manifest": {
+    "normalisation": "preserve",
+    "operations": [
+      { "op": "filter_representations", "representationIds": ["variant-0"] }
+    ]
+  },
+  "reason": {
+    "role": "treatment",
+    "shortLabel": "LOW-BR",
+    "hypothesisIds": ["uuid"],
+    "description": "Expose only the lowest source representation.",
+    "expectedDiscriminatingSignal": "If it passes while CONTROL fails, representation selection gains support."
+  }
+}
+```
+
+`POST /v1/clone-specs/validate` recebe `{ "spec": CloneSpec }` e devolve
+`valid`, `errors`, `warnings` e, quando valido, o plano. Preview aceita
+`{ "spec": CloneSpec }` ou uma recipe tipada:
+
+```json
+{
+  "recipe": {
+    "recipe": "single_video_representation",
+    "investigationId": "uuid",
+    "shortLabel": "LOW-BR",
+    "hypothesisIds": ["uuid"]
+  }
+}
+```
+
+O execution plan v1 e declarativo: transformacoes, IDs selecionados, mudanca
+humana e `processes[]`. O slice atual sempre produz `processes=[]`; nenhuma rota
+aceita command line. Se um processo de media for adicionado depois, o plano ja
+exige `binary` allowlisted e `args[]`, nunca string de shell.
+
+IDs opacos de representations observados no manifest podem conter `=`, como
+`video_por=7094000`. O schema preserva esse formato para DASH, mas continua
+rejeitando whitespace e metacaracteres de comando. O compiler somente aceita um
+ID que exista na evidencia deterministica da origem e nunca o interpola em shell.
+
+### Criar, planejar e enfileirar
+
+```http
+POST /v1/investigations/:investigationId/experiments
+Content-Type: application/json
+```
+
+```json
+{
+  "goal": "Determine whether a source representation causes startup failure",
+  "createdBy": "workspace-user",
+  "targetEnvironmentId": "uuid-optional",
+  "hypotheses": [
+    {
+      "statement": "The highest representation is incompatible with the device",
+      "rationale": "URL evidence cannot prove hardware playback.",
+      "evidenceFor": [],
+      "evidenceAgainst": []
+    }
+  ]
+}
+```
+
+Depois do preview de CONTROL e dos tratamentos:
+
+```http
+POST /v1/experiments/:experimentId/iterations
+{ "rationale": "Control plus one primary variable", "cloneSpecs": [ ... ] }
+
+POST /v1/experiments/:experimentId/clones
+{ "iterationId": "uuid" }
+```
+
+Limites default: quatro clones por iteracao, tres iteracoes e doze clones por
+experiment. Sao configuraveis por `VIDEO_HARNESS_EXPERIMENT_MAX_CLONES_PER_ITERATION`,
+`VIDEO_HARNESS_EXPERIMENT_MAX_ITERATIONS` e
+`VIDEO_HARNESS_EXPERIMENT_MAX_CLONES_TOTAL`. A primeira iteracao exige um CONTROL
+e nenhuma iteracao aceita mais de um; treatments precisam referenciar hipoteses
+do experiment.
+
+O worker reutiliza claim/lease/heartbeat/retry e os materializadores de Record.
+Depois da publicacao, o observer executa os parsers deterministicos contra o
+manifest local, verifica protocolo, ladder, audio e IDs de origem, e persiste:
+spec/hash, plano, job/timestamps, IDs de artifacts de origem e saida, tools,
+transformacoes equivalentes ao manifest diff, warnings e errors. Clone com
+invariante violada fica `FAILED`, nunca `READY`, embora o Recording legado
+continue com sua semantica propria.
+
+### Uma URL por experiment
+
+Todos os TestRequests do mesmo experiment retornam exatamente o mesmo `testUrl`:
+
+```text
+/streams/experiments/:experimentId/index.m3u8
+/streams/experiments/:experimentId/index.mpd
+```
+
+O usuario configura essa URL uma vez no device. Antes de cada replay, a UI chama:
+
+```http
+POST /v1/test-requests/:testRequestId/activate
+```
+
+A transacao valida clone/recording `READY` e troca
+`experiments.active_test_request_id`. Cada request do player resolve esse ponteiro
+e le somente o logical path do recording publicado. Nao existe fetch da origem,
+redirect para URL assinada ou mudanca de URL no device. Respostas usam
+`Cache-Control: no-store`; sem tratamento selecionado retornam
+`409 EXPERIMENT_TREATMENT_NOT_SELECTED`.
+
+### Resultado e avaliacao
+
+```http
+POST /v1/test-requests/:testRequestId/results
+Content-Type: application/json
+```
+
+```json
+{
+  "outcome": "FAIL",
+  "failureStage": "STARTUP",
+  "notes": "Spinner remains visible; no audio.",
+  "evidenceArtifactIds": [],
+  "reportedBy": "workspace-user",
+  "reportedVia": "USER",
+  "testEnvironmentId": "uuid-optional",
+  "occurredAt": "2026-08-11T18:00:00.000Z"
+}
+```
+
+`outcome` aceita `PASS | FAIL | INCONCLUSIVE | NOT_TESTED`. O registro preserva
+quem reportou e por qual fronteira (`USER | AGENT | DEVICE | TRUSTED_TEST`). Um
+agente autorizado pode transcrever uma afirmacao do usuario, mas nao existe
+endpoint que invente observacao; metadata/manifests permanecem dados nao
+confiaveis, nunca instrucoes.
+
+`POST /v1/experiments/:id/evaluate` monta evidencia estruturada com report
+original, CONTROL, CloneSpecs/hashes, verificacao e resultados. Retorna
+`CONCLUDED`, `MORE_TESTS_REQUIRED` ou `INCONCLUSIVE`, confidence qualitativa e
+updates por hipotese. Resultado ausente permanece `NOT_REPORTED`. Um follow-up e
+criado somente por novo `POST .../iterations`; evaluation nunca enfileira clones
+automaticamente.
+
+### Workflow curl resumido
+
+```bash
+curl -sS -X POST http://127.0.0.1:3210/v1/investigations/INVESTIGATION_ID/experiments \
+  -H 'content-type: application/json' \
+  -d '{"goal":"Isolate startup failure","createdBy":"workspace-user","hypotheses":[{"statement":"A representation causes failure","rationale":"Requires device replay","evidenceFor":[],"evidenceAgainst":[]}]}'
+
+curl -sS -X POST http://127.0.0.1:3210/v1/clone-specs/preview \
+  -H 'content-type: application/json' \
+  -d '{"recipe":{"recipe":"control","investigationId":"INVESTIGATION_ID","shortLabel":"CONTROL","hypothesisIds":[]}}'
+
+curl -sS -X POST http://127.0.0.1:3210/v1/experiments/EXPERIMENT_ID/iterations \
+  -H 'content-type: application/json' -d @iteration.json
+curl -sS -X POST http://127.0.0.1:3210/v1/experiments/EXPERIMENT_ID/clones \
+  -H 'content-type: application/json' -d '{"iterationId":"ITERATION_ID"}'
+
+curl -sS -X POST http://127.0.0.1:3210/v1/test-requests/TEST_REQUEST_ID/activate
+curl -sS -X POST http://127.0.0.1:3210/v1/test-requests/TEST_REQUEST_ID/results \
+  -H 'content-type: application/json' \
+  -d '{"outcome":"PASS","evidenceArtifactIds":[],"reportedBy":"workspace-user","reportedVia":"USER","occurredAt":"2026-08-11T18:00:00.000Z"}'
+curl -sS -X POST http://127.0.0.1:3210/v1/experiments/EXPERIMENT_ID/evaluate
+```
 
 ## Erros
 

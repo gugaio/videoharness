@@ -20,6 +20,8 @@ import { DashVodMaterializer } from "../record/adapters/dash-vod-materializer.js
 import { ProtocolRecordingMaterializer } from "../record/adapters/recording-materializer.js";
 import { createRecordingWorker } from "../record/application/run-recording.js";
 import { FfmpegAbrDecodeTester } from "../abr/adapters/ffmpeg-abr-decode-tester.js";
+import { PostgresExperimentRepository } from "../experiment/adapters/postgres-experiment-repository.js";
+import { ExperimentRecordingObserver } from "../experiment/adapters/experiment-recording-observer.js";
 
 const config = loadConfig();
 const pool = createDatabasePool(config.databaseUrl);
@@ -66,20 +68,23 @@ const worker = createInvestigationWorker({
   workerId: config.workerId,
   leaseMs: config.workerLeaseMs,
 });
+const recordingStore = new FilesystemRecordingStore(config.dataDir);
+const experimentRepository = new PostgresExperimentRepository(pool);
 const recordingWorker = createRecordingWorker({
   repository: new PostgresRecordingJobRepository(pool),
-  store: new FilesystemRecordingStore(config.dataDir),
+  store: recordingStore,
   materializer: new ProtocolRecordingMaterializer(new HlsVodMaterializer(new SafeHttpClient({
-    timeoutMs: config.streamTimeoutMs,
+    timeoutMs: config.recordRequestTimeoutMs,
     maxBytes: config.recordSegmentMaxBytes,
     ...localDevelopmentAlias,
   }), { maxVariants: config.recordMaxVariants, maxTotalBytes: config.recordMaxTotalBytes }), new DashVodMaterializer(new SafeHttpClient({
-    timeoutMs: config.streamTimeoutMs,
+    timeoutMs: config.recordRequestTimeoutMs,
     maxBytes: config.recordSegmentMaxBytes,
     ...localDevelopmentAlias,
   }), { maxVariants: config.recordMaxVariants, maxTotalBytes: config.recordMaxTotalBytes })),
   workerId: config.workerId,
   leaseMs: config.workerLeaseMs,
+  observer: new ExperimentRecordingObserver(experimentRepository, recordingStore, logger),
 });
 let shutdownRequested = false;
 
@@ -103,8 +108,12 @@ logger.info("worker.started", {
   mediaSampleMaxTotalBytes: config.mediaSampleMaxTotalBytes,
   mediaSampleMode: config.mediaSampleMode,
   recordSegmentMaxBytes: config.recordSegmentMaxBytes,
+  recordRequestTimeoutMs: config.recordRequestTimeoutMs,
   recordMaxTotalBytes: config.recordMaxTotalBytes,
   recordMaxVariants: config.recordMaxVariants,
+  experimentMaxClonesPerIteration: config.experimentMaxClonesPerIteration,
+  experimentMaxIterations: config.experimentMaxIterations,
+  experimentMaxClonesTotal: config.experimentMaxClonesTotal,
   ffprobeTimeoutMs: config.ffprobeTimeoutMs,
   labEnabled: Boolean(lab),
   aiEnabled: Boolean(config.aiApiKey),

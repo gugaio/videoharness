@@ -33,13 +33,21 @@ export class HlsVodMaterializer implements RecordingMaterializer {
     const root = inspectManifest(rootResponse.text, rootResponse.finalUrl);
     if (root.protocol !== "hls" || root.kind !== "master" || !root.hls) throw unsupported("Record R1 requires an HLS master playlist");
     const hls = root.hls;
-    const variants = hls.variants.filter((variant): variant is HlsVariant & { url: string } => Boolean(variant.url));
-    if (variants.length < 2) throw unsupported("Record R1 requires at least two fetchable video variants for ABR");
-    if (variants.length > this.maxVariants) throw unsupported(`The HLS master exceeds the ${this.maxVariants} variant limit`);
+    const sourceVariants = hls.variants
+      .map((variant, sourceIndex) => ({ variant, sourceIndex }))
+      .filter((entry): entry is { variant: HlsVariant & { url: string }; sourceIndex: number } => Boolean(entry.variant.url));
+    if (sourceVariants.length < 2) throw unsupported("Record R1 requires at least two fetchable video variants for ABR");
+    if (sourceVariants.length > this.maxVariants) throw unsupported(`The HLS master exceeds the ${this.maxVariants} variant limit`);
+    const requestedIds = input.job.recording.clonePlan?.selection.videoRepresentationIds;
+    const variants = requestedIds
+      ? sourceVariants.filter((entry) => requestedIds.includes(`variant-${entry.sourceIndex}`))
+      : sourceVariants;
+    if (variants.length === 0) throw unsupported("The CloneSpec did not select a fetchable HLS video variant");
 
     const targets: MediaTarget[] = [
-      ...variants.map((source, index) => ({ id: `video-${index}`, kind: "video" as const, sourceUrl: source.url, source })),
-      ...linkedAudioRenditions(hls, variants).map(({ source, index }) => ({ id: `audio-${index}`, kind: "audio" as const, sourceUrl: source.url!, source })),
+      ...variants.map(({ variant: source, sourceIndex }) => ({ id: `video-${sourceIndex}`, kind: "video" as const, sourceUrl: source.url, source })),
+      ...selectAudio(linkedAudioRenditions(hls, variants.map((entry) => entry.variant)), input.job.recording.clonePlan?.selection.audioMode)
+        .map(({ source, index }) => ({ id: `audio-${index}`, kind: "audio" as const, sourceUrl: source.url!, source })),
     ];
     const resources: RecordedResource[] = [];
     let totalBytes = 0;
@@ -71,7 +79,7 @@ export class HlsVodMaterializer implements RecordingMaterializer {
         if (totalBytes > this.maxTotalBytes) throw new StreamCollectionError("STREAM_RESPONSE_TOO_LARGE", "The recording exceeds the aggregate byte limit", false);
         resources.push(resource(input.job.recording.id, item.segmentPath, target.kind === "video" ? "video-segment" : "audio-segment", item.bytes, "video/mp2t", {
           targetId: target.id, mediaSequence: item.sequence, durationSeconds: item.selection.segment.duration, timelineStartSeconds: item.selection.timelineStartSeconds, timelineEndSeconds: item.selection.timelineEndSeconds,
-          ...(target.kind === "video" ? { bandwidth: (target.source as HlsVariant).bandwidth, resolution: (target.source as HlsVariant).resolution, codecs: (target.source as HlsVariant).codecs } : {}),
+          ...(target.kind === "video" ? { sourceRepresentationId: `variant-${target.id.slice("video-".length)}`, bandwidth: (target.source as HlsVariant).bandwidth, resolution: (target.source as HlsVariant).resolution, codecs: (target.source as HlsVariant).codecs } : {}),
         }));
       }
       const playlist = buildMediaPlaylist(media, selected, downloaded.map((item) => item.playlistPath));
@@ -80,7 +88,7 @@ export class HlsVodMaterializer implements RecordingMaterializer {
       await writeWorkspaceFile(input.workspace.path, localPath, playlistBytes);
       resources.push(resource(input.job.recording.id, localPath, "media-playlist", playlistBytes, "application/vnd.apple.mpegurl", {
         targetId: target.id, kind: target.kind,
-        ...(target.kind === "video" ? { bandwidth: (target.source as HlsVariant).bandwidth, resolution: (target.source as HlsVariant).resolution, codecs: (target.source as HlsVariant).codecs } : {}),
+        ...(target.kind === "video" ? { sourceRepresentationId: `variant-${target.id.slice("video-".length)}`, bandwidth: (target.source as HlsVariant).bandwidth, resolution: (target.source as HlsVariant).resolution, codecs: (target.source as HlsVariant).codecs } : {}),
       }));
       localPlaylists.push({ target, localPath });
       coverage.push(selected[selected.length - 1]!.timelineEndSeconds - selected[0]!.timelineStartSeconds);
@@ -94,6 +102,10 @@ export class HlsVodMaterializer implements RecordingMaterializer {
     resources.push(resource(input.job.recording.id, "index.m3u8", "master", masterBytes, "application/vnd.apple.mpegurl", { variantCount: variants.length, audioRenditionCount: targets.length - variants.length }));
     return { coverageSeconds: Math.min(...coverage), totalBytes, resources };
   }
+}
+
+function selectAudio(entries: Array<{ source: HlsRendition; index: number }>, mode: "preserve" | "single" | undefined): Array<{ source: HlsRendition; index: number }> {
+  return mode === "single" ? entries.slice(0, 1) : entries;
 }
 
 function linkedAudioRenditions(master: HlsManifestInspection, variants: HlsVariant[]): Array<{ source: HlsRendition; index: number }> {

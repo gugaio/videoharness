@@ -15,6 +15,9 @@ import type { PlaybackRunRepository } from "../record/ports/playback-run.js";
 import { FilesystemRecordingStore } from "../record/adapters/filesystem-recording-store.js";
 import { registerStreamRoutes } from "./routes/streams.js";
 import type { SharedNetworkShaper } from "../record/application/network-shaper.js";
+import { ExperimentApplicationError, type ExperimentService } from "../experiment/application/experiments.js";
+import type { ExperimentStreamResolver } from "../experiment/ports/experiment-repository.js";
+import { registerExperimentRoutes } from "./routes/experiments.js";
 
 export type ApiServerDependencies = {
   database: DatabaseHealth;
@@ -28,6 +31,8 @@ export type ApiServerDependencies = {
   playbackRuns?: PlaybackRunRepository;
   recordingStore?: FilesystemRecordingStore;
   networkShaper?: SharedNetworkShaper;
+  experimentService?: ExperimentService;
+  experimentStreams?: ExperimentStreamResolver;
   version?: string;
 };
 
@@ -45,6 +50,12 @@ export function buildApiServer(dependencies: ApiServerDependencies): FastifyInst
           message: error.message,
           requestId: request.id,
         },
+      });
+    }
+    if (error instanceof ExperimentApplicationError) {
+      return reply.status(error.statusCode).send({
+        ok: false,
+        error: { code: error.code, message: error.message, requestId: request.id },
       });
     }
     request.log.error(error);
@@ -86,7 +97,8 @@ export function buildApiServer(dependencies: ApiServerDependencies): FastifyInst
   if (dependencies.startRecording && dependencies.recordingQueries) {
     registerRecordingRoutes(server, { startRecording: dependencies.startRecording, queries: dependencies.recordingQueries, ...(dependencies.createPlaybackRun ? { createPlaybackRun: dependencies.createPlaybackRun } : {}), ...(dependencies.playbackRuns ? { playbackRuns: dependencies.playbackRuns } : {}) });
   }
-  if (dependencies.playbackRuns && dependencies.recordingStore) registerStreamRoutes(server, { runs: dependencies.playbackRuns, store: dependencies.recordingStore, ...(dependencies.networkShaper ? { shaper: dependencies.networkShaper } : {}) });
+  if (dependencies.experimentService) registerExperimentRoutes(server, dependencies.experimentService);
+  if (dependencies.playbackRuns && dependencies.recordingStore) registerStreamRoutes(server, { runs: dependencies.playbackRuns, store: dependencies.recordingStore, ...(dependencies.experimentStreams ? { experiments: dependencies.experimentStreams } : {}), ...(dependencies.networkShaper ? { shaper: dependencies.networkShaper } : {}) });
 
   return server;
 }

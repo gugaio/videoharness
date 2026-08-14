@@ -38,6 +38,13 @@ export type CollectionProgress = {
   message: string;
   completed?: number;
   total?: number;
+  limitation?: {
+    errorCode: string;
+    resourceKind: "init_segment" | "media_segment" | "repeat_hash";
+    logicalKey?: string;
+    representationId?: string;
+    sourceSegment?: number;
+  };
 };
 
 export interface ManifestCollector {

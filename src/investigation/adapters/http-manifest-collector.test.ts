@@ -1,6 +1,7 @@
 import { Readable } from "node:stream";
 import type http from "node:http";
 import { describe, expect, it, vi } from "vitest";
+import { StreamCollectionError } from "../../stream-tools/errors.js";
 import { SafeHttpClient, type PinnedRequester } from "../../stream-tools/safe-http-client.js";
 import { HttpManifestCollector } from "./http-manifest-collector.js";
 
@@ -93,6 +94,20 @@ describe("HttpManifestCollector", () => {
 
     expect(stages).toEqual(["root_manifest", "variant_manifest", "rendition_manifest"]);
     expect(result.manifests).toHaveLength(3);
+  });
+
+  it("identifies the root manifest when its request times out", async () => {
+    const requester = vi.fn<PinnedRequester>(async () => {
+      throw new StreamCollectionError("STREAM_REQUEST_TIMEOUT", "The stream request timed out", true);
+    });
+    const collector = new HttpManifestCollector(createHttpClient(requester));
+
+    await expect(collector.collect("https://stream.example/manifest.mpd"))
+      .rejects.toMatchObject({
+        code: "STREAM_REQUEST_TIMEOUT",
+        message: "The root manifest could not be fetched: The stream request timed out",
+        retryable: true,
+      });
   });
 });
 

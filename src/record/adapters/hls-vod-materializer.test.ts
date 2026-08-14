@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SafeHttpClient } from "../../stream-tools/safe-http-client.js";
 import { HlsVodMaterializer } from "./hls-vod-materializer.js";
+import type { CloneExecutionPlan } from "../../experiment/domain/clone-spec.js";
 
 const directories: string[] = [];
 const recordingId = "c56a4180-65aa-42ec-a945-5fd21dec0538";
@@ -58,6 +59,27 @@ high.m3u8`,
       workspace: { recordingId, path: directory },
     })).rejects.toMatchObject({ code: "UNSUPPORTED_MANIFEST" });
   });
+
+  it("materializes only the representation selected by an experiment plan", async () => {
+    const texts: Record<string, string> = {
+      "https://origin.test/master.m3u8": `#EXTM3U
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Portuguese",URI="audio.m3u8"
+#EXT-X-STREAM-INF:BANDWIDTH=800000,AUDIO="aud"
+low.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=1800000,AUDIO="aud"
+high.m3u8`,
+      "https://origin.test/low.m3u8": media("low"), "https://origin.test/high.m3u8": media("high"), "https://origin.test/audio.m3u8": media("audio"),
+    };
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "video-harness-hls-recording-")); directories.push(directory);
+    const result = await new HlsVodMaterializer(fakeHttp(texts)).materialize({
+      job: { id: "8dc67e09-4b25-4fe5-a69a-58f896fb5197", attempts: 1, maxAttempts: 3, recording: { id: recordingId, sourceUrl: "https://origin.test/master.m3u8", protocol: "hls", requestedDurationSeconds: 9, requestedStartSeconds: 3, clonePlan: plan("hls", "variant-0") } },
+      workspace: { recordingId, path: directory },
+    });
+    const master = await fs.readFile(path.join(directory, "index.m3u8"), "utf8");
+    expect(master).toContain("variants/video-0/index.m3u8");
+    expect(master).not.toContain("video-1");
+    expect(result.resources.find((entry) => entry.logicalPath === "variants/video-0/index.m3u8")?.metadata).toMatchObject({ sourceRepresentationId: "variant-0" });
+  });
 });
 
 function media(prefix: string): string {
@@ -86,4 +108,8 @@ function fakeHttp(texts: Record<string, string>): SafeHttpClient & { getBytes: R
     return { requestedUrl: url, finalUrl: url, statusCode: 200, bytes: new TextEncoder().encode(name.replace(/\.ts$/, "")) };
   });
   return { getText, getBytes } as unknown as SafeHttpClient & { getBytes: ReturnType<typeof vi.fn> };
+}
+
+function plan(protocol: "hls" | "dash", representationId: string): CloneExecutionPlan {
+  return { version: "1", specVersion: "1", protocol, sourceMode: "recorded_snapshot", transformations: [{ kind: "filter_video_representations", description: "Select one", representationIds: [representationId] }], selection: { videoRepresentationIds: [representationId], audioMode: "preserve", expectedAudioRenditionCount: 1 }, processes: [], whatChanged: "Select one", expectedDiscriminatingSignal: "Compare", sourceArtifactIds: [] };
 }

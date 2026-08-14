@@ -202,12 +202,15 @@ function FeedPost({ event, stagger }: { event: InvestigationEvent; stagger: numb
   const hue = hueStyle(persona.hue);
   const isEvidence = event.type === "investigation.evidence_found";
   const isReport = event.type === "investigation.report_ready";
+  const isCollectionLimitation = event.type === "investigation.collection_limited";
 
   return (
     <article
       className={`animate-fade-up rounded-2xl border p-5 shadow-card transition-colors ${
         isReport
           ? "border-emerald-300/20 bg-emerald-300/[0.05]"
+          : isCollectionLimitation
+            ? "border-amber-300/20 bg-amber-300/[0.045]"
           : isEvidence
             ? "border-amber-300/15 bg-amber-300/[0.03]"
             : "border-white/[0.07] bg-harness-panel/70"
@@ -224,6 +227,7 @@ function FeedPost({ event, stagger }: { event: InvestigationEvent; stagger: numb
           </div>
           <p className="mt-1.5 text-pretty text-sm leading-6 text-white/80">{event.message}</p>
           {isEvidence && <EvidenceChips payload={event.payload} />}
+          {isCollectionLimitation && <CollectionLimitationChips payload={event.payload} />}
           {isReport && (
             <a
               className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-emerald-300/25 bg-emerald-300/10 px-3 py-1.5 text-xs font-medium text-emerald-200 transition hover:bg-emerald-300/20"
@@ -237,6 +241,20 @@ function FeedPost({ event, stagger }: { event: InvestigationEvent; stagger: numb
       </div>
     </article>
   );
+}
+
+function CollectionLimitationChips({ payload }: { payload: Record<string, unknown> }): JSX.Element | null {
+  const raw = payload.limitation;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const limitation = raw as Record<string, unknown>;
+  const chips = [
+    typeof limitation.resourceKind === "string" ? limitation.resourceKind.split("_").join(" ") : undefined,
+    typeof limitation.representationId === "string" ? limitation.representationId : undefined,
+    typeof limitation.logicalKey === "string" ? limitation.logicalKey : undefined,
+    typeof limitation.sourceSegment === "number" ? `segment ${limitation.sourceSegment}` : undefined,
+    typeof limitation.errorCode === "string" ? limitation.errorCode : undefined,
+  ].filter((entry): entry is string => Boolean(entry));
+  return <div className="mt-3 flex flex-wrap gap-2">{chips.map((chip) => <span className="rounded-full border border-amber-300/20 bg-amber-300/[0.08] px-2.5 py-1 font-mono text-[10px] text-amber-100/80" key={chip}>{chip}</span>)}</div>;
 }
 
 function EvidenceChips({ payload }: { payload: Record<string, unknown> }): JSX.Element | null {

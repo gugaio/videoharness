@@ -1,8 +1,10 @@
 import { Readable } from "node:stream";
 import type http from "node:http";
 import { describe, expect, it, vi } from "vitest";
+import { StreamCollectionError } from "../../stream-tools/errors.js";
 import { inspectManifest } from "../../stream-tools/manifest.js";
 import { SafeHttpClient, type PinnedRequester } from "../../stream-tools/safe-http-client.js";
+import type { CollectionProgress } from "../ports/manifest-collector.js";
 import { HttpMediaSampleCollector } from "./http-media-sample-collector.js";
 
 describe("HttpMediaSampleCollector", () => {
@@ -130,10 +132,35 @@ describe("HttpMediaSampleCollector", () => {
 
     expect(result.samples).toHaveLength(3);
     expect(steps).toEqual([
-      { stage: "media_sample", message: "Sampling media segment 1 of 3 from manifest/root…", completed: 0, total: 3 },
-      { stage: "media_sample", message: "Sampling media segment 2 of 3 from manifest/root…", completed: 1, total: 3 },
-      { stage: "media_sample", message: "Sampling media segment 3 of 3 from manifest/root…", completed: 2, total: 3 },
+      { stage: "media_sample", message: "Sampling media sample 1 of 3 from manifest/root (source segment 0)…", completed: 0, total: 3 },
+      { stage: "media_sample", message: "Sampling media sample 2 of 3 from manifest/root (source segment 1)…", completed: 1, total: 3 },
+      { stage: "media_sample", message: "Sampling media sample 3 of 3 from manifest/root (source segment 2)…", completed: 2, total: 3 },
     ]);
+  });
+
+  it("keeps deterministic DASH evidence when one media sample times out", async () => {
+    const requester = vi.fn<PinnedRequester>(async (url) => {
+      if (url.pathname.endsWith("uhd-2.m4s")) {
+        throw new StreamCollectionError("STREAM_REQUEST_TIMEOUT", "The stream request timed out", true);
+      }
+      return response(url.pathname);
+    });
+    const collector = new HttpMediaSampleCollector(new SafeHttpClient({
+      resolver: async () => [{ address: "93.184.216.34", family: 4 }], requester,
+    }), { maxTotalBytes: 100_000 });
+    const text = `<?xml version="1.0"?><MPD type="static" mediaPresentationDuration="PT12S"><Period duration="PT12S"><AdaptationSet contentType="video" mimeType="video/mp4"><SegmentTemplate timescale="1" media="$RepresentationID$-$Number$.m4s" initialization="$RepresentationID$.mp4" duration="4"/><Representation id="uhd" width="3840" height="2160"/><Representation id="fhd" width="1920" height="1080"/></AdaptationSet><AdaptationSet contentType="audio" mimeType="audio/mp4"><SegmentTemplate timescale="1" media="audio-$Number$.m4s" initialization="audio.mp4" duration="4"/><Representation id="audio"/></AdaptationSet></Period></MPD>`;
+    const progress: CollectionProgress[] = [];
+
+    const result = await collector.collect({
+      manifests: [{ logicalKey: "manifest/root", role: "root", source: { requestedUrl: "https://stream.example/manifest.mpd", finalUrl: "https://stream.example/manifest.mpd", statusCode: 200 }, content: { bytes: new TextEncoder().encode(text) }, inspection: inspectManifest(text, "https://stream.example/manifest.mpd") }],
+    }, async (entry) => { progress.push(entry); });
+
+    expect(result.limitations).toContainEqual(expect.stringContaining("DASH representation uhd source segment 2 could not be sampled (STREAM_REQUEST_TIMEOUT)"));
+    expect(progress).toContainEqual(expect.objectContaining({
+      limitation: { errorCode: "STREAM_REQUEST_TIMEOUT", resourceKind: "media_segment", representationId: "uhd", sourceSegment: 2 },
+    }));
+    expect(result.samples.some((sample) => sample.representationId === "fhd" && sample.kind === "media-segment")).toBe(true);
+    expect(result.samples.some((sample) => sample.representationId === "audio" && sample.kind === "media-segment")).toBe(true);
   });
 
   it("centers the full-mode window around the reported incident time up to the time budget", async () => {

@@ -42,9 +42,19 @@ PlaybackRun, shaping, request journal e UX comprovados com HLS VOD.
   do caminho critico.
 - Um run aberto pode ser restaurado na UI por query de control plane; `finish`
   finaliza o run no banco, encerrando shaping e journal.
+- O dashboard Record possui smoke explícito HLS/DASH no browser. dash.js e
+  carregado sob demanda; antes do playback DASH a UI testa os codecs do MPD com
+  MSE e evita baixar media quando o browser os rejeita.
+- O data plane implementa CORS/preflight, HEAD observacional e Range unico com
+  `206/416`. Somente GET passa pelo shaper e journal; Nginx e Vite encaminham
+  `/streams/*` para a mesma API.
 - O materializador inspeciona cada INIT e fragment com parser ISO BMFF proprio,
   incluindo hvcC/VPS/SPS/PPS, moof/tfhd/tfdt/trun e boundary NAL/IRAP; os bytes
   integrais continuam no storage e somente resumos de boundary viram metadata.
+- Downloads DASH concorrentes sao completamente assentados antes do cleanup de
+  uma tentativa. Recursos transitoriamente indisponiveis possuem retry local
+  limitado e auditavel, impedindo writers antigos de contaminarem o workspace
+  recriado pelo retry do job.
 - O journal alimenta `AbrSwitchCorrelator`, que cria um `AbrSwitchEvidence`
   `OBSERVED` por mudanca real de Representation e expoe o resultado em
   `GET .../abr-switches` sem exigir telemetria de player/device.
@@ -60,9 +70,23 @@ PlaybackRun, shaping, request journal e UX comprovados com HLS VOD.
 - Investigate agora produz `AbrAssessment` em HLS e DASH. O baseline de ladder e
   o especialista ABR rodam sempre; o relato do usuario apenas prioriza a
   transicao e a janela mais relevantes.
+- O manifest raiz permanece obrigatorio, mas falha tipada em init/media sample
+  interrompe somente aquela representation e entra como limitation. Evidencia
+  valida de outras representations nao e descartada nem reinicia a investigation.
+- A limitation fica atribuida por evento persistido ao tipo de recurso,
+  representation e numero do segmento; falha de manifest identifica a fronteira
+  root/variant/rendition e segue o retry limitado do job.
 - Troca de resolucao/level/INIT/SPS esperada pelo modo de reinitialization e
   neutra. Ela so promove risco quando ha violacao de contrato, falha de decode,
   capability mismatch ou falha observada do player na mesma fronteira.
+- O primeiro closed-loop Experiment foi construido como camada sobre este Record:
+  CloneSpec seleciona representations/audio sem duplicar collectors, o mesmo
+  recording job materializa cada tratamento, e um observer verifica o manifest e
+  recursos antes de criar TestRequests.
+- CONTROL e treatments de um Experiment sao selecionados no control plane e
+  entregues na mesma `/streams/experiments/:experimentId/*`; o device nao troca
+  URL. Resultados atribuidos alimentam evaluation deterministica e follow-up
+  preserva as iteracoes anteriores.
 
 ## Fora do primeiro corte DASH
 
@@ -74,6 +98,8 @@ PlaybackRun, shaping, request journal e UX comprovados com HLS VOD.
 - comprovacao de decode/render em hardware real.
 - classificacao `PLATFORM_SUSPECTED` sem reproducao e evidencia especifica do
   modelo/firmware.
+- clone `live_proxy`, transcode/repackage/remux e transformacao DRM; o contrato
+  existe, mas capabilities recusam esses modos ate existir pipeline seguro.
 
 ## Definition of Done
 

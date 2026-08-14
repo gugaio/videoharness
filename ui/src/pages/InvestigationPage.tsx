@@ -5,6 +5,7 @@ import { CaseHero } from "../components/CaseHero";
 import { InvestigationFeed } from "../components/InvestigationFeed";
 import { InvestigationReportView } from "../components/InvestigationReport";
 import { PlaybackValidation } from "../components/PlaybackValidation";
+import { InvestigationExperiments } from "../components/InvestigationExperiments";
 import {
   getInvestigation,
   getInvestigationReport,
@@ -95,6 +96,7 @@ export function InvestigationPage(): JSX.Element {
             />
             {report.data && <InvestigationReportView report={report.data} />}
             {report.data && <PlaybackValidation investigationId={investigationId} />}
+            {report.data && <InvestigationExperiments investigationId={investigationId} />}
           </div>
         )}
       </div>

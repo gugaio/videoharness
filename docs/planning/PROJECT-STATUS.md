@@ -12,6 +12,8 @@ Ultima atualizacao: **2026-08-11**
   agora produzida por Investigate e Record.
 - Investigate produz e apresenta um baseline de qualidade ABR para HLS e DASH.
 - DASH VOD esta em implementacao sobre o data plane ja comprovado.
+- Closed-loop Experiments ja usam Investigation + Record para CONTROL/treatments,
+  URL fixa no device, TestResults atribuidos e evaluation/follow-up.
 
 ## Fases
 
@@ -98,6 +100,11 @@ Ultima atualizacao: **2026-08-11**
   lifecycle de run.
 - Playback run aberto restaurado após refresh e encerramento explícito que
   finaliza o run (shaping e journal terminam; a URL permanece servindo baseline).
+- Playback HLS/DASH explícito no dashboard Record, com hls.js/dash.js, checagem
+  MSE de codecs DASH antes de baixar media e estados reais de playback/buffering.
+- Data plane com preflight CORS, HEAD observacional, Range unico `206/416` e
+  proxy `/streams` consistente em Nginx e Vite; somente GET avanca shaping e
+  journal.
 - ABR switching como entidade de primeira classe: candidatos URL-only e
   transicoes observadas carregam proveniencia distinta no mesmo
   `AbrSwitchEvidence`.
@@ -111,6 +118,16 @@ Ultima atualizacao: **2026-08-11**
 - Testes FFmpeg source standalone, target standalone, target boundary e switching
   compatibility (quando autorizado) entram automaticamente no candidato
   prioritario; falha da ferramenta vira limitacao, nao falha da investigation.
+- Experiment/Hypothesis/Iteration/CloneSpec/TestRequest/TestResult/Evaluation
+  persistidos pela migration 011, com budgets configuraveis e state transitions.
+- CloneCompiler declarativo e recipes de selecao sobre o Record atual; modos de
+  transcode/repackage/live proxy ficam explicitamente indisponiveis.
+- Worker Record observa clones experimentais, verifica manifest/ladder/resources
+  antes de `READY` e preserva spec/hash/plano/artifacts/timestamps/provenance.
+- UI da Investigation cria CONTROL + treatment, mostra progresso, seleciona o
+  tratamento servido, registra resultado estruturado e conclui/faz follow-up.
+- Todos os tratamentos usam a mesma URL
+  `/streams/experiments/:experimentId/*`; o usuario nao muda URL no device.
 
 ## Checklist da Fase 1
 
@@ -154,8 +171,267 @@ Ultima atualizacao: **2026-08-11**
 
 ## Proximo passo recomendado
 
-Fazer smoke de MPD DASH em player externo e comparar os candidatos da URL com as
-transicoes observadas no journal, sem exigir logs de uma plataforma especifica.
+Executar um smoke real do primeiro Experiment em device externo: copiar a URL uma
+vez, alternar CONTROL/LOW-BR na UI, repetir playback, registrar os dois resultados
+e avaliar sem reconfigurar o app/device.
+
+### 2026-08-11 - Isolamento entre tentativas concorrentes do Record DASH
+
+Fases impactadas: Record R2, worker e Experiments.
+
+Entrega:
+
+- diagnosticado `EEXIST` no CONTROL como corrida local: um dos tres downloads
+  concorrentes falhava, `Promise.all` retornava cedo, e siblings da tentativa
+  antiga podiam gravar depois que o retry recriava o workspace;
+- o fan-out DASH agora usa `allSettled` e somente propaga a falha quando nenhum
+  worker antigo pode continuar escrevendo;
+- init/chunk com erro tipado e retryable possui ate tres tentativas locais com
+  evento `recording.resource_retry`, sem URL/token no payload;
+- Record passa a ter timeout configuravel proprio, default 60s, sem ampliar o
+  timeout de 25s da coleta Investigate;
+- escrita exclusiva permanece ativa para detectar qualquer violacao de
+  isolamento, em vez de sobrescrever bytes silenciosamente.
+
+Arquivos-chave:
+
+- `src/record/adapters/dash-vod-materializer.ts`;
+- `src/record/adapters/dash-vod-materializer.test.ts`;
+- `src/config.ts`;
+- `src/worker/index.ts`;
+- `compose.yml`;
+- `docs/api.md`;
+- `docs/architecture/DECISIONS.md`.
+
+Validacoes:
+
+- [x] testes direcionados DASH/recording worker - 10 testes;
+- [x] `npm run check`;
+- [x] `npm test` - 39 arquivos, 182 testes;
+- [x] `npm run build`;
+- [x] `git diff --check`;
+- [x] `docker compose config --quiet`;
+- [x] worker publicado com `recordRequestTimeoutMs=60000` e servicos saudaveis;
+- [x] dois workspaces privados orfaos dos clones falhos removidos pelo contrato
+  `RecordingStore`, sem recording publicado afetado;
+- [x] novo Experiment limpo `9b065a0c-a308-4287-b7a4-f8e45675d4b7` criado com
+  CONTROL em build e LOW-BR em fila; o Experiment falho permanece como historico;
+- [x] smoke do worker novo completou os 30 chunks de `video-0` na primeira
+  tentativa e avancou para `video-1`, sem `EEXIST` e com heartbeat ativo.
+
+### 2026-08-11 - Recuperacao do primeiro plano DASH de Experiment
+
+Fases impactadas: API e UX Investigate/Experiments.
+
+Entrega:
+
+- corrigido o round-trip de CloneSpec para IDs DASH reais com `=`, como
+  `video_por=7094000`; o preview ja produzia esse ID, mas o endpoint de iteration
+  o rejeitava e deixava o Experiment em `DRAFT`;
+- IDs de representation continuam allowlisted e conferidos contra a evidencia
+  deterministica; whitespace e payloads command-like permanecem rejeitados;
+- erros de schema da iteration agora incluem paths/motivos seguros;
+- Experiments `DRAFT` podem continuar com `CONTROL + LOW-BR`, e `PLANNED` pode
+  reenfileirar a etapa ja salva sem criar outro Experiment;
+- a UI nao anuncia clones em build quando ainda nao existe uma iteration;
+- CONTROL e treatments aparecem como cards desde `QUEUED`, com estado,
+  `What changed` e falha real, em vez de ficarem invisiveis ate o TestRequest.
+
+Arquivos-chave:
+
+- `src/contracts/experiment.ts`;
+- `src/contracts/experiment.test.ts`;
+- `src/experiment/application/clone-compiler.test.ts`;
+- `src/api/routes/experiments.ts`;
+- `src/api/experiments.test.ts`;
+- `ui/src/components/InvestigationExperiments.tsx`.
+
+Validacoes:
+
+- [x] testes direcionados de contracts/compiler/API - 17 testes;
+- [x] `npm run check`;
+- [x] `npm test` - 39 arquivos, 179 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] `git diff --check`;
+- [x] imagens backend/web reconstruidas e API/web/worker saudaveis;
+- [x] Experiment `f262ddfd-0718-4b63-bd69-3ed82d4e7742` recuperado sem
+  duplicacao: iteration 1 persistida, CONTROL em build e LOW-BR em fila.
+
+### 2026-08-11 - Timeout de media sample nao reinicia toda Investigation
+
+Fases impactadas: 2, 3, Record R2 e UX Investigate.
+
+Entrega:
+
+- diagnostico em PostgreSQL confirmou retry limitado a tres tentativas, mas um
+  unico segmento DASH lento descartava toda a coleta ja realizada;
+- manifest raiz continua obrigatorio e retryable; erros tipados de init/media
+  sample agora viram limitations por representation e preservam outras amostras;
+- depois da primeira falha, a janela daquela representation e interrompida para
+  evitar timeouts repetidos;
+- progresso deixa de exibir valores incoerentes como `segment 277 of 3`: ordinal
+  da amostra e numero do segmento de origem ficam separados;
+- falha de init/chunk/repeat hash agora gera o evento persistido e visivel
+  `investigation.collection_limited`, com tipo do recurso, representation ou
+  logical key, segmento de origem e error code, sem incluir a URL assinada;
+- falhas de manifest continuam seguindo o retry limitado e agora identificam na
+  mensagem se a fronteira foi root manifest, variant HLS ou audio rendition; a
+  falha terminal mostra a ultima causa em vez de uma mensagem generica.
+
+Arquivos-chave:
+
+- `src/investigation/adapters/http-media-sample-collector.ts`;
+- `src/investigation/adapters/http-manifest-collector.ts`;
+- `src/investigation/application/run-investigation.ts`;
+- `src/investigation/adapters/postgres-investigation-job.ts`;
+- `src/investigation/ports/manifest-collector.ts`;
+- `ui/src/components/InvestigationFeed.tsx`;
+- `docs/api.md`;
+- `docs/ui/UI-GUIDE.md`.
+
+Validacoes:
+
+- [x] testes direcionados de collectors/application - 24 testes;
+- [x] `npm run check`;
+- [x] `npm test` - 39 arquivos, 178 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] `git diff --check`;
+- [x] `docker compose build worker` e `docker compose build web`;
+- [x] API/PostgreSQL saudaveis, worker iniciado com a nova imagem e web HTTP 200.
+
+### 2026-08-11 - Build limpo da UI de Experiments
+
+Fase impactada: UX Investigate e build/deploy.
+
+Entrega:
+
+- removido o uso de `Array.prototype.at` da UI de Experiments, preservando o
+  target/lib ES2020 atual em vez de ampliar o requisito de runtime;
+- o build Docker limpo deixa de divergir do build incremental local.
+
+Validacoes:
+
+- [x] `npm exec tsc -- -b --force` em `ui/`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build`;
+- [x] `docker compose build web`.
+
+### 2026-08-11 - Closed-loop Experiment com URL unica por device
+
+Fases impactadas: 2, 3, Record R1/R2, API, worker, persistencia e UX Investigate.
+
+Entrega:
+
+- migration 011 e dominio para Experiment, Hypothesis, Iteration, CloneSpec v1,
+  clone experimental, TestEnvironment, TestRequest/TestResult e Evaluation;
+- application service compartilhado pelas rotas REST e UI, sem MCP/framework
+  novo e sem mover logica de negocio para componentes;
+- CloneCompiler gera planos declarativos, sem shell, e recusa modos/recipes que o
+  materializador atual nao executa ou que nao diferem de CONTROL;
+- Record legado permanece intacto; recordings experimentais carregam spec/plano
+  opcionais e o mesmo worker aplica selecao HLS/DASH;
+- observer pos-clone reanalisa o manifest local, confere a selecao, persiste
+  artifacts/provenance e impede clone experimental invalido de virar `READY`;
+- URL fixa por Experiment com selecao transacional de TestRequest. CONTROL e
+  treatments diferentes sao entregues no mesmo path configurado no device;
+- UI integrada ao caso para criar o primeiro conjunto, acompanhar jobs, copiar a
+  URL unica, selecionar tratamento, registrar outcome/stage/notes, avaliar e
+  criar follow-up focado;
+- evaluator deterministico fortalece/enfraquece hipoteses por CONTROL/treatments,
+  preserva `NOT_REPORTED` e nunca inventa resultado de device.
+
+Arquivos-chave:
+
+- `src/database/migrations/011_experiments.sql` e `src/experiment/`;
+- `src/record/application/run-recording.ts` e materializadores HLS/DASH;
+- `src/api/routes/experiments.ts`, `src/api/routes/streams.ts` e composicao;
+- `ui/src/components/InvestigationExperiments.tsx` e `ui/src/lib/api.ts`;
+- `docs/api.md`, arquitetura, decisions e UI guide.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 39 arquivos, 176 testes;
+- [x] `npm run build`;
+- [x] testes direcionados de domain/compiler/verification/evaluation/API/data
+  plane/worker/materializadores;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - sucesso; permanecem apenas os avisos ja
+  conhecidos de bundle grande e CommonJS do `dash.js`;
+- [x] migration 011 aplicada localmente com `npm run db:migrate`.
+
+Pendencias intencionais:
+
+- transcode, repackage/remux, HLS fMP4, live proxy e transformacao DRM;
+- rerun completo de todo o pipeline Investigation contra output (o slice usa os
+  mesmos parsers deterministicos e `recorded_resources`, sem nova investigation);
+- MCP/skill/auth novo; REST e o modelo de workspace atual sao suficientes;
+- smoke em device fisico e QR code.
+
+### 2026-08-11 - Playback Record no browser e data plane completo
+
+Fases impactadas: Record R1/R2, API, delivery e UX Record.
+
+Entrega:
+
+- o data plane agora implementa `GET`, `HEAD` e `OPTIONS` explicitamente;
+  preflight aceita `Range`, expoe headers de tamanho/range e preserva CORS tambem
+  em respostas de erro;
+- ranges simples, abertos e por sufixo retornam `206`; range multiplo,
+  malformado ou fora do recurso retorna `416 INVALID_PLAYBACK_RANGE` com o total;
+- `HEAD` e `OPTIONS` nao consultam o run aberto, nao consomem o token bucket e
+  nao entram no journal; somente GET representa delivery e ranges persistem os
+  bytes/status efetivamente servidos;
+- o Vite encaminha `/streams` para a API como o Nginx do Compose, eliminando o
+  fallback HTML durante desenvolvimento local;
+- a tela Record ganhou player explícito e controlado pelo usuario: hls.js para
+  HLS e dash.js carregado sob demanda para DASH;
+- antes de inicializar dash.js, a UI le o MPD local e verifica cada codec de
+  video/audio via MSE. Video rejeitado fica `Unsupported` e nao baixa segmentos;
+  playback iniciado participa normalmente do shaping e do journal do run ativo;
+- a UI diferencia checking, ready, playing, buffering, unsupported e error e
+  mantem explicita a limitacao entre MSE aceito, decode e frames renderizados.
+
+Arquivos-chave:
+
+- `src/api/routes/streams.ts` e `src/api/server.test.ts`;
+- `ui/src/components/RecordingBrowserPlayer.tsx`;
+- `ui/src/pages/RecordPage.tsx` e `ui/vite.config.ts`;
+- `ui/package.json` e `ui/package-lock.json`;
+- `docs/api.md`, `docs/ui/UI-GUIDE.md` e
+  `docs/architecture/phases/phase-record-dash-vod.md`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 32 arquivos, 147 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - sucesso; dash.js em chunk sob demanda, com
+  avisos de bundle acima de 500 kB e `COMMONJS_VARIABLE_IN_ESM` da distribuicao
+  oficial do pacote;
+- [x] Chromium headless carregou o chunk produzido, criou `MediaPlayer` e expoe
+  `initialize`/eventos do dash.js sem erro de runtime;
+- [x] `docker compose build api web` - imagens locais reconstruidas sem reiniciar
+  o run ativo;
+- [x] rota de stream: GET/CORS, preflight 204, HEAD sem lookup do run, range
+  normal/sufixo, 206, 416 e CORS em 404/416;
+- [x] `git diff --check`;
+- [!] `npm audit --omit=dev` - duas vulnerabilidades moderadas existentes na
+  UI, na cadeia `react-router`; fora desta entrega. O audit completo tambem
+  sinaliza `nanoid` e `postcss` de tooling. O backend sinaliza uma vulnerabilidade
+  alta em `fast-uri` transitivo, com fix disponivel.
+
+Pendencias:
+
+- reconstruir API/web do Compose depois do run ativo atual e executar smoke
+  visual `Start normal` com HLS/AVC e DASH/HEVC em browsers com capacidades
+  distintas;
+- avaliar a atualizacao separada de React Router e tooling indicada pelo audit.
 
 ### 2026-08-11 - URL de playback fixa por recording
 
