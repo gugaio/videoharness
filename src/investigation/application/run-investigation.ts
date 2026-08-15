@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { StreamCollectionError } from "../../stream-tools/errors.js";
-import type { EvidenceBundleV2 } from "../domain/evidence.js";
+import type { WorkerLogger } from "../../infra/logger.js";
 import {
   JobLeaseLostError,
   type ClaimedInvestigationJob,
@@ -12,16 +12,7 @@ import type { ManifestCollector } from "../ports/manifest-collector.js";
 import type { MediaProbe, MediaSampleCollector } from "../ports/media-sample-collector.js";
 import type { ManifestCollection } from "../ports/manifest-collector.js";
 import type { CollectionProgress } from "../ports/manifest-collector.js";
-import type {
-  AiAgentProgress,
-  AiAgentRun,
-  AiInvestigationResult,
-  InvestigationAI,
-} from "../ports/investigation-ai.js";
-import {
-  buildManifestEvidence,
-  buildManifestReport,
-} from "./build-manifest-evidence.js";
+import { buildManifestEvidence } from "./build-manifest-evidence.js";
 import { parseReportedContext } from "./parse-reported-context.js";
 import type { AbrDecodeTester } from "../../abr/ports/abr-decode-tester.js";
 import { attachPriorityAbrDecodeTests } from "../../abr/application/run-decode-tests.js";
@@ -38,17 +29,25 @@ export function createInvestigationWorker(input: {
   mediaProbe?: MediaProbe;
   abrDecodeTester?: AbrDecodeTester;
   labWorkspace?: { prepare(investigationId: string, collection: ManifestCollection): Promise<void> };
-  ai?: InvestigationAI;
   workerId: string;
   leaseMs: number;
   heartbeatMs?: number;
+  logger?: WorkerLogger;
 }): InvestigationWorker {
   const heartbeatMs = input.heartbeatMs ?? Math.max(1_000, Math.floor(input.leaseMs / 3));
+  const log = input.logger ?? noopLogger;
 
   return {
     async runNext(): Promise<boolean> {
       const job = await input.repository.claimNext(input.workerId, input.leaseMs);
       if (!job) return false;
+      log.info("worker.job_claimed", {
+        jobId: job.id,
+        jobKind: "investigation",
+        investigationId: job.investigation.id,
+        attempt: job.attempts,
+        maxAttempts: job.maxAttempts,
+      });
 
       let leaseLost = false;
       let activeHeartbeat: Promise<void> | undefined;
@@ -76,25 +75,61 @@ export function createInvestigationWorker(input: {
           input.leaseMs,
           buildValidatingTransition(job),
         );
-        const onCollectionProgress: (progress: CollectionProgress) => Promise<void> = (progress) =>
-          input.repository.transition(job.id, input.workerId, input.leaseMs, {
+        log.info("investigation.state_changed", {
+          jobId: job.id,
+          investigationId: job.investigation.id,
+          state: "validating",
+          attempt: job.attempts,
+        });
+        const onCollectionProgress: (progress: CollectionProgress) => Promise<void> = (progress) => {
+          if (progress.limitation) {
+            log.warn("investigation.collection_limited", {
+              jobId: job.id,
+              investigationId: job.investigation.id,
+              stage: progress.stage,
+              errorCode: progress.limitation.errorCode,
+              resourceKind: progress.limitation.resourceKind,
+              ...(progress.limitation.logicalKey ? { logicalKey: progress.limitation.logicalKey } : {}),
+              ...(progress.limitation.representationId ? { representationId: progress.limitation.representationId } : {}),
+              ...(progress.limitation.sourceSegment === undefined ? {} : { sourceSegment: progress.limitation.sourceSegment }),
+              ...(progress.completed === undefined ? {} : { completed: progress.completed }),
+              ...(progress.total === undefined ? {} : { total: progress.total }),
+            });
+          }
+          return input.repository.transition(job.id, input.workerId, input.leaseMs, {
             state: "collecting",
             event: buildCollectionProgressEvent(progress),
           });
+        };
         await input.repository.transition(
           job.id,
           input.workerId,
           input.leaseMs,
           buildCollectingTransition(job),
         );
+        log.info("investigation.state_changed", {
+          jobId: job.id,
+          investigationId: job.investigation.id,
+          state: "collecting",
+          attempt: job.attempts,
+        });
         const collection = await input.collector.collect(job.investigation.sourceUrl, onCollectionProgress);
         if (job.investigation.problemDescription) {
           collection.reportedContext = parseReportedContext(job.investigation.problemDescription);
         }
+        let probeCount = 0;
         if (input.mediaCollector && input.mediaProbe) {
           const collectedSamples = await input.mediaCollector.collect(collection, onCollectionProgress);
           collection.mediaSamples = collectedSamples.samples;
           collection.mediaLimitations = collectedSamples.limitations;
+          for (const limitation of collectedSamples.limitations) {
+            log.warn("investigation.collection_limited", {
+              jobId: job.id,
+              investigationId: job.investigation.id,
+              stage: "media_sample",
+              message: truncateLogMessage(limitation),
+            });
+          }
           const mediaSamples = collection.mediaSamples.filter((entry) => entry.kind === "media-segment");
           for (const [index, sample] of mediaSamples.entries()) {
             const init = collection.mediaSamples.find((entry) =>
@@ -112,8 +147,15 @@ export function createInvestigationWorker(input: {
                 sample,
                 ...(init ? { initBytes: init.content.bytes } : {}),
               });
+              probeCount += 1;
             } catch (error) {
               collection.mediaLimitations.push(`FFprobe could not inspect ${sample.logicalKey}: ${formatProbeFailure(error)}`);
+              log.warn("investigation.media_probe_failed", {
+                jobId: job.id,
+                investigationId: job.investigation.id,
+                logicalKey: sample.logicalKey,
+                message: formatProbeFailure(error),
+              });
             }
           }
         }
@@ -155,6 +197,11 @@ export function createInvestigationWorker(input: {
             await attachPriorityAbrDecodeTests(evidence, collection.mediaSamples ?? [], input.abrDecodeTester);
           } catch (error) {
             evidence.limitations.push(`ABR decode tests were unavailable: ${formatProbeFailure(error)}`);
+            log.warn("investigation.abr_decode_tests_unavailable", {
+              jobId: job.id,
+              investigationId: job.investigation.id,
+              message: formatProbeFailure(error),
+            });
           }
         }
         const rootManifest = evidence.manifests[0]!;
@@ -205,76 +252,44 @@ export function createInvestigationWorker(input: {
         await Promise.all(recorded.supersededStorageKeys.map((storageKey) =>
           input.artifactStore.remove(storageKey).catch(() => undefined)));
 
-        await input.repository.transition(
-          job.id,
-          input.workerId,
-          input.leaseMs,
-          buildAnalyzingTransition(evidence),
-        );
-        let aiResult: AiInvestigationResult | undefined;
-        if (input.ai) {
-          await input.repository.transition(job.id, input.workerId, input.leaseMs, {
-            state: "analyzing",
-            event: {
-              type: "investigation.observation",
-              actor: "AI Investigation Team",
-              message: "Specialists are correlating the deterministic evidence.",
-              payload: { state: "analyzing", stage: "ai_specialists" },
-            },
-          });
-          let progressChain: Promise<void> = Promise.resolve();
-          const onProgress = (update: AiAgentProgress): Promise<void> => {
-            progressChain = progressChain.then(() =>
-              input.repository.transition(job.id, input.workerId, input.leaseMs, {
-                state: "analyzing",
-                event: buildAiAgentProgressEvent(update),
-              }));
-            return progressChain;
-          };
-          aiResult = await input.ai.investigate({
-            investigationId: job.investigation.id,
-            ...(job.investigation.problemDescription ? { problemDescription: job.investigation.problemDescription } : {}),
-            evidence,
-            onProgress,
-          });
-          await input.repository.transition(job.id, input.workerId, input.leaseMs, {
-            state: "analyzing",
-            event: {
-              type: "investigation.observation",
-              actor: "AI Investigation Team",
-              message: aiResult.available
-                ? `${aiResult.agents.filter((agent) => agent.state === "completed").length} AI agent runs completed.`
-                : "AI analysis is unavailable; retaining the deterministic report.",
-              payload: { state: "analyzing", stage: "ai_complete", available: aiResult.available },
-            },
-          });
-        }
-        await input.repository.transition(
-          job.id,
-          input.workerId,
-          input.leaseMs,
-          buildSynthesizingTransition(),
-        );
         clearInterval(heartbeatTimer);
         await activeHeartbeat;
         if (leaseLost) throw new JobLeaseLostError();
-        await input.repository.complete(
+        await input.repository.completeCollection(
           job.id,
           input.workerId,
-          randomUUID(),
-          buildManifestReport(job, evidence, aiResult),
           {
-            type: "investigation.report_ready",
-            actor: "Investigator",
-            message: "The deterministic media evidence report is ready.",
-            payload: { state: "completed", placeholder: false, protocol: evidence.source.protocol },
+            type: "investigation.evidence_ready",
+            actor: "Media Agent",
+            message: "The deterministic stream evidence is ready for inspection.",
+            payload: { state: "evidence_ready", snapshotId: recorded.snapshotId, protocol: evidence.source.protocol },
           },
         );
+        log.info("investigation.evidence_ready", {
+          jobId: job.id,
+          investigationId: job.investigation.id,
+          protocol: evidence.source.protocol,
+          manifestCount: evidence.manifests.length,
+          mediaSampleCount: evidence.mediaSamples.length,
+          probeCount,
+          limitationCount: evidence.limitations.length,
+          snapshotId: recorded.snapshotId,
+          attempt: job.attempts,
+        });
       } catch (error) {
         await Promise.all(Array.from(uncommittedStorageKeys, (storageKey) =>
           input.artifactStore.remove(storageKey).catch(() => undefined)));
         const failure = classifyFailure(error);
         await input.repository.fail(job.id, input.workerId, failure.code, failure.message, failure.retryable);
+        log.error("worker.job_failed", {
+          jobId: job.id,
+          jobKind: "investigation",
+          investigationId: job.investigation.id,
+          attempt: job.attempts,
+          code: failure.code,
+          retryable: failure.retryable,
+          message: truncateLogMessage(failure.message),
+        });
       } finally {
         clearInterval(heartbeatTimer);
         await activeHeartbeat;
@@ -332,70 +347,6 @@ function buildCollectionProgressEvent(progress: CollectionProgress): Investigati
   };
 }
 
-function buildAnalyzingTransition(evidence: EvidenceBundleV2): InvestigationTransition {
-  const rootManifest = evidence.manifests[0]!;
-  const count = rootManifest.variantCount
-    ?? rootManifest.representationCount
-    ?? rootManifest.segmentCount
-    ?? 0;
-  return {
-    state: "analyzing",
-    event: {
-      type: "investigation.observation",
-      actor: "Playback Agent",
-      message: `Manifest structure identified deterministically with ${count} primary entries and ${evidence.manifests.length} preserved manifest${evidence.manifests.length === 1 ? "" : "s"}.`,
-      payload: {
-        state: "analyzing",
-        protocol: evidence.source.protocol,
-        manifestKind: rootManifest.kind,
-        entryCount: count,
-      },
-    },
-  };
-}
-
-function buildSynthesizingTransition(): InvestigationTransition {
-  return {
-    state: "synthesizing",
-    event: {
-      type: "investigation.state_changed",
-      actor: "Investigator",
-      message: "Preparing a report from the collected manifest evidence.",
-      payload: { state: "synthesizing" },
-    },
-  };
-}
-
-const AI_AGENT_LABELS: Record<AiAgentRun["id"], string> = {
-  "timeline-playback": "Timeline & Playback",
-  "container-encoding": "Container & Encoding",
-  "manifest-delivery": "Manifest & Delivery",
-  "abr-switch-investigator": "ABR Quality Investigator",
-  "lead-investigator": "Lead Investigator",
-};
-
-function buildAiAgentProgressEvent(update: AiAgentProgress): InvestigationTransition["event"] {
-  const label = AI_AGENT_LABELS[update.agent];
-  const message = update.stage === "started"
-    ? `${label} analysis started.`
-    : update.stage === "completed"
-      ? `${label} analysis complete.`
-      : `${label} analysis could not complete${update.limitation ? `: ${update.limitation}` : "."}`;
-  return {
-    type: "investigation.observation",
-    actor: update.agent,
-    message,
-    payload: {
-      state: "analyzing",
-      stage: "ai_agent",
-      agent: update.agent,
-      agentStage: update.stage,
-      completed: update.completed,
-      total: update.total,
-    },
-  };
-}
-
 function classifyFailure(error: unknown): { code: string; message: string; retryable: boolean } {
   if (error instanceof StreamCollectionError) {
     return { code: error.code, message: error.message, retryable: error.retryable };
@@ -412,4 +363,14 @@ function classifyFailure(error: unknown): { code: string; message: string; retry
 
 function formatProbeFailure(error: unknown): string {
   return error instanceof Error ? error.message.replace(/\s+/g, " ").slice(0, 320) : "Unknown probe failure";
+}
+
+const noopLogger: WorkerLogger = {
+  info: () => undefined,
+  warn: () => undefined,
+  error: () => undefined,
+};
+
+function truncateLogMessage(message: string): string {
+  return message.replace(/\s+/g, " ").trim().slice(0, 500);
 }

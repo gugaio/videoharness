@@ -3,7 +3,22 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { hevcFrameKind, inspectFmp4Fragment, inspectFmp4Init } from "../../stream-tools/isobmff.js";
+import { inspectTsSanity, looksLikeMpegTs } from "../../stream-tools/ts-sanity.js";
 import type { MediaProbe, MediaProbeResult, MediaProbeTrack } from "../ports/media-sample-collector.js";
+
+const FfprobePacketSchema = z.object({
+  stream_index: z.number().int(), pts: z.union([z.string(), z.number()]).optional(), pts_time: z.union([z.string(), z.number()]).optional(),
+  dts: z.union([z.string(), z.number()]).optional(), dts_time: z.union([z.string(), z.number()]).optional(), duration: z.union([z.string(), z.number()]).optional(), duration_time: z.union([z.string(), z.number()]).optional(), size: z.union([z.string(), z.number()]).optional(), pos: z.union([z.string(), z.number()]).optional(), flags: z.string().optional(),
+});
+
+const FfprobeFrameSchema = z.object({
+  media_type: z.string().optional(), stream_index: z.number().int().optional(), key_frame: z.union([z.number(), z.boolean()]).optional(), pict_type: z.string().optional(), pts: z.union([z.string(), z.number()]).optional(), pts_time: z.union([z.string(), z.number()]).optional(), pkt_dts: z.union([z.string(), z.number()]).optional(), pkt_dts_time: z.union([z.string(), z.number()]).optional(), best_effort_timestamp: z.union([z.string(), z.number()]).optional(), duration: z.union([z.string(), z.number()]).optional(), width: z.number().optional(), height: z.number().optional(), pix_fmt: z.string().optional(), color_range: z.string().optional(), color_space: z.string().optional(), color_transfer: z.string().optional(), color_primaries: z.string().optional(), side_data_list: z.array(z.object({ side_data_type: z.string().optional() })).optional(),
+});
+
+const FfprobeCombinedEntrySchema = z.discriminatedUnion("type", [
+  FfprobePacketSchema.extend({ type: z.literal("packet") }),
+  FfprobeFrameSchema.extend({ type: z.literal("frame") }),
+]);
 
 const FfprobeOutputSchema = z.object({
   format: z.object({ format_name: z.string().optional(), duration: z.union([z.string(), z.number()]).optional() }).optional(),
@@ -14,13 +29,9 @@ const FfprobeOutputSchema = z.object({
     time_base: z.string().optional(), avg_frame_rate: z.string().optional(), r_frame_rate: z.string().optional(), color_range: z.string().optional(), color_space: z.string().optional(), color_transfer: z.string().optional(), color_primaries: z.string().optional(), chroma_location: z.string().optional(),
     sample_rate: z.union([z.string(), z.number()]).optional(), channels: z.number().optional(),
   })).optional(),
-  packets: z.array(z.object({
-    stream_index: z.number().int(), pts: z.union([z.string(), z.number()]).optional(), pts_time: z.union([z.string(), z.number()]).optional(),
-    dts: z.union([z.string(), z.number()]).optional(), dts_time: z.union([z.string(), z.number()]).optional(), duration: z.union([z.string(), z.number()]).optional(), duration_time: z.union([z.string(), z.number()]).optional(), size: z.union([z.string(), z.number()]).optional(), pos: z.union([z.string(), z.number()]).optional(), flags: z.string().optional(),
-  })).optional(),
-  frames: z.array(z.object({
-    media_type: z.string().optional(), stream_index: z.number().int().optional(), key_frame: z.union([z.number(), z.boolean()]).optional(), pict_type: z.string().optional(), pts: z.union([z.string(), z.number()]).optional(), pts_time: z.union([z.string(), z.number()]).optional(), pkt_dts: z.union([z.string(), z.number()]).optional(), pkt_dts_time: z.union([z.string(), z.number()]).optional(), best_effort_timestamp: z.union([z.string(), z.number()]).optional(), duration: z.union([z.string(), z.number()]).optional(), width: z.number().optional(), height: z.number().optional(), pix_fmt: z.string().optional(), color_range: z.string().optional(), color_space: z.string().optional(), color_transfer: z.string().optional(), color_primaries: z.string().optional(), side_data_list: z.array(z.object({ side_data_type: z.string().optional() })).optional(),
-  })).optional(),
+  packets: z.array(FfprobePacketSchema).optional(),
+  frames: z.array(FfprobeFrameSchema).optional(),
+  packets_and_frames: z.array(FfprobeCombinedEntrySchema).optional(),
 });
 
 export class FfprobeMediaProbe implements MediaProbe {
@@ -35,8 +46,9 @@ export class FfprobeMediaProbe implements MediaProbe {
       const output = await runFfprobe(this.options.binary ?? "ffprobe", file, this.options.timeoutMs, this.options.maxOutputBytes ?? 4_194_304);
       const parsed = FfprobeOutputSchema.safeParse(JSON.parse(output));
       if (!parsed.success) throw new Error("FFprobe returned an invalid media description");
+      const entries = normalizeFfprobeEntries(parsed.data);
       const packetsByStream = new Map<number, number[]>();
-      for (const packet of parsed.data.packets ?? []) {
+      for (const packet of entries.packets) {
         const value = finite(packet.pts_time) ?? finite(packet.dts_time);
         if (value === undefined) continue;
         const values = packetsByStream.get(packet.stream_index) ?? [];
@@ -80,11 +92,15 @@ export class FfprobeMediaProbe implements MediaProbe {
       const isFragmentedMp4 = Boolean(input.initBytes) || looksLikeIsoBmff(input.sample.content.bytes);
       const init = input.initBytes && isFragmentedMp4 ? inspectFmp4Init(input.initBytes) : undefined;
       const fragment = isFragmentedMp4 ? inspectFmp4Fragment(input.sample.content.bytes, init?.nalLengthSize ?? 4) : undefined;
+      const structural = !isFragmentedMp4 && looksLikeMpegTs(input.sample.content.bytes)
+        ? inspectTsSanity(input.sample.content.bytes)
+        : undefined;
       return {
         ...(parsed.data.format?.format_name ? { format: parsed.data.format.format_name } : {}),
         ...(duration === undefined ? {} : { duration }),
         tracks,
-        boundary: buildBoundarySummary(parsed.data.packets ?? [], parsed.data.frames ?? []),
+        ...(structural ? { structural } : {}),
+        boundary: buildFfprobeBoundarySummary(entries.packets, entries.frames),
         ...(fragment ? { fmp4: {
           ...(init ? { init } : {}),
           fragment: {
@@ -117,16 +133,67 @@ export class FfprobeMediaProbe implements MediaProbe {
   }
 }
 
-type ParsedPacket = NonNullable<z.infer<typeof FfprobeOutputSchema>["packets"]>[number];
-type ParsedFrame = NonNullable<z.infer<typeof FfprobeOutputSchema>["frames"]>[number];
+type ParsedOutput = z.infer<typeof FfprobeOutputSchema>;
+type ParsedPacket = z.infer<typeof FfprobePacketSchema>;
+type ParsedFrame = z.infer<typeof FfprobeFrameSchema>;
 
-function buildBoundarySummary(packets: ParsedPacket[], frames: ParsedFrame[]): NonNullable<MediaProbeResult["boundary"]> {
+export function normalizeFfprobeEntries(output: ParsedOutput): { packets: ParsedPacket[]; frames: ParsedFrame[] } {
+  const combined = output.packets_and_frames ?? [];
+  const combinedPackets = combined.filter((entry): entry is Extract<(typeof combined)[number], { type: "packet" }> => entry.type === "packet");
+  const combinedFrames = combined.filter((entry): entry is Extract<(typeof combined)[number], { type: "frame" }> => entry.type === "frame");
+  return {
+    packets: output.packets?.length ? output.packets : combinedPackets,
+    frames: output.frames?.length ? output.frames : combinedFrames,
+  };
+}
+
+export function buildFfprobeBoundarySummary(packets: ParsedPacket[], frames: ParsedFrame[]): NonNullable<MediaProbeResult["boundary"]> {
+  const videoFrames = frames.filter((frame) => frame.media_type === "video" || frame.pict_type !== undefined);
+  const gops = buildGops(videoFrames);
   return {
     totalPacketCount: packets.length,
-    totalFrameCount: frames.length,
+    totalFrameCount: videoFrames.length,
+    totalGopCount: gops.totalCount,
     packets: boundaryItems(packets).map(toBoundaryPacket),
-    frames: boundaryItems(frames).map(toBoundaryFrame),
+    frames: boundaryItems(videoFrames).map(toBoundaryFrame),
+    gops: gops.items,
   };
+}
+
+const MAX_GOPS = 24;
+const MAX_FRAMES_PER_GOP = 360;
+
+function buildGops(frames: ParsedFrame[]): { totalCount: number; items: NonNullable<MediaProbeResult["boundary"]>["gops"] } {
+  const groups: ParsedFrame[][] = [];
+  const startIndexes: number[] = [];
+  for (const [frameIndex, frame] of frames.entries()) {
+    const beginsGop = isKeyFrame(frame) || frame.pict_type?.toUpperCase() === "I";
+    if (groups.length === 0 || beginsGop) {
+      groups.push([]);
+      startIndexes.push(frameIndex);
+    }
+    groups[groups.length - 1]!.push(frame);
+  }
+  const items = groups.slice(0, MAX_GOPS).map((group, index) => {
+    const projected = group.slice(0, MAX_FRAMES_PER_GOP).map(toBoundaryFrame);
+    const firstPtsTime = finite(group[0]?.pts_time);
+    const lastPtsTime = finite(group[group.length - 1]?.pts_time);
+    return {
+      index,
+      startFrameIndex: startIndexes[index]!,
+      frameCount: group.length,
+      startsWithKeyFrame: isKeyFrame(group[0]),
+      ...(firstPtsTime === undefined ? {} : { firstPtsTime }),
+      ...(lastPtsTime === undefined ? {} : { lastPtsTime }),
+      frames: projected,
+      truncated: projected.length < group.length,
+    };
+  });
+  return { totalCount: groups.length, items };
+}
+
+function isKeyFrame(frame: ParsedFrame | undefined): boolean {
+  return frame?.key_frame === true || frame?.key_frame === 1;
 }
 
 function toBoundaryPacket(packet: ParsedPacket): NonNullable<MediaProbeResult["boundary"]>["packets"][number] {

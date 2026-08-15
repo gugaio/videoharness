@@ -55,8 +55,8 @@ apenas aumentar a quantidade de dados exibidos.
 ## Fluxos atuais
 
 ```text
-Investigate: URL + problema opcional -> evidencia + AbrAssessment -> explicacao
-Record:      URL HLS/DASH VOD -> recording -> playback run -> evidencia ABR
+Investigate: URL -> explorer deterministico -> CTA explicito -> agentes -> hipoteses -> teste -> conclusao
+Record:      URL HLS/DASH VOD -> media controlada + URL estavel para o teste
 ```
 
 Qualidade ABR e uma dimensao permanente de Investigate, para HLS e DASH. Quando o

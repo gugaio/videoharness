@@ -11,6 +11,7 @@ import {
   type TestResult,
 } from "../domain/experiment.js";
 import type { ExperimentRepository, SubmitTestResultRecord } from "../ports/experiment-repository.js";
+import type { ExperimentEvaluationJobRepository } from "../ports/experiment-evaluation-job.js";
 import {
   cloneSourceEvidenceFromReport,
   cloneSpecHash,
@@ -18,7 +19,6 @@ import {
   expandCloneRecipe,
   listCloneCapabilities,
 } from "./clone-compiler.js";
-import { evaluateExperimentEvidence } from "./evaluate-experiment.js";
 
 export class ExperimentApplicationError extends Error {
   constructor(readonly code: string, message: string, readonly statusCode = 409) {
@@ -29,6 +29,7 @@ export class ExperimentApplicationError extends Error {
 
 export function createExperimentService(input: {
   repository: ExperimentRepository;
+  evaluationJobs: ExperimentEvaluationJobRepository;
   investigations: InvestigationQueries;
   policy?: ExperimentPolicy;
   logger?: { info(event: string, details?: Record<string, unknown>): void };
@@ -39,7 +40,7 @@ export function createExperimentService(input: {
   async function sourceContext(investigationId: string) {
     const investigation = await input.investigations.getInvestigation(investigationId);
     if (!investigation) throw new ExperimentApplicationError("INVESTIGATION_NOT_FOUND", "Investigation not found", 404);
-    if (investigation.state !== "completed") throw new ExperimentApplicationError("INVESTIGATION_NOT_READY", "Experiments require a completed deterministic investigation");
+    if (investigation.state !== "completed") throw new ExperimentApplicationError("INVESTIGATION_NOT_READY", "Experiments require completed agent analysis");
     const report = await input.investigations.getReport(investigationId);
     if (!report) throw new ExperimentApplicationError("REPORT_NOT_READY", "Experiments require a deterministic report");
     try {
@@ -96,6 +97,7 @@ export function createExperimentService(input: {
       shortLabel: string;
       hypothesisIds: string[];
       representationId?: string;
+      representationIds?: string[];
       targetBitrate?: number;
       width?: number;
       height?: number;
@@ -228,25 +230,14 @@ export function createExperimentService(input: {
     async evaluate(experimentId: string) {
       const experiment = await input.repository.findById(experimentId);
       if (!experiment) throw new ExperimentApplicationError("EXPERIMENT_NOT_FOUND", "Experiment not found", 404);
-      if (experiment.status === "AWAITING_TESTS") assertExperimentTransition(experiment.status, "EVALUATING");
-      else if (experiment.status !== "EVALUATING") throw new ExperimentApplicationError("EXPERIMENT_NOT_READY_FOR_EVALUATION", "The experiment is not ready for evaluation");
+      if (!["EVALUATING", "CONCLUDED", "FOLLOWUP_REQUIRED"].includes(experiment.status)) throw new ExperimentApplicationError("EXPERIMENT_NOT_READY_FOR_EVALUATION", "Complete every requested observation before starting agent evaluation");
       const report = await input.investigations.getReport(experiment.investigationId);
       if (!report) throw new ExperimentApplicationError("REPORT_NOT_READY", "Original deterministic evidence is unavailable");
-      const evidence = report.content.placeholder ? undefined : report.content.evidence;
-      const evaluation = evaluateExperimentEvidence({
-        experiment,
-        originalEvidence: {
-          reportId: report.id,
-          ...(evidence ? { schemaVersion: evidence.schemaVersion, sourceProtocol: evidence.source.protocol } : {}),
-          ...(evidence && evidence.schemaVersion !== 1 ? { artifactIds: [...evidence.manifests.map((entry) => entry.artifactId), ...evidence.mediaSamples.map((entry) => entry.artifactId)] } : {}),
-          ...(evidence && evidence.schemaVersion !== 1 && evidence.abr ? { abrVerdict: evidence.abr.verdict } : {}),
-          limitationCount: evidence?.limitations.length ?? 0,
-        },
-      });
-      const saved = await input.repository.saveEvaluation(evaluation);
-      if (saved === "invalid_state") throw new ExperimentApplicationError("EXPERIMENT_NOT_READY_FOR_EVALUATION", "The experiment is not ready for evaluation");
-      activity.info("experiment.evaluated", { investigationId: experiment.investigationId, experimentId, iterationId: saved.iterationId, evaluationId: saved.id, status: saved.status, confidence: saved.confidence });
-      return saved;
+      const requested = await input.evaluationJobs.request(experimentId);
+      if (requested === "not_found") throw new ExperimentApplicationError("EXPERIMENT_NOT_FOUND", "Experiment not found", 404);
+      if (requested === "not_ready") throw new ExperimentApplicationError("EXPERIMENT_NOT_READY_FOR_EVALUATION", "Complete every requested observation before starting agent evaluation");
+      activity.info("experiment.evaluation_requested", { investigationId: experiment.investigationId, experimentId, jobId: requested.job.id, replayed: requested.replayed });
+      return requested;
     },
 
     async createEnvironment(value: Omit<TestEnvironment, "id" | "createdAt" | "updatedAt">) {

@@ -48,14 +48,14 @@ export const CloneSpecSchema = z.object({
   }).optional(),
   abr: z.object({
     mode: z.enum(["preserve", "single_representation", "subset", "custom"]),
-    representationIds: z.array(sourceRepresentationIdentifier).max(8).optional(),
+    representationIds: z.array(sourceRepresentationIdentifier).max(32).optional(),
     targetBitrate: z.number().int().min(64_000).max(100_000_000).nullable().optional(),
   }).optional(),
   manifest: z.object({
     normalisation: z.enum(["preserve", "minimal", "custom"]),
     operations: z.array(z.object({
       op: z.enum(["filter_representations", "single_audio", "remove_subtitles", "sort_by_bandwidth"]),
-      representationIds: z.array(sourceRepresentationIdentifier).max(8).optional(),
+      representationIds: z.array(sourceRepresentationIdentifier).max(32).optional(),
     })).max(12).optional(),
   }).optional(),
   reason: z.object({
@@ -84,6 +84,7 @@ export const CloneRecipeRequestSchema = z.object({
   shortLabel: z.string().trim().min(1).max(24).regex(/^[A-Za-z0-9-]+$/),
   hypothesisIds: z.array(z.string().uuid()).max(12).default([]),
   representationId: sourceRepresentationIdentifier.optional(),
+  representationIds: z.array(sourceRepresentationIdentifier).min(1).max(32).optional(),
   targetBitrate: z.number().int().min(64_000).max(100_000_000).optional(),
   width: z.number().int().min(160).max(7680).optional(),
   height: z.number().int().min(90).max(4320).optional(),

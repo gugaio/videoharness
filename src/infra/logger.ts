@@ -1,3 +1,9 @@
+export type WorkerLogger = {
+  info(event: string, details?: Record<string, unknown>): void;
+  warn(event: string, details?: Record<string, unknown>): void;
+  error(event: string, details?: Record<string, unknown>): void;
+};
+
 type LogLevel = "info" | "warn" | "error";
 
 function write(level: LogLevel, event: string, details: Record<string, unknown> = {}): void {

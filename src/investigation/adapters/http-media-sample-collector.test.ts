@@ -204,6 +204,62 @@ describe("HttpMediaSampleCollector", () => {
     expect(result.samples.map((sample) => sample.sampleIndex)).toEqual([0, 1]);
   });
 
+  it("samples the selected variant and its adjacent lower-bandwidth sibling", async () => {
+    const requester = vi.fn<PinnedRequester>(async (url) => response(url.pathname));
+    const collector = new HttpMediaSampleCollector(new SafeHttpClient({
+      resolver: async () => [{ address: "93.184.216.34", family: 4 }], requester,
+    }), { maxTotalBytes: 100_000 });
+    const mediaText = (name: string) => ["#EXTM3U", "#EXTINF:4,", `${name}.ts`, "#EXT-X-ENDLIST"].join("\n");
+    const source = {
+      requestedUrl: "https://stream.example/live/master.m3u8",
+      finalUrl: "https://stream.example/live/master.m3u8",
+      statusCode: 200,
+    };
+
+    const result = await collector.collect({
+      manifests: [
+        {
+          logicalKey: "manifest/root", role: "root",
+          source,
+          content: { bytes: new TextEncoder().encode("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nlow.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2000\nhigh.m3u8") },
+          inspection: {
+            protocol: "hls", kind: "master", variantCount: 2,
+            hls: {
+              kind: "master",
+              variants: [
+                { index: 0, uri: "low.m3u8", url: "https://stream.example/live/low.m3u8", bandwidth: 1_000 },
+                { index: 1, uri: "high.m3u8", url: "https://stream.example/live/high.m3u8", bandwidth: 2_000 },
+              ],
+              renditions: [], segmentCount: 0, discontinuityCount: 0, hasEndList: false,
+            },
+          },
+        },
+        {
+          logicalKey: "manifest/variant/0", role: "variant",
+          source: { ...source, requestedUrl: "https://stream.example/live/low.m3u8", finalUrl: "https://stream.example/live/low.m3u8" },
+          content: { bytes: new TextEncoder().encode(mediaText("low")) },
+          inspection: inspectManifest(mediaText("low"), "https://stream.example/live/low.m3u8"),
+        },
+        {
+          logicalKey: "manifest/variant/1", role: "variant",
+          source: { ...source, requestedUrl: "https://stream.example/live/high.m3u8", finalUrl: "https://stream.example/live/high.m3u8" },
+          content: { bytes: new TextEncoder().encode(mediaText("high")) },
+          inspection: inspectManifest(mediaText("high"), "https://stream.example/live/high.m3u8"),
+        },
+      ],
+      hlsSelection: {
+        rule: "highest-bandwidth",
+        variant: { index: 1, uri: "high.m3u8", url: "https://stream.example/live/high.m3u8", bandwidth: 2_000 },
+      },
+    });
+
+    expect(result.limitations).toEqual([]);
+    expect(result.samples.map((sample) => sample.logicalKey).sort()).toEqual([
+      "sample/variant/0/media/0",
+      "sample/variant/1/media/0",
+    ]);
+  });
+
   it("notes when the reported incident time cannot be mapped to the HLS timeline", async () => {
     const requester = vi.fn<PinnedRequester>(async (url) => response(url.pathname));
     const collector = new HttpMediaSampleCollector(new SafeHttpClient({

@@ -1,5 +1,5 @@
 export type SpecialistAgentId = "timeline-playback" | "container-encoding" | "manifest-delivery" | "abr-switch-investigator";
-export type AgentId = SpecialistAgentId | "lead-investigator";
+export type AgentId = SpecialistAgentId | "lead-investigator" | "experiment-evidence-auditor" | "experiment-causal-analyst" | "experiment-lead-investigator";
 
 export type AiFinding = {
   title: string;
@@ -29,6 +29,8 @@ export type AiPromptAudit = {
   prompt: string;
   toolNames: string[];
   toolCalls: Array<{ name: string; input: string; output: string }>;
+  /** Validated structured response, never model reasoning. */
+  output?: unknown;
 };
 
 export type AiInvestigationResult = {
@@ -39,8 +41,21 @@ export type AiInvestigationResult = {
   findings: AiFinding[];
   recommendations: string[];
   limitations: string[];
+  validationPlan?: AiValidationPlan;
   agents: AiAgentRun[];
   promptAudits: AiPromptAudit[];
+};
+
+export type AiValidationPlan = {
+  goal: string;
+  hypothesis: string;
+  rationale: string;
+  proofBoundary: string;
+  treatment: {
+    recipe: "single_video_representation" | "representation_subset" | "single_audio";
+    shortLabel: string;
+    representationIds: string[];
+  };
 };
 
 /**
@@ -65,4 +80,5 @@ export type LeadOutput = SpecialistOutput & {
   likelyCause: string;
   recommendations: string[];
   confidence: number;
+  validationPlan?: AiValidationPlan;
 };

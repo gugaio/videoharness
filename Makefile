@@ -23,6 +23,9 @@ build:
 db:
 	docker compose exec postgres psql -U video_harness -d video_harness
 
+sql:
+	docker compose exec -T postgres psql -U video_harness -d video_harness -c "$(SQL)"
+
 db-migrate:
 	docker compose exec api node dist/database/migrate.js
 
@@ -44,4 +47,4 @@ dc-logs-worker:
 artifacts:
 	docker compose exec worker ls -la /data/artifacts
 
-.PHONY: dev dev-api dev-worker dev-ui check test build db db-migrate dc-up dc-down dc-logs dc-logs-api dc-logs-worker artifacts
+.PHONY: dev dev-api dev-worker dev-ui check test build db sql db-migrate dc-up dc-down dc-logs dc-logs-api dc-logs-worker artifacts

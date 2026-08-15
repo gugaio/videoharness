@@ -8,10 +8,11 @@ interface vende confianca, clareza e velocidade, nao densidade tecnica.
 
 ## Direcao visual
 
-- Dark mode first.
+- Shell dark-first; o workspace de investigacao e uma superficie clara dentro
+  dessa moldura.
 - Grande uso de espaco negativo.
 - Tipografia forte e legivel.
-- Superficies escuras com bordas discretas.
+- Superficies com bordas discretas e contraste leve entre pagina, cards e estados.
 - Um unico accent frio e estados semanticos contidos.
 - Motion suave, curto e funcional.
 - Referencias: Linear, Raycast, Vercel, Arc e Apple.
@@ -19,6 +20,10 @@ interface vende confianca, clareza e velocidade, nao densidade tecnica.
 Referencia visual inicial local:
 
 `/home/gugaime/Pictures/vhs.png`
+
+Para a estrutura e o tom visual do workspace de investigacao:
+
+`/home/gugaime/IA/vhsdesign`
 
 O chrome de navegador presente no mockup e apenas moldura de apresentacao, nao faz
 parte da interface do site.
@@ -35,8 +40,22 @@ Uma dobra principal, sem navegacao competitiva:
 6. CTA `Investigate`.
 7. Cards Investigate, Record, Watch e Replay.
 
-Investigate permanece o fluxo default. Record esta interativo e navega para
-`/record`; Watch e Replay continuam inativos.
+Investigate permanece o fluxo default. O card Investigate agora navega para a
+lista de cases (`/investigations`), onde a pessoa abre ou apaga investigations;
+o formulario da home continua criando um caso novo. Record esta interativo e
+navega para `/record`; Watch e Replay continuam inativos.
+
+### Pagina de investigations
+
+Rota `/investigations`, com o mesmo shell dark-first:
+
+- Lista as investigations da mais recente para a mais antiga, com stream
+  (sourceUrl truncada), descricao do problema, estado e data de criacao.
+- `Open` abre o caso; `Delete` pede confirmacao (`Confirm`) antes de apagar.
+- A delecao remove o caso no banco e tambem os arquivos de artifacts, o
+  workspace lab e os workspaces/recordings de experiments vinculados; uma
+  falha de filesystem nao impede a delecao confirmada no banco.
+- O estado e recarregado a cada poucos segundos e o health continua discreto.
 
 ### Estado implementado
 
@@ -48,6 +67,8 @@ Investigate permanece o fluxo default. Record esta interativo e navega para
 - Somente a URL e obrigatoria. A descricao aceita sintomas e, quando existirem,
   modelo/firmware e trechos de log de qualquer player; a ajuda deixa claro que
   esses dados permanecem contexto relatado, nao telemetria medida.
+- Pagina de lista em `/investigations` com abrir/apagar; card Investigate leva
+  para ela.
 - Background abstrato foi feito em CSS, sem depender de asset externo.
 
 ## Record
@@ -158,6 +179,63 @@ Record e um fluxo dedicado, nao uma opcao escondida no formulario de Investigate
 
 ## Investigation screen
 
+### Direcao atual: workspace de investigacao
+
+- O workspace forma uma folha clara e continua sobre o shell escuro: fundo cinza
+  muito suave, cards brancos, texto grafite e acentos violetas, azuis e mint. Evitar
+  paineis escuros aninhados dentro dessa superficie.
+- A navegacao do workspace possui tres etapas persistidas na URL: `Stream data`
+  (`view` ausente), `Diagnosis` (`?view=analysis`) e `Validate`
+  (`?view=validate`). Voltar para uma etapa anterior nunca descarta report,
+  auditoria ou experimentos; `Validate` e explicitamente opcional.
+- A etapa 1 usa a largura inteira somente para fatos deterministas. Nao mostra
+  agentes, prompt audit, timeline de IA ou hipoteses.
+- Ao final da etapa 1, um CTA cria o job real de analise. Antes de
+  `evidence_ready`, `Diagnosis` permanece bloqueada; depois do clique ela fica
+  navegavel durante e apos a execucao. `Validate` so abre quando existe report.
+- `Diagnosis` e orientada pelo estado: durante a execucao, agentes e timeline
+  ocupam a superficie principal; depois de `completed`, o report abre primeiro e
+  o painel `Agent panel` fica abaixo dele, aberto por padrao, com o input packet,
+  system prompt, tool calls e output validado de cada agente.
+- O painel de agentes usa o trilho lateral para selecionar o especialista e o
+  conteudo principal para o run persistido: todas as tentativas com `Attempt N`,
+  provider/modelo e estado, `Input · evidence packet`, `System prompt`, tools
+  disponiveis, tool calls (input e resultado) e `Validated output`. A auditoria
+  nunca inclui chain of thought e nao faz parte do report compartilhavel.
+- Para o especialista `manifest-delivery`, o painel extrai do input packet uma
+  secao `Manifest content sent inline` com o texto cru de cada manifest por
+  logicalKey, provando o que o agente recebeu; runs historicos sem o campo
+  mostram uma limitacao explicita pedindo reanalise.
+- A primeira superficie depois do header e o explorer deterministico: manifestos,
+  ladder e chunks preservados. Clicar em um chunk revela somente GOP/fMP4, PTS/DTS,
+  tracks e frames que foram medidos.
+- O explorer tambem apresenta os fatos determinísticos novos de forma dedicada:
+  `Delivery facts` (latencia, first-byte, redirects e headers por manifest),
+  `Ladder alignment` (topologia declarada por variant, com badges de
+  target-duration/discontinuity e marcacao de variants amostradas),
+  `Timeline continuity` (gaps/overlaps de apresentacao entre chunks contiguos),
+  `Observed playback switches` (transicoes ABR request-level do Record, quando
+  presentes) e, no header, o decoder requerido pela ladder e badges de DRM.
+- O inspector de chunk ganha `Container structure · MPEG-TS` (sync, PAT/PMT/PCR,
+  continuities, truncamento) e `Delivery · this chunk` (latencia, first-byte,
+  redirects, server/cache). Tudo opcional e somente quando medido.
+- A ladder usa uma linha por representation declarada. Chunks preservados vivem
+  na propria linha, com sequence/duracao e cobertura `preservado/declarado` quando
+  o manifest fornece a contagem. Uma linha vazia significa `nao amostrada`, nunca
+  `sem chunks na origem`.
+- O header conta media chunks e INITs separadamente; INIT nunca infla a quantidade
+  apresentada como chunk inspecionado.
+- O inspector selecionavel segue o mock `vhsdesign`: timing e lanes A/V no topo,
+  grupos GOP no centro e frames como strokes com altura/cor por I/P/B ou random
+  access. Clicar em um GOP abre seus frames; clicar em um frame mostra PTS, DTS,
+  duracao e sinalizacao de key/sync. Dados ausentes aparecem como ausentes.
+- A timeline mostra atividades reais. O composer se chama
+  `Question for the next analysis`, deixa claro que apenas persiste a pergunta e
+  nao simula uma resposta nem contata um modelo naquele momento.
+- Findings de report nunca sao rotulados como hipoteses. Uma hipotese passa a
+  existir somente em `Validate`, quando e persistida no Experiment e ligada a um
+  plano CONTROL/treatment.
+
 - Navegar para o caso imediatamente depois do POST.
 - Mostrar primeiro evento persistido sem esperar o worker.
 - Timeline cronologica com ator, observacao, estado e timestamp.
@@ -166,6 +244,30 @@ Record e um fluxo dedicado, nao uma opcao escondida no formulario de Investigate
 - Conclusao do Lead ganha hierarquia sem apagar especialistas.
 
 ### Estado implementado
+
+- A rota usa o workspace como experiencia principal. Enquanto os agentes rodam,
+  a timeline explica o trabalho real; depois de `completed`, o report vira a
+  primeira superficie de `Diagnosis`.
+- O explorer deterministico foi separado em um componente dedicado para manter o
+  workspace como orquestrador simples de evidencia, diagnostico, auditoria e
+  validacao.
+- Coleta e IA sao etapas reais: a coleta termina em `evidence_ready`; o CTA
+  `Start agent analysis` chama `POST /v1/investigations/:id/analysis` e abre a
+  segunda etapa. Report e Validate aparecem somente depois dessa analise.
+- A etapa `Diagnosis` termina com o report final persistido dentro da mesma
+  superficie clara do workspace. A conclusao apresenta summary, confianca, causa
+  provavel, recomendacoes, findings ligados a evidencia, checks deterministicos
+  e limitacoes; o painel de agentes abaixo do report e a timeline ficam sob
+  progressive disclosure, com o painel de agentes aberto por padrao.
+- Carregamento e falha da consulta do report possuem estados visiveis. Uma falha
+  de contrato ou transporte nao pode desaparecer como uma area vazia depois de
+  `completed`.
+- Antes da primeira evidencia existir, a etapa `Stream data` abre com uma
+  composicao de investigacao em andamento, nao com um placeholder tecnico: o
+  titulo e a atividade atual acompanham o estado persistido/SSE, quatro marcos
+  explicam o passe (`source`, stream map, media e inspection), e o problema
+  relatado permanece visivel. Checkmarks e atividade derivam somente de eventos
+  reais; nao ha percentual, prazo ou progresso estimado.
 
 - Rota `/investigations/:investigationId`.
 - Header do caso com URL, problema e estado persistido.
@@ -182,27 +284,35 @@ Record e um fluxo dedicado, nao uma opcao escondida no formulario de Investigate
   qualidade ABR em toda investigation HLS/DASH; o total real e 5.
   Eventos `started` alimentam somente o checklist; conclusoes e falhas viram
   posts na timeline com a persona do especialista.
-- Durante `collecting`, o card de trabalho mostra o passo atual da coleta
-  (ex.: "Sampling media sample 2 of 3…"), contador e barra reais derivados dos
-  eventos `collection`, alem dos chips das etapas ja concluidas (root manifest,
-  video variant, audio rendition, media samples, FFprobe). Os eventos de coleta
-  nao viram posts individuais na timeline; o milestone `evidence_found` resume o
-  que foi preservado ao final.
-- Contadores de sample sao locais a cada representation (`2 of 3`) e o numero do
-  segmento de origem aparece separadamente. Timeout de uma amostra vira coverage
-  limitation; nao volta a timeline para `Validating` quando o manifest ja e valido.
-- A limitation de coleta permanece como card amarelo na timeline e mostra chips
-  para tipo do recurso (`init segment`, `media segment` ou `repeat hash`),
-  representation/logical key, segmento de origem e codigo do erro. Assim o
-  usuario distingue falha de manifest de falha em chunk sem revelar a URL
-  assinada da origem.
+- Durante `collecting`, a abertura mostra o passo atual (ex.: "Sampling media
+  sample 2 of 3…") e avanca os quatro marcos somente a partir de
+  `collectionStage`. Os eventos de coleta nao viram posts individuais; o
+  milestone `evidence_found` abre o explorer com o que foi preservado.
+- Contadores de sample continuam locais a cada representation (`2 of 3`) dentro
+  da mensagem real emitida pelo worker, e o segmento de origem permanece
+  separado. Timeout vira coverage limitation e nao regride a composicao para
+  `Validating` quando o manifest ja foi validado.
+- Durante a coleta, limitations aparecem de forma contida e informam que as
+  verificacoes restantes continuam. Os detalhes tecnicos ficam na evidencia
+  preservada, sem revelar a URL assinada da origem.
 
 ### Experiments na Investigation
 
-- A secao `Experiments` vive na mesma tela, depois do report/playback validation;
-  nao cria um dashboard paralelo.
-- O composer pede goal, hipotese, rationale e environment opcional. O primeiro
-  plano padrao e pequeno: CONTROL + uma selecao de representation.
+- Experiments vive como a etapa opcional `Validate`, dentro da mesma superficie
+  clara e da mesma navegacao do workspace; nao aparece como um produto escuro e
+  desconectado depois do report.
+- A etapa recebe do Lead Investigator um `validationPlan` estruturado com
+  hipotese falsificavel, recipe suportada, IDs exatos e fronteira do que o teste
+  pode provar. LOW-BR so aparece quando pressao de entrega e de fato o mecanismo
+  diagnosticado.
+- O plano inicial continua pequeno: CONTROL com toda a ladder suportada mais um
+  treatment causalmente especifico, como `AAC-ONLY`, um subconjunto de
+  representations ou uma representation isolada.
+- A UI explicita a fronteira particular de cada comparacao; nenhuma mudanca de
+  manifest comprova decode/render ou mecanismo interno sem resultado atribuido
+  do device.
+- Hypothesis e environment ficam visiveis; goal e rationale permanecem editaveis
+  por progressive disclosure, sem abrir a experiencia com um formulario generico.
 - Assim que clones passam na verificacao, a secao mostra uma unica URL permanente
   do Experiment. Essa URL e copiada uma vez para o device e nunca muda entre
   CONTROL, treatments ou iteracoes.
@@ -223,10 +333,25 @@ Record e um fluxo dedicado, nao uma opcao escondida no formulario de Investigate
   seek, A/V sync, subtitles ou other) e notes opcionais. Nenhum resultado e
   inferido do manifest, metadata ou ausencia de clique.
 - Progresso usa contagens reais da iteracao (`N clones`, `X/N tested`). Quando
-  todos os requests possuem resultado, a UI habilita `Evaluate`.
-- Evaluation apresenta status/confidence/summary estruturados. Em
-  `FOLLOWUP_REQUIRED`, a UI permite uma iteracao focada em uma representation e
-  preserva todo o historico anterior.
+  todos os requests possuem resultado, a UI habilita `Analyze results with
+  agents`.
+- A avaliacao mostra o job persistido e a equipe real em ordem: Evidence Auditor,
+  Causal Analyst e Lead Experiment Investigator. Nao usa spinner ou percentual;
+  status e tentativa vem de `evaluationJob`.
+- O resultado abre por `What was observed` e separa `What this supports`,
+  interpretacao, `What this does not establish`, explicacoes alternativas,
+  limitacoes, confianca e um unico proximo teste discriminante.
+- Depois que existe evaluation, a sintese aparece antes dos cards CONTROL e
+  treatment; esses resultados/provenance ficam recolhidos em `Observed test
+  evidence`. O formulario de uma nova validacao tambem fica fechado para nao
+  empurrar a conclusao para baixo da pagina.
+- Cada AgentRun mostra `COMPLETED`, `FAILED` ou `UNAVAILABLE` e somente seu
+  summary/limitation estruturado. O painel `Agent panel` do workspace expoe o
+  input packet e o system prompt de cada chamada persistida; chain of thought e
+  prompt bruto de raciocinio nao entram na experiencia principal.
+- Avaliacoes antigas sem `analysis` recebem o rotulo `Legacy rule-only
+  evaluation` e um CTA real de reanalise. Em `FOLLOWUP_REQUIRED`, a UI pode criar
+  uma iteracao focada, preservando todo o historico anterior.
 - Environments salvos podem ser reutilizados e ficam associados ao Experiment e
   aos TestResults. QR code nao foi adicionado porque o repositorio nao possuia
   dependencia e copiar a URL unica atende ao fluxo com menor superficie.

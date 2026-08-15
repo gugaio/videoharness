@@ -3,6 +3,11 @@ import { loadConfig } from "../config.js";
 import { createDatabaseHealth, createDatabasePool } from "../database/client.js";
 import { logger } from "../infra/logger.js";
 import { PostgresInvestigationIntake } from "../investigation/adapters/postgres-investigation-intake.js";
+import { PostgresInvestigationQuestions } from "../investigation/adapters/postgres-investigation-questions.js";
+import { PostgresInvestigationAnalysis } from "../investigation/adapters/postgres-investigation-analysis.js";
+import { PostgresInvestigationDeletion } from "../investigation/adapters/postgres-investigation-deletion.js";
+import { FilesystemInvestigationCleanup } from "../investigation/adapters/filesystem-investigation-cleanup.js";
+import { createDeleteInvestigation } from "../investigation/application/delete-investigation.js";
 import { createStartInvestigation } from "../investigation/application/start-investigation.js";
 import { PostgresInvestigationQuery } from "../investigation/adapters/postgres-investigation-query.js";
 import { createInvestigationQueries } from "../investigation/application/investigation-queries.js";
@@ -16,16 +21,21 @@ import { PostgresPlaybackRuns } from "../record/adapters/postgres-playback-run.j
 import { createPlaybackRun } from "../record/application/playback-runs.js";
 import { FilesystemRecordingStore } from "../record/adapters/filesystem-recording-store.js";
 import { PostgresExperimentRepository } from "../experiment/adapters/postgres-experiment-repository.js";
+import { PostgresExperimentEvaluationJobs } from "../experiment/adapters/postgres-experiment-evaluation-job.js";
 import { createExperimentService } from "../experiment/application/experiments.js";
 
 const config = loadConfig();
 const pool = createDatabasePool(config.databaseUrl);
 const investigationQuery = new PostgresInvestigationQuery(pool);
 const investigationQueries = createInvestigationQueries(investigationQuery);
+const investigationQuestions = new PostgresInvestigationQuestions(pool);
+const investigationAnalysis = new PostgresInvestigationAnalysis(pool);
 const experimentRepository = new PostgresExperimentRepository(pool);
+const experimentEvaluationJobs = new PostgresExperimentEvaluationJobs(pool);
 const playbackRuns = new PostgresPlaybackRuns(pool);
 const experimentService = createExperimentService({
   repository: experimentRepository,
+  evaluationJobs: experimentEvaluationJobs,
   investigations: investigationQueries,
   policy: {
     maxClonesPerIteration: config.experimentMaxClonesPerIteration,
@@ -39,6 +49,16 @@ const server = buildApiServer({
   database: createDatabaseHealth(pool),
   startInvestigation: createStartInvestigation(new PostgresInvestigationIntake(pool)),
   investigationQueries,
+  deleteInvestigation: createDeleteInvestigation({
+    queries: investigationQueries,
+    repository: new PostgresInvestigationDeletion(pool),
+    artifactStore: new FilesystemArtifactStore(config.dataDir),
+    removeInvestigationFiles: (id) => new FilesystemInvestigationCleanup(config.dataDir).removeInvestigationFiles(id),
+    removeRecordingFiles: (id) => new FilesystemInvestigationCleanup(config.dataDir).removeRecordingFiles(id),
+    logger,
+  }),
+  startInvestigationAnalysis: investigationAnalysis.start,
+  askInvestigationQuestion: investigationQuestions.ask.bind(investigationQuestions),
   playbackSessions: new PostgresPlaybackSessions(pool),
   artifactStore: new FilesystemArtifactStore(config.dataDir),
   startRecording: createStartRecording(new PostgresRecordingIntake(pool)),

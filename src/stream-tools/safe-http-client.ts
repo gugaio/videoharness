@@ -12,6 +12,17 @@ export type PinnedRequester = (
   signal: AbortSignal,
 ) => Promise<http.IncomingMessage>;
 
+export type HttpRequestFacts = {
+  latencyMs?: number;
+  firstByteMs?: number;
+  redirectCount: number;
+  redirectChain?: string[];
+  server?: string;
+  cacheControl?: string;
+  etag?: string;
+  via?: string;
+};
+
 export type SafeTextResponse = {
   requestedUrl: string;
   finalUrl: string;
@@ -20,9 +31,12 @@ export type SafeTextResponse = {
   contentLength?: number;
   bytes: Uint8Array;
   text: string;
+  http: HttpRequestFacts;
 };
 
 export type SafeBinaryResponse = Omit<SafeTextResponse, "text">;
+
+type RequestTrace = { redirects: string[]; firstByteAccumulator: number; startedAt: number };
 
 export class SafeHttpClient {
   private readonly resolver: DnsResolver;
@@ -68,8 +82,9 @@ export class SafeHttpClient {
       : undefined;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const trace: RequestTrace = { redirects: [], firstByteAccumulator: 0, startedAt: Date.now() };
     try {
-      return await this.request(requestedUrl, requestedUrl, 0, controller.signal, requestedAliasHostname);
+      return await this.request(requestedUrl, requestedUrl, 0, controller.signal, requestedAliasHostname, trace);
     } catch (error) {
       if (error instanceof StreamCollectionError) throw error;
       if (controller.signal.aborted) {
@@ -89,14 +104,17 @@ export class SafeHttpClient {
     redirectCount: number,
     signal: AbortSignal,
     requestedAliasHostname?: string,
+    trace?: RequestTrace,
   ): Promise<SafeBinaryResponse> {
     const url = parseStreamUrl(currentValue);
+    const hopStart = Date.now();
     const addresses = await raceWithAbort(
       this.resolveAndValidate(url.hostname, requestedAliasHostname),
       signal,
     );
     const target = addresses[0]!;
     const response = await this.requester(url, target, signal);
+    if (trace) trace.firstByteAccumulator += Date.now() - hopStart;
     const statusCode = response.statusCode ?? 0;
 
     if (isRedirect(statusCode)) {
@@ -108,12 +126,15 @@ export class SafeHttpClient {
       if (redirectCount >= this.maxRedirects) {
         throw new StreamCollectionError("STREAM_TOO_MANY_REDIRECTS", "The stream exceeded the redirect limit", false);
       }
+      const next = new URL(location, url).toString();
+      trace?.redirects.push(next);
       return this.request(
         requestedUrl,
-        new URL(location, url).toString(),
+        next,
         redirectCount + 1,
         signal,
         requestedAliasHostname,
+        trace,
       );
     }
 
@@ -138,6 +159,15 @@ export class SafeHttpClient {
     const bytes = await readLimited(response, this.maxBytes, signal);
     const contentTypeHeader = response.headers["content-type"];
     const contentType = Array.isArray(contentTypeHeader) ? contentTypeHeader[0] : contentTypeHeader;
+    const http: HttpRequestFacts = {
+      ...(trace ? { firstByteMs: trace.firstByteAccumulator, latencyMs: Date.now() - trace.startedAt } : {}),
+      redirectCount: trace?.redirects.length ?? 0,
+      ...(trace?.redirects.length ? { redirectChain: [...trace.redirects] } : {}),
+      ...(stringHeader(response.headers.server) ? { server: stringHeader(response.headers.server)! } : {}),
+      ...(stringHeader(response.headers["cache-control"]) ? { cacheControl: stringHeader(response.headers["cache-control"])! } : {}),
+      ...(stringHeader(response.headers.etag) ? { etag: stringHeader(response.headers.etag)! } : {}),
+      ...(stringHeader(response.headers.via) ? { via: stringHeader(response.headers.via)! } : {}),
+    };
     return {
       requestedUrl,
       finalUrl: url.toString(),
@@ -145,6 +175,7 @@ export class SafeHttpClient {
       ...(contentType ? { contentType } : {}),
       ...(Number.isFinite(declaredLength) && declaredLength > 0 ? { contentLength: declaredLength } : {}),
       bytes,
+      http,
     };
   }
 
@@ -184,6 +215,11 @@ export class SafeHttpClient {
 
 function normalizeHostname(value: string): string {
   return stripIpv6Brackets(value).trim().toLowerCase().replace(/\.$/, "");
+}
+
+function stringHeader(value: string | string[] | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return Array.isArray(value) ? value[0] : value;
 }
 
 export function isPublicAddress(value: string): boolean {

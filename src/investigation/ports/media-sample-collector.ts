@@ -1,5 +1,6 @@
 import type { CollectionProgress, ManifestCollection } from "./manifest-collector.js";
 import type { Fmp4InitInspection, HevcAccessUnitInspection } from "../../stream-tools/isobmff.js";
+import type { HttpRequestFacts } from "../../stream-tools/safe-http-client.js";
 
 export type MediaSample = {
   logicalKey: string;
@@ -19,6 +20,7 @@ export type MediaSample = {
     observedHashes?: string[];
     httpStatus: number;
     contentLength?: number;
+    http?: HttpRequestFacts;
   };
   content: { bytes: Uint8Array };
   artifact?: { id: string; storageKey: string; sizeBytes: number; sha256?: string };
@@ -52,9 +54,41 @@ export type MediaProbeTrack = {
   chromaLocation?: string;
 };
 
+export type FfprobeFrameSummary = {
+  keyFrame?: boolean;
+  pictureType?: string;
+  pts?: string;
+  ptsTime?: number;
+  packetDts?: string;
+  packetDtsTime?: number;
+  bestEffortTimestamp?: string;
+  duration?: string;
+  width?: number;
+  height?: number;
+  pixelFormat?: string;
+  colorRange?: string;
+  colorSpace?: string;
+  colorTransfer?: string;
+  colorPrimaries?: string;
+  sideDataTypes: string[];
+};
+
+export type FfprobeGopSummary = {
+  index: number;
+  startFrameIndex: number;
+  frameCount: number;
+  startsWithKeyFrame: boolean;
+  firstPtsTime?: number;
+  lastPtsTime?: number;
+  frames: FfprobeFrameSummary[];
+  truncated: boolean;
+};
+
 export type FfprobeBoundarySummary = {
   packets: Array<{ pts?: string; ptsTime?: number; dts?: string; dtsTime?: number; duration?: string; durationTime?: number; size?: number; pos?: string; flags?: string }>;
-  frames: Array<{ keyFrame?: boolean; pictureType?: string; pts?: string; ptsTime?: number; packetDts?: string; packetDtsTime?: number; bestEffortTimestamp?: string; duration?: string; width?: number; height?: number; pixelFormat?: string; colorRange?: string; colorSpace?: string; colorTransfer?: string; colorPrimaries?: string; sideDataTypes: string[] }>;
+  frames: FfprobeFrameSummary[];
+  gops: FfprobeGopSummary[];
+  totalGopCount: number;
   totalPacketCount: number;
   totalFrameCount: number;
 };
@@ -63,6 +97,7 @@ export type MediaProbeResult = {
   format?: string;
   duration?: number;
   tracks: MediaProbeTrack[];
+  structural?: import("../../stream-tools/ts-sanity.js").TsSanity;
   boundary?: FfprobeBoundarySummary;
   fmp4?: {
     init?: Fmp4InitInspection;

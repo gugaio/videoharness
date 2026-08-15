@@ -49,9 +49,20 @@ export class PiInvestigationAI implements InvestigationAI {
     if (!this.config.apiKey) return unavailableResult();
     await collectRequiredSymptomMeasurements(input, this.config.lab, this.config.shellRunRecorder);
     const evidenceIds = new Set(buildEvidenceIndex(input.evidence).map((item) => item.id));
+    const problemDescription = input.problemDescription ?? "No problem was reported; assess the observed stream health.";
     const packet = JSON.stringify({
-      problemDescription: input.problemDescription ?? "No problem was reported; assess the observed stream health.",
+      problemDescription,
       evidence: sanitizeEvidence(input.evidence),
+      evidenceIndex: buildEvidenceIndex(input.evidence),
+    });
+    const manifestDeliveryPacket = JSON.stringify({
+      problemDescription,
+      evidence: sanitizeEvidence(input.evidence, { includeManifestContent: true }),
+      evidenceIndex: buildEvidenceIndex(input.evidence),
+    });
+    const timelinePlaybackPacket = JSON.stringify({
+      problemDescription,
+      evidence: sanitizeEvidence(input.evidence, { includeTimeline: true }),
       evidenceIndex: buildEvidenceIndex(input.evidence),
     });
     return runAgentTeam({
@@ -62,8 +73,10 @@ export class PiInvestigationAI implements InvestigationAI {
       hasLab: Boolean(this.config.lab),
       evidenceIds,
       packet,
+      manifestDeliveryPacket,
+      timelinePlaybackPacket,
       abrAssessment,
-      abrTransitions: input.evidence.dash?.switches ?? [],
+      abrTransitions: [...(input.evidence.dash?.switches ?? []), ...(input.evidence.playbackSwitches ?? [])],
       onProgress: input.onProgress,
       runModel: this.runner,
       specialistTools: (audit) => createEvidenceTools(input.evidence, undefined, undefined, undefined, createToolCallRecorder(audit)),
@@ -77,23 +90,42 @@ function buildEvidenceIndex(evidence: EvidenceBundleV2 | EvidenceBundleV3): Arra
     ...evidence.manifests.map((item) => ({ id: `manifest:${item.logicalKey}`, summary: `${item.kind} ${item.logicalKey}` })),
     ...evidence.mediaSamples.map((item) => ({ id: `sample:${item.logicalKey}`, summary: `${item.kind} ${item.logicalKey}` })),
     ...evidence.observations.map((item, index) => ({ id: `observation:${index}`, summary: item.message })),
+    ...(evidence.timeline?.map((window) => ({ id: `timeline:${window.key}`, summary: `${window.kind} timeline ${window.key}: ${window.segmentCount} segments, ${window.totalGapMs}ms total gap, continuous=${window.continuous}` })) ?? []),
     ...(evidence.abr ? [{ id: evidence.abr.evidenceId, summary: `${evidence.abr.protocol.toUpperCase()} ABR assessment: ${evidence.abr.verdict}` }, ...evidence.abr.ladder.representations.map((entry) => ({ id: entry.evidenceId, summary: `ABR quality ${entry.id}` })), ...evidence.abr.findings.map((entry) => ({ id: entry.evidenceId, summary: `${entry.ruleId}: ${entry.title}` })), ...evidence.abr.transitions.map((entry) => ({ id: entry.evidenceId, summary: `${entry.transitionStatus.toLowerCase()} ABR ${entry.sourceRepresentation.id} -> ${entry.targetRepresentation.id}` }))] : []),
     ...(evidence.dash?.switches?.flatMap(abrEvidenceIndex) ?? []),
+    ...(evidence.playbackSwitches?.flatMap(abrEvidenceIndex) ?? []),
   ];
 }
 
-function sanitizeEvidence(evidence: EvidenceBundleV2 | EvidenceBundleV3): object {
+function sanitizeEvidence(evidence: EvidenceBundleV2 | EvidenceBundleV3, options: { includeManifestContent?: boolean; includeTimeline?: boolean } = {}): object {
+  const { includeManifestContent = false, includeTimeline = false } = options;
   return {
     protocol: evidence.source.protocol,
-    manifests: evidence.manifests.map(({ requestedUrl: _requestedUrl, finalUrl: _finalUrl, ...item }) => item),
+    manifests: evidence.manifests.map((manifest, index) => {
+      const { requestedUrl: _requestedUrl, finalUrl: _finalUrl, content: _content, ...item } = manifest;
+      const sourceContent = evidence.manifests[index]?.content;
+      return includeManifestContent && sourceContent
+        ? { ...item, content: sourceContent }
+        : item;
+    }),
     mediaSamples: compactMediaSamples(evidence.mediaSamples),
     observations: evidence.observations,
     limitations: evidence.limitations,
-    hls: evidence.hls,
+    hls: evidence.hls ? {
+      ...evidence.hls,
+      variants: evidence.hls.variants.map(({ uri: _uri, url: _url, ...variant }) => variant),
+      renditions: evidence.hls.renditions.map(({ uri: _uri, url: _url, ...rendition }) => rendition),
+    } : undefined,
     reportedContext: evidence.reportedContext,
     abr: evidence.abr,
     dash: evidence.dash ? {
       ...evidence.dash,
+      representations: evidence.dash.representations.map(({
+        baseUrl: _baseUrl,
+        initializationUrl: _initializationUrl,
+        mediaTemplate: _mediaTemplate,
+        ...representation
+      }) => representation),
       switches: evidence.dash.switches?.map((entry) => ({
         evidenceId: entry.evidenceId,
         switchId: entry.switchId,
@@ -111,28 +143,107 @@ function sanitizeEvidence(evidence: EvidenceBundleV2 | EvidenceBundleV3): object
       })),
     } : undefined,
     ...(evidence.schemaVersion === 3 ? { playbackSessions: evidence.playbackSessions } : {}),
+    ...(includeTimeline && evidence.timeline?.length ? { timeline: evidence.timeline } : {}),
+    ...(evidence.playbackSwitches?.length ? { playbackSwitches: evidence.playbackSwitches.map(sanitizeAbrSwitch) } : {}),
+  };
+}
+
+function sanitizeAbrSwitch(entry: AbrSwitchEvidence): object {
+  return {
+    evidenceId: entry.evidenceId,
+    switchId: entry.switchId,
+    evidenceBasis: entry.evidenceBasis,
+    transitionStatus: entry.transitionStatus,
+    sourceRepresentation: entry.sourceRepresentation,
+    targetRepresentation: entry.targetRepresentation,
+    direction: entry.direction,
+    switchKind: entry.switchKind,
+    deterministicFindings: entry.deterministicFindings,
+    timelineEvidence: entry.timelineEvidence,
+    sapEvidence: entry.sapEvidence,
+    initSemanticDiff: entry.initSemanticDiff,
+    missingEvidence: entry.missingEvidence,
   };
 }
 
 function compactMediaSamples(samples: EvidenceBundleV2["mediaSamples"]): object[] {
   const emittedInitHashes = new Set<string>();
   return samples.map((sample) => {
-    const init = sample.probe?.fmp4?.init;
-    if (!init) return sample;
-    const repeated = emittedInitHashes.has(init.sha256);
-    emittedInitHashes.add(init.sha256);
-    if (!repeated) return sample;
+    const probe = sample.probe as EvidenceProbe | undefined;
+    const init = probe?.fmp4?.init;
+    const repeatedInit = init ? emittedInitHashes.has(init.sha256) : false;
+    if (init) emittedInitHashes.add(init.sha256);
+    const { source, ...sampleWithoutSource } = sample;
     return {
-      ...sample,
-      probe: {
-        ...sample.probe,
-        fmp4: {
-          ...sample.probe!.fmp4,
-          init: { sha256: init.sha256, fourcc: init.fourcc, timescale: init.timescale, nalLengthSize: init.nalLengthSize, repeatedSemanticInit: true },
-        },
-      },
+      ...sampleWithoutSource,
+      ...(source ? { source: {
+        sha256: source.sha256,
+        ...(source.observedHashes ? { observedHashes: source.observedHashes } : {}),
+        httpStatus: source.httpStatus,
+        ...(source.contentLength === undefined ? {} : { contentLength: source.contentLength }),
+        ...(source.http ? { http: source.http } : {}),
+      } } : {}),
+      ...(probe ? { probe: compactProbe(probe, repeatedInit) } : {}),
     };
   });
+}
+
+type EvidenceProbe = NonNullable<EvidenceBundleV2["mediaSamples"][number]["probe"]> & {
+  boundary?: import("../ports/media-sample-collector.js").FfprobeBoundarySummary;
+};
+
+function compactProbe(probe: EvidenceProbe, repeatedInit: boolean): object {
+  const fragment = probe.fmp4?.fragment;
+  const init = probe.fmp4?.init;
+  return {
+    ...(probe.format ? { format: probe.format } : {}),
+    ...(probe.duration === undefined ? {} : { duration: probe.duration }),
+    tracks: probe.tracks,
+    ...(probe.structural ? { structural: probe.structural } : {}),
+    ...(probe.boundary ? { boundary: {
+      totalGopCount: probe.boundary.totalGopCount,
+      totalPacketCount: probe.boundary.totalPacketCount,
+      totalFrameCount: probe.boundary.totalFrameCount,
+      gops: probe.boundary.gops.map((gop) => ({
+        index: gop.index,
+        startFrameIndex: gop.startFrameIndex,
+        frameCount: gop.frameCount,
+        startsWithKeyFrame: gop.startsWithKeyFrame,
+        ...(gop.firstPtsTime === undefined ? {} : { firstPtsTime: gop.firstPtsTime }),
+        ...(gop.lastPtsTime === undefined ? {} : { lastPtsTime: gop.lastPtsTime }),
+        truncated: gop.truncated,
+      })),
+    } } : {}),
+    ...(init || fragment ? { fmp4: {
+      ...(init ? { init: repeatedInit
+        ? {
+            sha256: init.sha256,
+            fourcc: init.fourcc,
+            timescale: init.timescale,
+            nalLengthSize: init.nalLengthSize,
+            repeatedSemanticInit: true,
+          }
+        : init } : {}),
+      ...(fragment ? { fragment: {
+        styp: fragment.styp,
+        sidx: fragment.sidx,
+        sequenceNumber: fragment.sequenceNumber,
+        baseMediaDecodeTime: fragment.baseMediaDecodeTime,
+        trafs: fragment.trafs.map((traf) => ({
+          tfhd: traf.tfhd,
+          tfdt: traf.tfdt,
+          truns: traf.truns.map(({ samples: _samples, ...trun }) => trun),
+          drmBoxTypes: traf.drmBoxTypes,
+        })),
+        sampleCount: fragment.samples.length,
+        syncSampleCount: fragment.samples.filter((entry) => entry.sync).length,
+        firstSample: fragment.samples[0],
+        lastSample: fragment.samples.length > 1 ? fragment.samples[fragment.samples.length - 1] : undefined,
+        drmBoxTypes: fragment.drmBoxTypes,
+        structuralErrors: fragment.structuralErrors,
+      } } : {}),
+    } } : {}),
+  };
 }
 
 function ensureAbrAssessment(evidence: EvidenceBundleV2 | EvidenceBundleV3): AbrAssessment {

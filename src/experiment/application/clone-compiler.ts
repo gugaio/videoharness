@@ -27,6 +27,7 @@ export function listCloneCapabilities(): CloneCapability[] {
     { recipe: "control", supported: true, mode: "manifest_only", description: "Preserve the source ladder while passing through the existing Record path." },
     { recipe: "force_representation", supported: true, mode: "manifest_only", description: "Expose one explicit source video representation." },
     { recipe: "single_video_representation", supported: true, mode: "manifest_only", description: "Expose one source video representation and remove video ABR." },
+    { recipe: "representation_subset", supported: true, mode: "manifest_only", description: "Expose an explicit source representation subset, preserving only its linked renditions." },
     { recipe: "single_audio", supported: true, mode: "manifest_only", description: "Keep one linked audio rendition while preserving video." },
     { recipe: "minimal_hls", supported: false, mode: "manifest_only", description: "Generate a minimal HLS manifest.", limitation: "Record already normalises every local HLS manifest, so this would not differ from CONTROL." },
     { recipe: "fixed_bitrate", supported: true, mode: "manifest_only", description: "Expose the source representation closest to an explicit bitrate." },
@@ -140,6 +141,7 @@ export function expandCloneRecipe(input: {
   shortLabel: string;
   hypothesisIds: string[];
   representationId?: string;
+  representationIds?: string[];
   targetBitrate?: number;
   width?: number;
   height?: number;
@@ -169,6 +171,18 @@ export function expandCloneRecipe(input: {
     throw new UnsupportedCloneTransformationError([source.protocol !== "hls"
       ? "minimal_hls requires an HLS source."
       : "minimal_hls would not differ from CONTROL because Record already writes a minimal local manifest."]);
+  }
+
+  if (input.recipe === "representation_subset") {
+    const representationIds = [...new Set(input.representationIds ?? [])];
+    if (representationIds.length === 0) throw new UnsupportedCloneTransformationError(["representation_subset requires at least one source representation."]);
+    const spec = base(
+      `Expose only source representations ${representationIds.join(", ")}.`,
+      "A different result from CONTROL isolates the selected representation group and its linked renditions as a discriminating variable.",
+    );
+    spec.abr = { mode: representationIds.length === 1 ? "single_representation" : "subset", representationIds };
+    spec.manifest = { normalisation: "preserve", operations: [{ op: "filter_representations", representationIds }] };
+    return spec;
   }
 
   let representationId = input.representationId;

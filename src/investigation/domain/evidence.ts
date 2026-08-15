@@ -1,4 +1,6 @@
 import type { ManifestKind, ManifestProtocol } from "../../stream-tools/manifest.js";
+import type { HttpRequestFacts } from "../../stream-tools/safe-http-client.js";
+import type { TimelineContinuityWindow } from "../application/analyze-timeline-continuity.js";
 
 export type EvidenceObservation = {
   code: string;
@@ -47,6 +49,13 @@ export type ManifestEvidence = ManifestCounts & {
   discontinuitySequence?: number;
   discontinuityCount?: number;
   hasEndList?: boolean;
+  http?: HttpRequestFacts;
+  /**
+   * Raw manifest text preserved as evidence, bounded by
+   * `MAX_MANIFEST_CONTENT_CHARS`. Present on snapshots created after the
+   * manifest-content change; historical snapshots omit it.
+   */
+  content?: string;
 };
 
 export type HlsVariantEvidence = {
@@ -78,6 +87,15 @@ export type HlsRenditionEvidence = {
   url?: string;
 };
 
+export type HlsVariantTopology = {
+  index: number;
+  logicalKey: string;
+  segmentCount: number;
+  targetDuration?: number;
+  discontinuityCount?: number;
+  hasEndList?: boolean;
+};
+
 export type EvidenceBundleV2 = {
   schemaVersion: 2;
   collectedAt: string;
@@ -98,7 +116,7 @@ export type EvidenceBundleV2 = {
     adaptationSetIndex?: number;
     presentationStartSeconds?: number;
     presentationEndSeconds?: number;
-    source?: { url: string; sha256: string; observedHashes?: string[]; httpStatus: number; contentLength?: number };
+    source?: { url: string; sha256: string; observedHashes?: string[]; httpStatus: number; contentLength?: number; http?: HttpRequestFacts };
     probe?: {
       format?: string;
       duration?: number;
@@ -115,6 +133,7 @@ export type EvidenceBundleV2 = {
         channels?: number;
       }>;
       fmp4?: import("../ports/media-sample-collector.js").MediaProbeResult["fmp4"];
+      structural?: import("../../stream-tools/ts-sanity.js").TsSanity;
     };
   }>;
   reportedContext?: {
@@ -170,16 +189,21 @@ export type EvidenceBundleV2 = {
   hls?: {
     variants: HlsVariantEvidence[];
     renditions: HlsRenditionEvidence[];
+    topology?: HlsVariantTopology[];
     selection?: {
       rule: "highest-bandwidth";
       variantIndex: number;
       variantLogicalKey?: string;
       audioRenditionIndex?: number;
       audioRenditionLogicalKey?: string;
+      sampledVariants?: Array<{ index: number; logicalKey: string }>;
     };
   };
   observations: EvidenceObservation[];
   limitations: string[];
+  timeline?: TimelineContinuityWindow[];
+  /** Observed quality transitions from related Record playback runs, attached only during agent analysis. */
+  playbackSwitches?: import("../../abr/domain/evidence.js").AbrSwitchEvidence[];
 };
 
 export type PlaybackSessionEvidence = {

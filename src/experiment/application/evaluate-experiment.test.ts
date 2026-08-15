@@ -13,7 +13,7 @@ const hypotheses = [
 ];
 
 describe("deterministic experiment evaluation", () => {
-  it("isolates a supported hypothesis from CONTROL fail and one passing treatment", () => {
+  it("keeps a discriminating treatment narrower than the original causal hypothesis", () => {
     const entries = [
       entry("31d7cd14-b638-42ee-8df4-a7590b24653f", "CONTROL", true, [], "FAIL"),
       entry("40a78a3e-358f-448d-8806-c2b13f274c21", "TS", false, [hypotheses[0]!.id], "PASS"),
@@ -23,9 +23,14 @@ describe("deterministic experiment evaluation", () => {
     const experiment = detail(entries);
     const evaluation = evaluateExperimentEvidence({ experiment, originalEvidence: { reportId: "report-1", limitationCount: 0 }, now: "2026-08-11T12:00:00.000Z" });
 
-    expect(evaluation.status).toBe("CONCLUDED");
-    expect(evaluation.confidence).toBe("HIGH");
-    expect(evaluation.hypothesisUpdates.map((item) => item.status)).toEqual(["SUPPORTED", "WEAKENED", "WEAKENED"]);
+    expect(evaluation.status).toBe("MORE_TESTS_REQUIRED");
+    expect(evaluation.confidence).toBe("MEDIUM");
+    expect(evaluation.hypothesisUpdates.map((item) => item.status)).toEqual(["PARTIALLY_SUPPORTED", "WEAKENED", "WEAKENED"]);
+    expect(evaluation.analysis).toMatchObject({
+      source: "DETERMINISTIC",
+      outcome: "DISCRIMINATING_EFFECT",
+    });
+    expect(evaluation.summary).not.toContain("Competing tested hypotheses were weakened");
     expect(evaluation.evidenceBundle).toMatchObject({
       controls: [{ outcome: "FAIL" }],
       treatments: [
@@ -34,6 +39,23 @@ describe("deterministic experiment evaluation", () => {
         { label: "AAC", outcome: "FAIL", hypothesisIds: [hypotheses[2]!.id] },
       ],
     });
+  });
+
+  it("does not claim origin latency when LOW-BR only changes representation exposure", () => {
+    const localHypothesis = hypothesis(hypotheses[0]!.id, "High origin latency causes the stall");
+    const entries = [
+      entry("31d7cd14-b638-42ee-8df4-a7590b24653f", "CONTROL", true, [], "FAIL"),
+      entry("40a78a3e-358f-448d-8806-c2b13f274c21", "LOW-BR", false, [localHypothesis.id], "PASS"),
+    ];
+    entries[1]!.clone.executionPlan.transformations.push({ kind: "filter_video_representations", description: "Expose variant-1 only", representationIds: ["variant-1"] });
+    const experiment = detail(entries);
+    experiment.hypotheses = [localHypothesis];
+    const evaluation = evaluateExperimentEvidence({ experiment, originalEvidence: { reportId: "report-1", limitationCount: 0 } });
+
+    expect(evaluation.hypothesisUpdates[0]).toMatchObject({ status: "PARTIALLY_SUPPORTED" });
+    expect(evaluation.analysis?.supportedClaim).toContain("representation selection, ladder exposure, or bitrate demand");
+    expect(evaluation.analysis?.notEstablished).toContain("High latency at the original origin, because the recorded clone does not emulate origin latency.");
+    expect(evaluation.analysis?.limitations).toContain("No playback artifact or telemetry was attached to the results.");
   });
 
   it("requests more evidence without inventing missing device outcomes", () => {

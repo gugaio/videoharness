@@ -34,4 +34,31 @@ describe("FilesystemLabWorkspace", () => {
     await expect(fs.readFile(path.join(root, "index.m3u8"), "utf8")).resolves.toContain("#EXT-X-TARGETDURATION:4");
     await expect(fs.readFile(path.join(root, "index.m3u8"), "utf8")).resolves.not.toContain("https://");
   });
+
+  it("builds the playlist from the selected variant when the root is a master", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "video-harness-lab-"));
+    directories.push(directory);
+    const id = "c56a4180-65aa-42ec-a945-5fd21dec0538";
+    const masterText = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nlow.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2000\nhigh.m3u8";
+    const workspace = new FilesystemLabWorkspace(directory);
+
+    await workspace.prepare(id, {
+      manifests: [{
+        logicalKey: "manifest/root", role: "root",
+        source: { requestedUrl: "https://stream.example/master.m3u8", finalUrl: "https://stream.example/master.m3u8", statusCode: 200 },
+        content: { bytes: new TextEncoder().encode(masterText) }, inspection: inspectManifest(masterText, "https://stream.example/master.m3u8"),
+      }],
+      hlsSelection: { rule: "highest-bandwidth", variant: { index: 1, uri: "high.m3u8", bandwidth: 2_000 } },
+      mediaSamples: [
+        { logicalKey: "sample/variant/0/media/0", kind: "media-segment", sourceManifestLogicalKey: "manifest/variant/0", sampleIndex: 0, declaredDuration: 4, content: { bytes: new TextEncoder().encode("low") } },
+        { logicalKey: "sample/variant/1/media/0", kind: "media-segment", sourceManifestLogicalKey: "manifest/variant/1", sampleIndex: 0, declaredDuration: 4, content: { bytes: new TextEncoder().encode("high") } },
+      ],
+    });
+
+    const root = path.join(directory, "workspaces", id, "lab", "input");
+    const playlist = await fs.readFile(path.join(root, "index.m3u8"), "utf8");
+    expect(playlist).toContain("media/segment-000000.ts");
+    expect(playlist).not.toContain("https://");
+    await expect(fs.readFile(path.join(root, "media", "segment-000000.ts"), "utf8")).resolves.toBe("high");
+  });
 });

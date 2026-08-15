@@ -10,6 +10,10 @@ export const StartInvestigationRequestSchema = z.object({
   problemDescription: z.string().trim().min(1).max(20_000).optional(),
 });
 
+export const AskInvestigationQuestionRequestSchema = z.object({
+  question: z.string().trim().min(1).max(4_000),
+});
+
 export const InvestigationSchema = z.object({
   id: z.string().uuid(),
   sourceUrl: z.string().url(),
@@ -84,7 +88,67 @@ const ReportedContextSchema = z.union([
   z.object({ approximateTimeSeconds: z.number().nonnegative().optional(), reportsVideoFreeze: z.boolean(), reportsAudioContinues: z.boolean(), reportsAbrSwitch: z.boolean(), reportsFourKToFullHd: z.boolean(), reportedDevice: z.object({ exactModelCode: z.string().optional(), firmwareVersion: z.string().optional(), tizenVersion: z.string().optional(), applicationVersion: z.string().optional(), avplayVersion: z.string().optional(), drmSystem: z.string().optional(), displayOrHdrMode: z.string().optional() }).optional(), mentionedAvplayEvents: z.array(z.string()).optional(), descriptionExcerpt: z.string().optional(), uncertainties: z.array(z.string()) }),
 ]);
 
-const EvidenceBundleV2Schema = z.object({
+const FfprobeFrameSummarySchema = z.object({
+  keyFrame: z.boolean().optional(), pictureType: z.string().optional(), pts: z.string().optional(), ptsTime: z.number().optional(),
+  packetDts: z.string().optional(), packetDtsTime: z.number().optional(), bestEffortTimestamp: z.string().optional(), duration: z.string().optional(),
+  width: z.number().int().nonnegative().optional(), height: z.number().int().nonnegative().optional(), pixelFormat: z.string().optional(),
+  colorRange: z.string().optional(), colorSpace: z.string().optional(), colorTransfer: z.string().optional(), colorPrimaries: z.string().optional(),
+  sideDataTypes: z.array(z.string()),
+});
+
+const FfprobeBoundarySchema = z.object({
+  totalPacketCount: z.number().int().nonnegative(), totalFrameCount: z.number().int().nonnegative(), totalGopCount: z.number().int().nonnegative().default(0),
+  packets: z.array(z.object({ pts: z.string().optional(), ptsTime: z.number().optional(), dts: z.string().optional(), dtsTime: z.number().optional(), duration: z.string().optional(), durationTime: z.number().optional(), size: z.number().optional(), pos: z.string().optional(), flags: z.string().optional() })),
+  frames: z.array(FfprobeFrameSummarySchema),
+  gops: z.array(z.object({
+    index: z.number().int().nonnegative(), startFrameIndex: z.number().int().nonnegative(), frameCount: z.number().int().nonnegative(), startsWithKeyFrame: z.boolean(),
+    firstPtsTime: z.number().optional(), lastPtsTime: z.number().optional(), frames: z.array(FfprobeFrameSummarySchema), truncated: z.boolean(),
+  })).default([]),
+});
+
+const HttpRequestFactsSchema = z.object({
+  latencyMs: z.number().nonnegative().optional(),
+  firstByteMs: z.number().nonnegative().optional(),
+  redirectCount: z.number().int().nonnegative(),
+  redirectChain: z.array(z.string().url()).optional(),
+  server: z.string().optional(),
+  cacheControl: z.string().optional(),
+  etag: z.string().optional(),
+  via: z.string().optional(),
+});
+
+const TsSanitySchema = z.object({
+  isTs: z.boolean(),
+  packetCount: z.number().int().nonnegative(),
+  syncErrors: z.number().int().nonnegative(),
+  hasPat: z.boolean(),
+  hasPmt: z.boolean(),
+  hasPcr: z.boolean(),
+  pcrDiscontinuities: z.number().int().nonnegative(),
+  continuityDiscontinuities: z.number().int().nonnegative(),
+  truncatedTail: z.boolean(),
+});
+
+const SegmentBoundaryGapSchema = z.object({
+  fromLogicalKey: z.string().min(1),
+  toLogicalKey: z.string().min(1),
+  fromSequence: z.number().int().nonnegative().optional(),
+  toSequence: z.number().int().nonnegative().optional(),
+  presentationGapMs: z.number().nonnegative().optional(),
+  presentationOverlapMs: z.number().nonnegative().optional(),
+});
+
+const TimelineContinuityWindowSchema = z.object({
+  key: z.string().min(1),
+  kind: z.enum(["video", "audio", "other"]),
+  segmentCount: z.number().int().nonnegative(),
+  gaps: z.array(SegmentBoundaryGapSchema),
+  totalGapMs: z.number().nonnegative(),
+  maxGapMs: z.number().nonnegative(),
+  continuous: z.boolean(),
+});
+
+export const EvidenceBundleV2Schema = z.object({
   schemaVersion: z.literal(2),
   collectedAt: z.string().datetime(),
   source: EvidenceSourceSchema,
@@ -105,6 +169,8 @@ const EvidenceBundleV2Schema = z.object({
     discontinuitySequence: z.number().nonnegative().optional(),
     discontinuityCount: z.number().int().nonnegative().optional(),
     hasEndList: z.boolean().optional(),
+    http: HttpRequestFactsSchema.optional(),
+    content: z.string().optional(),
   })).min(1),
   mediaSamples: z.array(z.object({
     artifactId: z.string().uuid(),
@@ -117,7 +183,7 @@ const EvidenceBundleV2Schema = z.object({
     declaredDuration: z.number().nonnegative().optional(),
     representationId: z.string().optional(), periodIndex: z.number().int().nonnegative().optional(), adaptationSetIndex: z.number().int().nonnegative().optional(),
     presentationStartSeconds: z.number().optional(), presentationEndSeconds: z.number().optional(),
-    source: z.object({ url: z.string().url(), sha256: z.string().regex(/^[a-f0-9]{64}$/), observedHashes: z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1).max(3).optional(), httpStatus: z.number().int(), contentLength: z.number().int().nonnegative().optional() }).optional(),
+    source: z.object({ url: z.string().url(), sha256: z.string().regex(/^[a-f0-9]{64}$/), observedHashes: z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1).max(3).optional(), httpStatus: z.number().int(), contentLength: z.number().int().nonnegative().optional(), http: HttpRequestFactsSchema.optional() }).optional(),
     probe: z.object({
       format: z.string().optional(),
       duration: z.number().nonnegative().optional(),
@@ -125,9 +191,14 @@ const EvidenceBundleV2Schema = z.object({
         kind: z.enum(["video", "audio", "other"]), codec: z.string().optional(), duration: z.number().nonnegative().optional(),
         firstPts: z.number().optional(), lastPts: z.number().optional(), width: z.number().int().nonnegative().optional(),
         height: z.number().int().nonnegative().optional(), frameRate: z.string().optional(), sampleRate: z.number().int().nonnegative().optional(),
-        channels: z.number().int().nonnegative().optional(),
+        channels: z.number().int().nonnegative().optional(), codecTagString: z.string().optional(), profile: z.string().optional(), level: z.number().int().optional(),
+        codedWidth: z.number().int().nonnegative().optional(), codedHeight: z.number().int().nonnegative().optional(), pixelFormat: z.string().optional(), refs: z.number().int().nonnegative().optional(),
+        timeBase: z.string().optional(), averageFrameRate: z.string().optional(), colorRange: z.string().optional(), colorSpace: z.string().optional(),
+        colorTransfer: z.string().optional(), colorPrimaries: z.string().optional(), chromaLocation: z.string().optional(),
       })),
+      boundary: FfprobeBoundarySchema.optional(),
       fmp4: z.unknown().optional(),
+      structural: TsSanitySchema.optional(),
     }).optional(),
   })),
   hls: z.object({
@@ -164,7 +235,16 @@ const EvidenceBundleV2Schema = z.object({
       variantLogicalKey: z.string().optional(),
       audioRenditionIndex: z.number().int().nonnegative().optional(),
       audioRenditionLogicalKey: z.string().optional(),
+      sampledVariants: z.array(z.object({ index: z.number().int().nonnegative(), logicalKey: z.string().min(1) })).optional(),
     }).optional(),
+    topology: z.array(z.object({
+      index: z.number().int(),
+      logicalKey: z.string().min(1),
+      segmentCount: z.number().int().nonnegative(),
+      targetDuration: z.number().nonnegative().optional(),
+      discontinuityCount: z.number().int().nonnegative().optional(),
+      hasEndList: z.boolean().optional(),
+    })).optional(),
   }).optional(),
   reportedContext: ReportedContextSchema.optional(),
   abr: AbrAssessmentSchema.optional(),
@@ -179,6 +259,8 @@ const EvidenceBundleV2Schema = z.object({
   }).optional(),
   observations: z.array(EvidenceObservationSchema),
   limitations: z.array(z.string()),
+  timeline: z.array(TimelineContinuityWindowSchema).optional(),
+  playbackSwitches: z.array(AbrSwitchEvidenceSchema).optional(),
 });
 
 const PlaybackTelemetrySchema = z.object({
@@ -200,7 +282,7 @@ const PlaybackTelemetrySchema = z.object({
 });
 
 const PlaybackSessionEvidenceSchema = PlaybackTelemetrySchema.extend({ id: z.string().uuid() });
-const EvidenceBundleV3Schema = EvidenceBundleV2Schema.extend({
+export const EvidenceBundleV3Schema = EvidenceBundleV2Schema.extend({
   schemaVersion: z.literal(3),
   playbackSessions: z.array(PlaybackSessionEvidenceSchema).min(1).max(5),
 });
@@ -249,6 +331,10 @@ const ManifestReportContentBaseSchema = z.object({
   }),
   ai: z.object({
     available: z.boolean(), summary: z.string().optional(), likelyCause: z.string().optional(), confidence: z.number().min(0).max(1).optional(),
+    validationPlan: z.object({
+      goal: z.string(), hypothesis: z.string(), rationale: z.string(), proofBoundary: z.string(),
+      treatment: z.object({ recipe: z.enum(["single_video_representation", "representation_subset", "single_audio"]), shortLabel: z.string(), representationIds: z.array(z.string()) }),
+    }).optional(),
     findings: z.array(z.object({ title: z.string(), severity: z.enum(["info", "warning", "error"]), explanation: z.string(), evidenceIds: z.array(z.string()), confidence: z.number().min(0).max(1) })),
     recommendations: z.array(z.string()), limitations: z.array(z.string()),
     agents: z.array(z.object({ id: z.enum(["timeline-playback", "container-encoding", "manifest-delivery", "abr-switch-investigator", "lead-investigator"]), state: z.enum(["completed", "failed", "unavailable"]), summary: z.string().optional(), limitation: z.string().optional(), prompts: z.object({ system: z.string(), user: z.string() }).optional() })),
@@ -259,6 +345,7 @@ const ManifestReportContentBaseSchema = z.object({
       provider: z.string().min(1), model: z.string().min(1),
       systemPrompt: z.string(), prompt: z.string(), toolNames: z.array(z.string()),
       toolCalls: z.array(z.object({ name: z.string(), input: z.string(), output: z.string() })),
+      output: z.unknown().optional(),
     })).optional(),
   }).optional(),
 });
@@ -282,7 +369,7 @@ const PlaybackReportContentSchema = ManifestReportContentBaseSchema.extend({
   generatedBy: z.literal("deterministic-playback-v1"),
 });
 
-export const InvestigationReportContentSchema = z.union([
+export const InvestigationReportContentSchema: z.ZodType<unknown, z.ZodTypeDef, unknown> = z.union([
   PhaseOneReportContentSchema,
   ManifestReportContentV1Schema,
   ManifestReportContentV2Schema,

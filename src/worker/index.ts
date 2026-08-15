@@ -10,10 +10,13 @@ import { PostgresShellRunRecorder } from "../investigation/adapters/postgres-she
 import { UnixSocketInvestigationLab } from "../investigation/adapters/unix-socket-investigation-lab.js";
 import { HttpManifestCollector } from "../investigation/adapters/http-manifest-collector.js";
 import { PostgresInvestigationJobRepository } from "../investigation/adapters/postgres-investigation-job.js";
+import { PostgresPlaybackCorrelation } from "../investigation/adapters/postgres-playback-correlation.js";
 import { createInvestigationWorker } from "../investigation/application/run-investigation.js";
+import { createInvestigationAnalysisWorker } from "../investigation/application/run-investigation-analysis.js";
 import { runNextPlaybackReview } from "../investigation/application/run-playback-review.js";
 import { SafeHttpClient } from "../stream-tools/safe-http-client.js";
 import { PostgresRecordingJobRepository } from "../record/adapters/postgres-recording-job.js";
+import { PostgresPlaybackRuns } from "../record/adapters/postgres-playback-run.js";
 import { FilesystemRecordingStore } from "../record/adapters/filesystem-recording-store.js";
 import { HlsVodMaterializer } from "../record/adapters/hls-vod-materializer.js";
 import { DashVodMaterializer } from "../record/adapters/dash-vod-materializer.js";
@@ -22,6 +25,11 @@ import { createRecordingWorker } from "../record/application/run-recording.js";
 import { FfmpegAbrDecodeTester } from "../abr/adapters/ffmpeg-abr-decode-tester.js";
 import { PostgresExperimentRepository } from "../experiment/adapters/postgres-experiment-repository.js";
 import { ExperimentRecordingObserver } from "../experiment/adapters/experiment-recording-observer.js";
+import { PostgresExperimentEvaluationJobs } from "../experiment/adapters/postgres-experiment-evaluation-job.js";
+import { PiExperimentAnalysisTeam } from "../experiment/adapters/pi-experiment-analysis.js";
+import { createExperimentEvaluationWorker } from "../experiment/application/run-experiment-evaluation.js";
+import { PostgresInvestigationQuery } from "../investigation/adapters/postgres-investigation-query.js";
+import { createInvestigationQueries } from "../investigation/application/investigation-queries.js";
 
 const config = loadConfig();
 const pool = createDatabasePool(config.databaseUrl);
@@ -64,12 +72,36 @@ const worker = createInvestigationWorker({
   mediaProbe,
   abrDecodeTester,
   labWorkspace,
+  workerId: config.workerId,
+  leaseMs: config.workerLeaseMs,
+  logger,
+});
+const playbackRuns = new PostgresPlaybackRuns(pool);
+const analysisWorker = createInvestigationAnalysisWorker({
+  repository,
   ai,
   workerId: config.workerId,
   leaseMs: config.workerLeaseMs,
+  playbackCorrelation: new PostgresPlaybackCorrelation(pool, playbackRuns),
+  logger,
 });
 const recordingStore = new FilesystemRecordingStore(config.dataDir);
 const experimentRepository = new PostgresExperimentRepository(pool);
+const experimentEvaluationWorker = createExperimentEvaluationWorker({
+  jobs: new PostgresExperimentEvaluationJobs(pool),
+  experiments: experimentRepository,
+  investigations: createInvestigationQueries(new PostgresInvestigationQuery(pool)),
+  analysisTeam: new PiExperimentAnalysisTeam({
+    ...(config.aiApiKey ? { apiKey: config.aiApiKey } : {}),
+    provider: config.aiProvider,
+    apiUrl: config.aiApiUrl,
+    model: config.aiModel,
+    timeoutMs: config.aiTimeoutMs,
+  }),
+  workerId: config.workerId,
+  leaseMs: config.workerLeaseMs,
+  logger,
+});
 const recordingWorker = createRecordingWorker({
   repository: new PostgresRecordingJobRepository(pool),
   store: recordingStore,
@@ -85,6 +117,7 @@ const recordingWorker = createRecordingWorker({
   workerId: config.workerId,
   leaseMs: config.workerLeaseMs,
   observer: new ExperimentRecordingObserver(experimentRepository, recordingStore, logger),
+  logger,
 });
 let shutdownRequested = false;
 
@@ -125,8 +158,10 @@ logger.info("worker.started", {
 while (!shutdownRequested) {
   try {
     const processed = await worker.runNext()
+      || await analysisWorker.runNext()
       || await recordingWorker.runNext()
-      || await runNextPlaybackReview({ pool, workerId: config.workerId, leaseMs: config.workerLeaseMs, ai });
+      || await experimentEvaluationWorker.runNext()
+      || await runNextPlaybackReview({ pool, workerId: config.workerId, leaseMs: config.workerLeaseMs, ai, logger });
     if (!processed) await delay(config.workerPollMs);
   } catch (error) {
     logger.warn("worker.poll_failed", {

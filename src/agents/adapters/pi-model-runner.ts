@@ -63,15 +63,16 @@ export function createPiModelRunner(config: PiModelRunnerConfig): AgentModelRunn
             const messages = typed.messages ?? agent.state.messages;
             const message = [...messages].reverse().find((item) => item.role === "assistant");
             if (message && "errorMessage" in message && message.errorMessage) {
-              const reason = providerFailureReason(message.errorMessage);
+              const failure = providerFailure(message.errorMessage);
               logger.warn("ai.provider_unsuccessful", {
                 investigationId: input.investigationId,
                 agentId: input.agentId,
                 provider: config.provider,
                 model: config.model,
-                reason,
+                reason: failure.reason,
+                ...(failure.retryAfterMs === undefined ? {} : { retryAfterMs: failure.retryAfterMs }),
               });
-              finish(() => reject(new Error(`Pi provider unsuccessful: ${reason}`)));
+              finish(() => reject(new PiProviderError(failure.reason, failure.retryAfterMs)));
               return;
             }
             const text = extractText(message && "content" in message ? message.content : undefined);
@@ -113,12 +114,37 @@ function normalizeBaseUrl(value: string): string {
   return value.replace(/\/chat\/completions\/?$/, "").replace(/\/$/, "");
 }
 
-function providerFailureReason(message: string): "rate_limit" | "server_error" | "context_limit" | "authentication" | "transport" | "unknown" {
+type ProviderFailureReason = "rate_limit" | "server_error" | "context_limit" | "authentication" | "transport" | "unknown";
+
+class PiProviderError extends Error {
+  readonly retryAfterMs?: number;
+
+  constructor(reason: ProviderFailureReason, retryAfterMs?: number) {
+    super(`Pi provider unsuccessful: ${reason}`);
+    this.name = "PiProviderError";
+    if (retryAfterMs !== undefined) this.retryAfterMs = retryAfterMs;
+  }
+}
+
+function providerFailure(message: string): { reason: ProviderFailureReason; retryAfterMs?: number } {
   const normalized = message.toLowerCase();
-  if (/\b429\b|rate.?limit|too many requests|capacity|concurren/.test(normalized)) return "rate_limit";
-  if (/\b5\d\d\b|overload|internal server|service unavailable|bad gateway|gateway timeout/.test(normalized)) return "server_error";
-  if (/context.{0,30}(?:length|window|limit)|token.{0,20}(?:limit|maximum)|payload.{0,20}(?:large|limit)/.test(normalized)) return "context_limit";
-  if (/\b401\b|\b403\b|auth|api.?key|permission|forbidden|unauthorized/.test(normalized)) return "authentication";
-  if (/abort|timeout|timed out|network|fetch|socket|econn|connection/.test(normalized)) return "transport";
-  return "unknown";
+  if (/\b429\b|rate.?limit|too many requests|capacity|concurren/.test(normalized)) {
+    const retryAfterMs = parseRetryAfterMs(normalized);
+    return { reason: "rate_limit", ...(retryAfterMs === undefined ? {} : { retryAfterMs }) };
+  }
+  if (/\b5\d\d\b|overload|internal server|service unavailable|bad gateway|gateway timeout/.test(normalized)) return { reason: "server_error" };
+  if (/context.{0,30}(?:length|window|limit)|token.{0,20}(?:limit|maximum)|payload.{0,20}(?:large|limit)/.test(normalized)) return { reason: "context_limit" };
+  if (/\b401\b|\b403\b|auth|api.?key|permission|forbidden|unauthorized/.test(normalized)) return { reason: "authentication" };
+  if (/abort|timeout|timed out|network|fetch|socket|econn|connection/.test(normalized)) return { reason: "transport" };
+  return { reason: "unknown" };
+}
+
+function parseRetryAfterMs(message: string): number | undefined {
+  const match = /(?:retry|try again|wait)[^\d]{0,32}(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|seconds?|m|minutes?)/i.exec(message);
+  if (!match?.[1] || !match[2]) return undefined;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value <= 0) return undefined;
+  const unit = match[2].toLowerCase();
+  const multiplier = unit.startsWith("ms") || unit.startsWith("millisecond") ? 1 : unit.startsWith("m") ? 60_000 : 1_000;
+  return Math.min(Math.max(Math.ceil(value * multiplier), 1_000), 60_000);
 }

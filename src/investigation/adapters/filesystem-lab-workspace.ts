@@ -18,11 +18,21 @@ export class FilesystemLabWorkspace {
     await fs.mkdir(path.join(root, "work"), { recursive: true });
     const rootManifest = collection.manifests.find((manifest) => manifest.role === "root");
     if (!rootManifest) throw new Error("Lab workspace requires a root manifest");
-    const samples = (collection.mediaSamples ?? []).filter((sample) => sample.kind === "media-segment" && sample.sourceManifestLogicalKey === rootManifest.logicalKey)
+    const samples = (collection.mediaSamples ?? []).filter((sample) => sample.kind === "media-segment");
+    const rootIsMaster = rootManifest.inspection.hls?.kind === "master";
+    const selectedIndex = collection.hlsSelection?.variant.index;
+    const preferredKey = selectedIndex === undefined ? undefined : `manifest/variant/${selectedIndex}`;
+    const sourceKey = preferredKey && samples.some((sample) => sample.sourceManifestLogicalKey === preferredKey)
+      ? preferredKey
+      : rootIsMaster
+        ? samples[0]?.sourceManifestLogicalKey
+        : rootManifest.logicalKey;
+    const selected = samples
+      .filter((sample) => sample.sourceManifestLogicalKey === sourceKey)
       .sort((left, right) => (left.sampleIndex ?? 0) - (right.sampleIndex ?? 0));
-    const targetDuration = Math.max(1, Math.ceil(Math.max(...samples.map((sample) => sample.declaredDuration ?? 0), 0)));
+    const targetDuration = Math.max(1, Math.ceil(Math.max(...selected.map((sample) => sample.declaredDuration ?? 0), 0)));
     const mediaLines = ["#EXTM3U", "#EXT-X-VERSION:3", `#EXT-X-TARGETDURATION:${targetDuration}`];
-    for (const sample of samples) {
+    for (const sample of selected) {
       const index = sample.sampleIndex ?? 0;
       const fileName = `segment-${String(index).padStart(6, "0")}.ts`;
       await fs.writeFile(path.join(mediaDirectory, fileName), sample.content.bytes);
@@ -34,7 +44,7 @@ export class FilesystemLabWorkspace {
     await fs.writeFile(path.join(input, "case.json"), JSON.stringify({
       protocol: rootManifest.inspection.protocol,
       manifestLogicalKey: rootManifest.logicalKey,
-      sampledSegments: samples.map((sample) => ({ logicalKey: sample.logicalKey, index: sample.sampleIndex, sequence: sample.sequence, duration: sample.declaredDuration })),
+      sampledSegments: selected.map((sample) => ({ logicalKey: sample.logicalKey, index: sample.sampleIndex, sequence: sample.sequence, duration: sample.declaredDuration })),
     }, null, 2), "utf8");
   }
 }

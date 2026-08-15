@@ -17,7 +17,7 @@ describe("loadConfig", () => {
     expect(config.mediaSampleMaxTotalBytes).toBe(536_870_912);
     expect(config.recordSegmentMaxBytes).toBe(67_108_864);
     expect(config.recordRequestTimeoutMs).toBe(60_000);
-    expect(config.recordMaxVariants).toBe(8);
+    expect(config.recordMaxVariants).toBe(32);
     expect(config.experimentMaxClonesPerIteration).toBe(4);
     expect(config.experimentMaxIterations).toBe(3);
     expect(config.experimentMaxClonesTotal).toBe(12);

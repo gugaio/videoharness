@@ -6,10 +6,10 @@ import { getHealth, startInvestigation } from "../lib/api";
 const modules = [
   {
     title: "Investigate",
-    description: "Investigate a stream immediately.",
+    description: "Open or delete existing investigations and inspect their evidence.",
     icon: <SearchIcon />,
     available: true,
-    path: undefined,
+    path: "/investigations",
   },
   {
     title: "Record",
@@ -92,7 +92,7 @@ export function HomePage(): JSX.Element {
               </span>
             </h1>
             <p className="mx-auto mt-6 max-w-2xl text-pretty text-base leading-7 text-harness-muted sm:text-lg">
-              Paste a URL and a team of AI agents analyzes playback, network, media and compatibility issues — live, in front of you.
+              Paste a URL, inspect the extracted stream structure, then decide when the agent team should analyze the evidence.
             </p>
           </div>
 

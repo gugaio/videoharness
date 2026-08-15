@@ -234,6 +234,54 @@ Agentes Pi podem solicitar `inspect_preserved_sample`, limitada aos logical keys
 dos samples ja preservados e ao resultado deterministico de probe. O modelo nao
 recebe ferramenta de shell, arquivo, URL, argumentos de ffprobe ou download.
 
+## 2026-08-14 - Evidencia visual antes de sintese no workspace
+
+Decisao:
+
+- A tela principal de Investigate passa a ser um workspace de evidencias, nao uma
+  timeline seguida por um report.
+- Manifestos, ladder e chunks preservados sao a primeira superficie de leitura.
+- Perguntas do usuario sao persistidas como atividades e nao acionam IA em
+  segundo plano.
+- Record/Experiments continuam sendo o unico caminho que produz URL estavel e
+  resultado de playback controlado.
+
+Motivo:
+
+- Uma pessoa precisa entender os fatos deterministas antes de confiar nas
+  hipoteses, e precisa saber exatamente quando uma nova analise foi solicitada.
+
+Consequencia:
+
+- O workspace pode continuar consumindo a projecao atual do report durante a
+  discovery, mas a proxima fatia promove `EvidenceSnapshot`, `AgentRun` e
+  `Hypothesis` a entidades persistidas independentes.
+
+## 2026-08-15 - Agentes serializados e contexto compacto
+
+Decisao:
+
+- especialistas executam em serie sobre a credencial compartilhada do provider;
+- o prompt inicial carrega resumos determinísticos e o indice de evidencias, mas
+  nao repete URLs nem listas completas de frames/NALs;
+- detalhes preservados continuam acessiveis por `inspect_preserved_sample`;
+- correcao de contrato usa retry curto, enquanto rate limit usa backoff e hints do
+  provider quando disponiveis; erros permanentes nao sao repetidos.
+
+Motivo:
+
+- duas geracoes concorrentes, somadas aos retries de JSON e ao mesmo snapshot
+  volumoso enviado para cada agente, criavam bursts previsiveis de tokens/requests;
+- o schema rejeitava variacoes inofensivas como `evidence_ids`, envelopes e listas
+  escalares, desperdicando uma segunda geracao apesar de a resposta ser utilizavel.
+
+Consequencia:
+
+- a analise completa pode levar mais tempo, mas deixa de trocar confiabilidade por
+  paralelismo pequeno;
+- summaries e citacoes continuam obrigatorios, findings sem evidence ID conhecido
+  continuam descartados e o snapshot completo permanece auditavel fora do prompt.
+
 ## 2026-08-05 - Relato do usuario como hipotese de forense DASH
 
 Decisao:
@@ -621,3 +669,124 @@ Consequencia:
 - Instabilidade pontual de CDN/DNS pode ser recuperada no recurso afetado sem
   descartar toda a ladder ja baixada naquela tentativa.
 - Falha depois do limite continua explicita e segue a politica duravel do job.
+
+## 2026-08-14 - GOP visual usa resumo deterministico compacto
+
+Decisao:
+
+- FFprobe continua lendo packets/frames do chunk preservado, mas o snapshot nao
+  recebe o dump bruto. Ele guarda contagens completas, boundary inicial/final e
+  no maximo 24 GOPs com 360 frames projetados por GOP.
+- O adapter normaliza tanto os arrays separados `packets`/`frames` quanto o array
+  intercalado `packets_and_frames` emitido por versoes mais novas do FFprobe.
+- O agrupamento inicia em key frame ou picture type I. Audio frames nao entram no
+  mapa de GOP de video.
+- A UI representa I/P/B somente quando FFprobe informou o tipo. Para fMP4,
+  IDR/CRA/BLA ou uma flag de sync aparecem como random access/sync; o produto nao
+  inventa P/B a partir dessa sinalizacao.
+
+Motivo:
+
+- O workspace precisa permitir inspeção visual real sem inflar snapshots,
+  respostas HTTP e inputs de agentes com o JSON bruto do FFprobe.
+
+Consequencia:
+
+- `totalGopCount`, `frameCount` e `truncated` tornam a cobertura auditavel.
+- O artifact completo continua preservado para uma analise deterministica mais
+  profunda quando o resumo nao for suficiente.
+
+## 2026-08-14 - Coleta e analise sao dois jobs explicitos
+
+Decisao:
+
+- O job inicial termina em `evidence_ready` depois de publicar um snapshot
+  deterministico imutavel; ele nao chama o provider de IA nem cria o report.
+- `POST /v1/investigations/:id/analysis` e a unica transicao inicial para a etapa
+  de agentes. Ele cria um job `investigation-analysis` idempotente.
+- O segundo job referencia o snapshot atual, persiste os AgentRuns e produz o
+  report final. Uma falha de IA devolve o caso a `evidence_ready`, preservando os
+  fatos coletados e permitindo nova tentativa explicita.
+
+Motivo:
+
+- A pessoa deve compreender manifestos, ladder, chunks e GOPs antes de receber
+  interpretacoes. Executar agentes automaticamente misturava fatos e hipoteses e
+  tornava o CTA da interface apenas decorativo.
+
+Consequencias:
+
+- Investigacoes novas possuem uma pausa real e recuperavel entre coleta e IA.
+- A navegacao pode alternar entre dados do stream e analise sem duplicar o caso ou
+  a evidencia.
+- Report, hipoteses e Experiments passam a depender da conclusao do segundo job.
+
+## 2026-08-15 - Avaliacao de Experiment usa guardrail factual e equipe de agentes
+
+Decisao:
+
+- `POST /v1/experiments/:id/evaluate` cria um job recuperavel em vez de concluir
+  a hipotese no request HTTP.
+- A primeira camada deriva somente fatos do CONTROL, treatments, CloneSpecs,
+  verificacao e TestResults. Ela define outcome, evidence IDs, claim causal
+  maximo e o que nao foi estabelecido.
+- Evidence Auditor, Causal Analyst e Lead Experiment Investigator rodam em serie.
+  Os agentes explicam o efeito, levantam alternativas e escolhem o proximo teste,
+  mas nao podem ampliar o guardrail.
+- Um unico tratamento que passa enquanto CONTROL falha produz
+  `PARTIALLY_SUPPORTED` quando a hipotese original e mais ampla que a variavel
+  manipulada. `SUPPORTED` fica reservado para evidencia causal mais direta e
+  repetida.
+
+Motivo:
+
+- A regra anterior promovia toda hipotese ligada a um treatment quando ele
+  passava, mesmo que o clone tivesse alterado apenas representacao/ladder e a
+  hipotese falasse de latencia de origem. O summary ainda alegava hipoteses
+  concorrentes inexistentes.
+- O produto e assistido por IA, mas o LLM deve interpretar evidencia, nao criar
+  observacoes ou redefinir o alcance do experimento.
+
+Consequencias:
+
+- Avaliacoes ficam assincronas, reexecutaveis e observaveis por job/tentativa.
+- A UI separa observacao, claim suportado, interpretacao, nao comprovado,
+  alternativas, limitacoes, agentes e proximo teste.
+- Avaliacoes legadas podem ser reprocessadas sem repetir o playback; profundidade
+  adicional continua limitada quando TestResults nao possuem environment,
+  telemetria, notes, artifacts ou repeticoes.
+
+## 2026-08-15 - O Lead desenha a validacao e CONTROL preserva a ladder completa
+
+Decisao:
+
+- o Lead Investigator devolve um `validationPlan` estruturado e validado, com
+  hipotese, limite probatorio e somente recipes que o clone compiler suporta;
+- LOW-BR deixa de ser o template universal. Diagnosticos de codec/audio group
+  podem usar `representation_subset`, enquanto causas sem tratamento suportado
+  ficam explicitamente sem plano automatico;
+- CONTROL preserva todas as variants selecionadas da origem. O teto de seguranca
+  passa de 8 para 32 e continua subordinado a duracao, bytes, recursos, SSRF e
+  publish atomico;
+- o limite de variants e aplicado depois da selecao do CloneSpec, permitindo que
+  um treatment pequeno seja executado mesmo quando a origem possui uma ladder
+  maior que o teto.
+- HLS repete falhas transitorias no nivel de cada segmento antes de reiniciar o
+  recording inteiro, alinhando sua recuperacao ao comportamento ja usado por
+  DASH.
+
+Motivo:
+
+- uma origem valida com dez variants falhava antes do replay, embora a janela de
+  120 segundos e o budget agregado fossem suficientes;
+- usar sempre CONTROL + LOW-BR ignorava o diagnostico produzido pelos agentes e,
+  no caso AAC/E-AC-3, testava uma variavel diferente da causa levantada.
+
+Consequencias:
+
+- o clone continua limitado e recuperavel, mas nao descarta arbitrariamente uma
+  ladder comum de dez variants;
+- hipoteses novas variam com a evidencia e o tratamento informa exatamente qual
+  grupo foi removido ou isolado;
+- reports antigos sem `validationPlan` usam apenas um fallback causalmente
+  especifico quando a propria evidencia permite selecionar o grupo com seguranca.

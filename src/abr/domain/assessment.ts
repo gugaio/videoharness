@@ -1,4 +1,5 @@
 import type { AbrSeverity, AbrSwitchMatrixEntry, EvidenceRef } from "./evidence.js";
+import type { CapabilityProjection } from "../application/project-decoder-capability.js";
 
 export type AbrAssessmentVerdict =
   | "NO_ISSUE_DETECTED"
@@ -80,4 +81,5 @@ export type AbrAssessment = EvidenceRef & {
   transitions: AbrTransitionAssessment[];
   transitionMatrix: AbrSwitchMatrixEntry[];
   recommendedMeasurements: string[];
+  capability?: CapabilityProjection;
 };

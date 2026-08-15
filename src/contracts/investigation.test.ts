@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InvestigationReportContentSchema } from "./investigation.js";
+import { EvidenceBundleV2Schema, InvestigationReportContentSchema } from "./investigation.js";
 
 const commonReport = {
   placeholder: false as const,
@@ -58,6 +58,67 @@ describe("investigation report contracts", () => {
       generatedBy: "deterministic-manifest-v2",
       evidence: v2Evidence(),
     }).success).toBe(true);
+  });
+
+  it("preserves the compact GOP map at the evidence boundary", () => {
+    const evidence = { ...v2Evidence(), mediaSamples: [{
+      artifactId: "8dc67e09-4b25-4fe5-a69a-58f896fb5198",
+      logicalKey: "sample/root/media/0",
+      kind: "media-segment",
+      sizeBytes: 1_024,
+      sourceManifestLogicalKey: "manifest/root",
+      probe: {
+        tracks: [{ kind: "video", codec: "h264", profile: "High", pixelFormat: "yuv420p" }],
+        boundary: {
+          totalPacketCount: 2, totalFrameCount: 3, totalGopCount: 1, packets: [], frames: [],
+          gops: [{ index: 0, startFrameIndex: 0, frameCount: 3, startsWithKeyFrame: true, firstPtsTime: 0, lastPtsTime: 0.08, truncated: false, frames: [
+            { keyFrame: true, pictureType: "I", pts: "0", ptsTime: 0, sideDataTypes: [] },
+            { keyFrame: false, pictureType: "P", pts: "1", ptsTime: 0.04, sideDataTypes: [] },
+            { keyFrame: false, pictureType: "B", pts: "2", ptsTime: 0.08, sideDataTypes: [] },
+          ] }],
+        },
+      },
+    }] };
+
+    const parsed = EvidenceBundleV2Schema.parse(evidence);
+    expect(parsed.mediaSamples[0]?.probe?.boundary?.gops[0]?.frames.map((frame) => frame.pictureType)).toEqual(["I", "P", "B"]);
+    expect(parsed.mediaSamples[0]?.probe?.tracks[0]).toMatchObject({ profile: "High", pixelFormat: "yuv420p" });
+  });
+
+  it("preserves bounded raw manifest content at the evidence boundary", () => {
+    const evidence = {
+      ...v2Evidence(),
+      manifests: [{
+        ...v2Evidence().manifests[0],
+        content: "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=246440,RESOLUTION=320x184\nlow.m3u8",
+      }],
+    };
+
+    const parsed = EvidenceBundleV2Schema.parse(evidence);
+    expect(parsed.manifests[0]?.content).toContain("#EXT-X-STREAM-INF:BANDWIDTH=246440");
+  });
+
+  it("accepts HTTP facts on manifests and media samples", () => {
+    const evidence = {
+      ...v2Evidence(),
+      manifests: [{
+        ...v2Evidence().manifests[0],
+        http: { latencyMs: 42, firstByteMs: 12, redirectCount: 1, redirectChain: ["https://cdn.example/master.m3u8"], server: "nginx", cacheControl: "no-store", etag: "\"x\"", via: "1.1 varnish" },
+      }],
+      mediaSamples: [{
+        artifactId: "8dc67e09-4b25-4fe5-a69a-58f896fb5199",
+        logicalKey: "sample/root/media/0",
+        kind: "media-segment",
+        sizeBytes: 100,
+        source: { url: "https://cdn.example/seg0.ts", sha256: "a".repeat(64), httpStatus: 200, http: { redirectCount: 0, latencyMs: 30 } },
+      }],
+    };
+
+    const parsed = EvidenceBundleV2Schema.parse(evidence);
+    expect(parsed.manifests[0]?.http?.server).toBe("nginx");
+    expect(parsed.manifests[0]?.http?.redirectChain).toEqual(["https://cdn.example/master.m3u8"]);
+    expect(parsed.mediaSamples[0]?.source?.http?.redirectCount).toBe(0);
+    expect(parsed.mediaSamples[0]?.source?.http?.latencyMs).toBe(30);
   });
 
   it("accepts the protocol-neutral ABR assessment", () => {

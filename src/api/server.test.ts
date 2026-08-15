@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { HealthResponseSchema } from "../contracts/health.js";
 import { StartInvestigationResponseSchema } from "../contracts/investigation.js";
 import { buildApiServer } from "./server.js";
@@ -31,6 +31,14 @@ const investigationQueries = {
       }
     : null,
   listEventsAfter: async () => [],
+  listAgentRuns: async () => [],
+  listInvestigations: async () => [{
+    id: "c56a4180-65aa-42ec-a945-5fd21dec0538",
+    sourceUrl: "https://example.test/live/master.m3u8",
+    state: "queued" as const,
+    createdAt: "2026-07-21T12:00:00.000Z",
+    updatedAt: "2026-07-21T12:00:00.000Z",
+  }],
   getReport: async (id: string) => id === "c56a4180-65aa-42ec-a945-5fd21dec0538"
     ? {
         id: "8dc67e09-4b25-4fe5-a69a-58f896fb5197",
@@ -198,6 +206,142 @@ describe("investigation queries", () => {
     await server.close();
   });
 
+  it("returns deterministic evidence before a report is required", async () => {
+    const server = buildApiServer({
+      database: { check: async () => undefined },
+      startInvestigation,
+      investigationQueries: {
+        ...investigationQueries,
+        getEvidence: async () => ({
+          schemaVersion: 2 as const,
+          collectedAt: "2026-08-14T12:00:00.000Z",
+          source: { requestedUrl: "https://example.test/master.m3u8", finalUrl: "https://example.test/master.m3u8", protocol: "hls" as const, httpStatus: 200 },
+          manifests: [{ artifactId: "8dc67e09-4b25-4fe5-a69a-58f896fb5197", logicalKey: "manifest/root", role: "root" as const, requestedUrl: "https://example.test/master.m3u8", finalUrl: "https://example.test/master.m3u8", kind: "master" as const, sizeBytes: 100 }],
+          mediaSamples: [], observations: [], limitations: [], hls: { variants: [], renditions: [] },
+        }),
+      },
+    });
+
+    const response = await server.inject({ method: "GET", url: "/v1/investigations/c56a4180-65aa-42ec-a945-5fd21dec0538/evidence" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ evidence: { schemaVersion: 2, source: { protocol: "hls" } } });
+    await server.close();
+  });
+
+  it("queues agent analysis only through the explicit analysis endpoint", async () => {
+    const server = buildApiServer({
+      database: { check: async () => undefined },
+      startInvestigation,
+      investigationQueries,
+      startInvestigationAnalysis: async (id) => id === "c56a4180-65aa-42ec-a945-5fd21dec0538" ? "started" : "not_found",
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/v1/investigations/c56a4180-65aa-42ec-a945-5fd21dec0538/analysis",
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toEqual({ accepted: true, started: true });
+    await server.close();
+  });
+
+  it("allows an explicit rerun of a completed agent analysis", async () => {
+    const startAnalysis = vi.fn(async () => "started" as const);
+    const server = buildApiServer({
+      database: { check: async () => undefined },
+      startInvestigation,
+      investigationQueries,
+      startInvestigationAnalysis: startAnalysis,
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/v1/investigations/c56a4180-65aa-42ec-a945-5fd21dec0538/analysis",
+      payload: { rerun: true },
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(startAnalysis).toHaveBeenCalledWith("c56a4180-65aa-42ec-a945-5fd21dec0538", { rerun: true });
+    await server.close();
+  });
+
+  it("rejects agent analysis before deterministic evidence is ready", async () => {
+    const server = buildApiServer({
+      database: { check: async () => undefined },
+      startInvestigation,
+      investigationQueries,
+      startInvestigationAnalysis: async () => "not_ready",
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/v1/investigations/c56a4180-65aa-42ec-a945-5fd21dec0538/analysis",
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: { code: "EVIDENCE_NOT_READY" } });
+    await server.close();
+  });
+
+  it("lists investigations for the workspace", async () => {
+    const server = buildApiServer({
+      database: { check: async () => undefined },
+      startInvestigation,
+      investigationQueries,
+    });
+
+    const response = await server.inject({ method: "GET", url: "/v1/investigations" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ investigations: expect.any(Array) });
+    expect(response.json().investigations[0]).toMatchObject({
+      id: "c56a4180-65aa-42ec-a945-5fd21dec0538",
+      state: "queued",
+    });
+    await server.close();
+  });
+
+  it("deletes an investigation and its files when the deletion service is configured", async () => {
+    const deleteInvestigation = vi.fn(async () => ({ deleted: true }));
+    const server = buildApiServer({
+      database: { check: async () => undefined },
+      startInvestigation,
+      investigationQueries,
+      deleteInvestigation,
+    });
+
+    const response = await server.inject({
+      method: "DELETE",
+      url: "/v1/investigations/c56a4180-65aa-42ec-a945-5fd21dec0538",
+    });
+
+    expect(deleteInvestigation).toHaveBeenCalledWith("c56a4180-65aa-42ec-a945-5fd21dec0538");
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ deleted: true });
+    await server.close();
+  });
+
+  it("returns 404 when deleting an investigation that does not exist", async () => {
+    const deleteInvestigation = vi.fn(async () => ({ deleted: false }));
+    const server = buildApiServer({
+      database: { check: async () => undefined },
+      startInvestigation,
+      investigationQueries,
+      deleteInvestigation,
+    });
+
+    const response = await server.inject({
+      method: "DELETE",
+      url: "/v1/investigations/c56a4180-65aa-42ec-a945-5fd21dec0538",
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ error: { code: "INVESTIGATION_NOT_FOUND" } });
+    await server.close();
+  });
+
   it("returns an empty AI prompt audit for a report without AI analysis", async () => {
     const server = buildApiServer({
       database: { check: async () => undefined },
@@ -212,6 +356,32 @@ describe("investigation queries", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ runs: [] });
+    await server.close();
+  });
+
+  it("stores a user question as a case activity", async () => {
+    let received: { investigationId: string; question: string } | undefined;
+    const server = buildApiServer({
+      database: { check: async () => undefined },
+      startInvestigation,
+      investigationQueries,
+      askInvestigationQuestion: async (input) => {
+        received = input;
+        return true;
+      },
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/v1/investigations/c56a4180-65aa-42ec-a945-5fd21dec0538/questions",
+      payload: { question: "Compare the GOP around the transition." },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(received).toEqual({
+      investigationId: "c56a4180-65aa-42ec-a945-5fd21dec0538",
+      question: "Compare the GOP around the transition.",
+    });
     await server.close();
   });
 });

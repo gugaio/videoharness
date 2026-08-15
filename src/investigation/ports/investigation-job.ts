@@ -5,6 +5,8 @@ import type {
 } from "../domain/investigation-job.js";
 import type { InvestigationReportContent } from "../domain/investigation-report.js";
 import type { EvidenceBundle } from "../domain/evidence.js";
+import type { EvidenceBundleV2 } from "../domain/evidence.js";
+import type { AiPromptAudit } from "../../agents/domain/types.js";
 
 export type JobFailureDisposition = "retrying" | "failed" | "lease_lost";
 
@@ -18,11 +20,18 @@ export type EvidenceArtifactRecord = {
 };
 
 export type RecordEvidenceResult = {
+  snapshotId: string;
   supersededStorageKeys: string[];
+};
+
+export type EvidenceSnapshot = {
+  id: string;
+  evidence: EvidenceBundleV2;
 };
 
 export interface InvestigationJobRepository {
   claimNext(workerId: string, leaseMs: number): Promise<ClaimedInvestigationJob | null>;
+  claimNextAnalysis(workerId: string, leaseMs: number): Promise<ClaimedInvestigationJob | null>;
   heartbeat(jobId: string, workerId: string, leaseMs: number): Promise<boolean>;
   transition(
     jobId: string,
@@ -38,6 +47,19 @@ export interface InvestigationJobRepository {
     evidence: EvidenceBundle,
     event: InvestigationLifecycleEvent,
   ): Promise<RecordEvidenceResult>;
+  recordAgentRuns(
+    jobId: string,
+    workerId: string,
+    leaseMs: number,
+    snapshotId: string,
+    runs: AiPromptAudit[],
+  ): Promise<void>;
+  loadLatestEvidence(investigationId: string): Promise<EvidenceSnapshot | null>;
+  completeCollection(
+    jobId: string,
+    workerId: string,
+    event: InvestigationLifecycleEvent,
+  ): Promise<void>;
   complete(
     jobId: string,
     workerId: string,

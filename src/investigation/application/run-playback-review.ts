@@ -1,5 +1,6 @@
 import type pg from "pg";
 import { InvestigationReportContentSchema } from "../../contracts/investigation.js";
+import type { WorkerLogger } from "../../infra/logger.js";
 import type { EvidenceBundleV2, EvidenceBundleV3, PlaybackSessionEvidence } from "../domain/evidence.js";
 import type { InvestigationReportContent } from "../domain/investigation-report.js";
 import type { InvestigationAI } from "../ports/investigation-ai.js";
@@ -9,7 +10,8 @@ type Claimed = { id: string; investigation_id: string; source_url: string; probl
 type TelemetryRow = { id: string; metadata: { telemetry?: Omit<PlaybackSessionEvidence, "id"> } };
 
 /** Runs a bounded report revision. The initial report remains published if this job fails. */
-export async function runNextPlaybackReview(input: { pool: pg.Pool; workerId: string; leaseMs: number; ai?: InvestigationAI }): Promise<boolean> {
+export async function runNextPlaybackReview(input: { pool: pg.Pool; workerId: string; leaseMs: number; ai?: InvestigationAI; logger?: WorkerLogger }): Promise<boolean> {
+  const log = input.logger ?? noopLogger;
   const client = await input.pool.connect();
   let job: Claimed | undefined;
   try {
@@ -22,6 +24,14 @@ export async function runNextPlaybackReview(input: { pool: pg.Pool; workerId: st
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; } finally { client.release(); }
   if (!job) return false;
+  if (job.payload.playbackSessionId) {
+    log.info("worker.job_claimed", {
+      jobId: job.id,
+      jobKind: "playback_synthesis",
+      investigationId: job.investigation_id,
+      playbackSessionId: job.payload.playbackSessionId,
+    });
+  }
   try {
     const reportResult = await input.pool.query<{ content: unknown }>(`SELECT content FROM reports WHERE investigation_id = $1`, [job.investigation_id]);
     const report = InvestigationReportContentSchema.parse(reportResult.rows[0]?.content) as InvestigationReportContent;
@@ -48,8 +58,33 @@ export async function runNextPlaybackReview(input: { pool: pg.Pool; workerId: st
     await input.pool.query(`UPDATE jobs SET status='completed', completed_at=now(), locked_by=NULL, locked_until=NULL WHERE id=$1 AND locked_by=$2`, [job.id, input.workerId]);
     await input.pool.query(`INSERT INTO investigation_events (investigation_id,type,actor,message,payload) VALUES ($1,'investigation.report_updated','Investigator','Browser playback evidence has been incorporated into the report.',$2::jsonb)`, [job.investigation_id, JSON.stringify({ state: "completed", revision: "playback", playbackSessionId: job.payload.playbackSessionId })]);
     await input.pool.query("COMMIT");
+    log.info("playback.review_completed", {
+      jobId: job.id,
+      investigationId: job.investigation_id,
+      playbackSessionId: job.payload.playbackSessionId,
+      playedSeconds: Math.round(session.playedMs / 1000),
+    });
   } catch (error) {
-    await input.pool.query(`UPDATE jobs SET status='failed', completed_at=now(), locked_by=NULL, locked_until=NULL, error_code='PLAYBACK_REVIEW_FAILED', error_message=$3 WHERE id=$1 AND locked_by=$2`, [job.id, input.workerId, error instanceof Error ? error.message.slice(0, 300) : "Unknown playback review failure"]);
+    const message = error instanceof Error ? error.message.slice(0, 300) : "Unknown playback review failure";
+    await input.pool.query(`UPDATE jobs SET status='failed', completed_at=now(), locked_by=NULL, locked_until=NULL, error_code='PLAYBACK_REVIEW_FAILED', error_message=$3 WHERE id=$1 AND locked_by=$2`, [job.id, input.workerId, message]);
+    log.error("worker.job_failed", {
+      jobId: job.id,
+      jobKind: "playback_synthesis",
+      investigationId: job.investigation_id,
+      code: "PLAYBACK_REVIEW_FAILED",
+      retryable: false,
+      message: truncateLogMessage(message),
+    });
   }
   return true;
+}
+
+const noopLogger: WorkerLogger = {
+  info: () => undefined,
+  warn: () => undefined,
+  error: () => undefined,
+};
+
+function truncateLogMessage(message: string): string {
+  return message.replace(/\s+/g, " ").trim().slice(0, 500);
 }

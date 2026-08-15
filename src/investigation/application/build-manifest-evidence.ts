@@ -1,4 +1,4 @@
-import type { EvidenceBundleV2, ManifestEvidence } from "../domain/evidence.js";
+import type { EvidenceBundleV2, HlsVariantTopology, ManifestEvidence } from "../domain/evidence.js";
 import type { ClaimedInvestigationJob } from "../domain/investigation-job.js";
 import type { InvestigationReportContent } from "../domain/investigation-report.js";
 import type {
@@ -10,6 +10,8 @@ import type { AiInvestigationResult } from "../ports/investigation-ai.js";
 import { analyzeDashSwitchCandidates } from "../../abr/application/analyze-dash-switch-candidates.js";
 import { buildAbrSwitchMatrix, reconfigurationSensitivitySummary } from "../../abr/application/switch-matrix.js";
 import { buildAbrAssessment } from "../../abr/application/assess-stream-abr.js";
+import { projectDecoderCapability } from "../../abr/application/project-decoder-capability.js";
+import { analyzeTimelineContinuity } from "./analyze-timeline-continuity.js";
 import type { AbrReportedPriority, AbrRepresentation } from "../../abr/domain/assessment.js";
 
 export function buildManifestEvidence(collection: ManifestCollection): EvidenceBundleV2 {
@@ -21,9 +23,21 @@ export function buildManifestEvidence(collection: ManifestCollection): EvidenceB
   const dashSwitches = rootDash ? analyzeDashSwitchCandidates(rootDash, collection.mediaSamples ?? [], collection.reportedContext) : [];
   const switchMatrix = rootDash ? buildAbrSwitchMatrix(rootDash.representations.filter((entry) => entry.contentType === "video").map((entry) => ({ evidenceId: `representation:${entry.id}`, id: entry.id, periodIndex: entry.periodIndex, adaptationSetIndex: entry.adaptationSetIndex, ...(entry.bandwidth === undefined ? {} : { bandwidth: entry.bandwidth }), ...(entry.codecs ? { codecs: entry.codecs } : {}), ...(entry.width === undefined ? {} : { width: entry.width }), ...(entry.height === undefined ? {} : { height: entry.height }), ...(entry.frameRate ? { frameRate: entry.frameRate } : {}), timescale: entry.timescale, presentationTimeOffset: String(entry.presentationTimeOffset) })), dashSwitches) : [];
   const reconfigurationSensitivity = reconfigurationSensitivitySummary(switchMatrix);
-  const variant = collection.manifests.find((manifest) => manifest.role === "variant");
   const audio = collection.manifests.find((manifest) =>
     manifest.logicalKey === "manifest/rendition/audio/0");
+  const variantManifests = collection.manifests.filter((manifest) => manifest.role === "variant");
+  const selectedVariantLogicalKey = collection.hlsSelection
+    ? `manifest/variant/${collection.hlsSelection.variant.index}`
+    : undefined;
+  const topology = variantManifests.map(toVariantTopology);
+  const sampledVideoKeys = new Set(
+    (collection.mediaSamples ?? [])
+      .filter((sample) => sample.kind === "media-segment" && sample.sourceManifestLogicalKey?.startsWith("manifest/variant/"))
+      .map((sample) => sample.sourceManifestLogicalKey!),
+  );
+  const sampledVariants = rootHls
+    ? rootHls.variants.filter((entry) => sampledVideoKeys.has(`manifest/variant/${entry.index}`))
+    : [];
   const observations: EvidenceBundleV2["observations"] = [{
     code: "MANIFEST_DETECTED",
     severity: "info",
@@ -43,6 +57,46 @@ export function buildManifestEvidence(collection: ManifestCollection): EvidenceB
       message: `Linked audio rendition ${collection.hlsSelection.audioRendition.index} selected for bounded investigation.`,
     });
   }
+  if (variantManifests.length > 1) {
+    observations.push({
+      code: "HLS_LADDER_PLAYLISTS_DECLARED",
+      severity: "info",
+      message: `${variantManifests.length} HLS variant playlists were collected across the declared ladder.`,
+    });
+    const targetDurations = new Set(variantManifests
+      .map((manifest) => manifest.inspection.hls?.targetDuration)
+      .filter((value): value is number => value !== undefined));
+    if (targetDurations.size > 1) {
+      observations.push({
+        code: "HLS_TARGET_DURATION_MISMATCH",
+        severity: "warning",
+        message: `Variant playlists declare different target durations: ${[...targetDurations].sort((left, right) => left - right).join(", ")}s.`,
+      });
+    }
+    const discontinuities = variantManifests.filter((manifest) => (manifest.inspection.hls?.discontinuityCount ?? 0) > 0);
+    if (discontinuities.length > 0 && discontinuities.length !== variantManifests.length) {
+      observations.push({
+        code: "HLS_DISCONTINUITY_MISMATCH",
+        severity: "warning",
+        message: `${discontinuities.length} of ${variantManifests.length} variant playlists declare discontinuities while others do not.`,
+      });
+    }
+  }
+  if (sampledVariants.length >= 2) {
+    observations.push({
+      code: "HLS_MULTI_VARIANT_SAMPLED",
+      severity: "info",
+      message: `Aligned bounded media windows were sampled from ${sampledVariants.length} adjacent HLS variants (${sampledVariants.map((entry) => entry.index).join(", ")}).`,
+    });
+  }
+  const drmSchemes = collectDrmSchemes(collection.mediaSamples ?? []);
+  if (drmSchemes.size > 0) {
+    observations.push({
+      code: "DRM_DETECTED",
+      severity: "info",
+      message: `Sampled media declares ${[...drmSchemes].sort().join(", ")} content protection.`,
+    });
+  }
   const avOffset = findAvOffset(collection.mediaSamples ?? []);
   if (avOffset !== undefined) {
     observations.push({
@@ -60,9 +114,36 @@ export function buildManifestEvidence(collection: ManifestCollection): EvidenceB
     transitionMatrix: switchMatrix,
     reportedPriority: abrReportedPriority(collection.reportedContext),
     coverageLimitations: root.inspection.protocol === "hls" && (rootHls?.variants.length ?? 0) > 1
-      ? ["HLS media was sampled from one representative variant; cross-variant boundary safety was not measured."]
+      ? sampledVariants.length >= 2
+        ? ["HLS cross-variant media was sampled in aligned windows; boundary safety between the variants is only partially observable until dedicated decode/boundary evidence is collected."]
+        : ["HLS media was sampled from one representative variant; cross-variant boundary safety was not measured."]
       : [],
   });
+  abr.capability = projectDecoderCapability(abr.ladder.representations);
+  const maxLevel = abr.capability.maxRequiredLevelNumeric;
+  if (maxLevel !== undefined && (abr.capability.codecFamily === "HEVC" || abr.capability.codecFamily === "H264") && maxLevel >= 5.1) {
+    observations.push({
+      code: "DECODER_CAPABILITY_HIGH_LEVEL",
+      severity: "warning",
+      message: `The highest ladder rung requires ${abr.capability.codecFamily} ${abr.capability.maxRequiredLevel}; devices without that decoder capability may fail or skip it.`,
+    });
+  }
+  const timeline = analyzeTimelineContinuity(collection.mediaSamples ?? []);
+  const discontinuousWindows = timeline.filter((window) => !window.continuous);
+  for (const window of discontinuousWindows) {
+    observations.push({
+      code: "TIMELINE_SEGMENT_GAP",
+      severity: "warning",
+      message: `${window.key} shows ${window.gaps.length} boundary gap/overlap fact(s), ${window.totalGapMs} ms of total presentation gap.`,
+    });
+  }
+  if (timeline.some((window) => window.segmentCount > 1 && window.continuous)) {
+    observations.push({
+      code: "TIMELINE_CONTIGUOUS",
+      severity: "info",
+      message: "Adjacent sampled chunks keep a continuous presentation timeline.",
+    });
+  }
 
   return {
     schemaVersion: 2,
@@ -116,24 +197,31 @@ export function buildManifestEvidence(collection: ManifestCollection): EvidenceB
       hls: {
         variants: rootHls.variants,
         renditions: rootHls.renditions,
+        ...(topology.length ? { topology } : {}),
         ...(collection.hlsSelection ? {
           selection: {
             rule: collection.hlsSelection.rule,
             variantIndex: collection.hlsSelection.variant.index,
-            ...(variant?.artifact ? { variantLogicalKey: variant.logicalKey } : {}),
+            ...(selectedVariantLogicalKey ? { variantLogicalKey: selectedVariantLogicalKey } : {}),
             ...(collection.hlsSelection.audioRendition
               ? { audioRenditionIndex: collection.hlsSelection.audioRendition.index }
               : {}),
             ...(audio?.artifact ? { audioRenditionLogicalKey: audio.logicalKey } : {}),
+            ...(sampledVariants.length
+              ? { sampledVariants: sampledVariants.map((entry) => ({ index: entry.index, logicalKey: `manifest/variant/${entry.index}` })) }
+              : {}),
           },
         } : {}),
       },
     } : {}),
+    ...(timeline.length ? { timeline } : {}),
     observations,
     limitations: [
       ...(root.inspection.protocol === "hls" && root.inspection.kind === "master"
         ? [
-          "One representative HLS variant and at most one linked audio rendition were selected deterministically.",
+          sampledVariants.length >= 2
+            ? "Two adjacent HLS video variants and at most one linked audio rendition were sampled within a shared bounded window."
+            : "One representative HLS variant and at most one linked audio rendition were sampled within a bounded window.",
         ]
         : root.inspection.protocol === "hls" && root.inspection.kind === "media"
           ? [
@@ -145,6 +233,9 @@ export function buildManifestEvidence(collection: ManifestCollection): EvidenceB
       ...(collection.mediaSamples?.length
         ? ["The media inspection is a bounded sample, not a full playback simulation."]
         : ["Segments, codecs, timestamps and playback behavior were not analyzed yet."]),
+      ...(drmSchemes.size
+        ? ["The sampled media is protected by DRM; ciphertext bytes remain unmodified and decode/playback was not performed."]
+        : []),
       ...(collection.mediaLimitations ?? []),
     ],
   };
@@ -155,6 +246,9 @@ export function buildManifestReport(
   evidence: EvidenceBundleV2,
   ai?: AiInvestigationResult,
 ): InvestigationReportContent {
+  // The report is a shareable conclusion. Prompt/input/output audits live in
+  // agent_runs, where the workspace can inspect them without duplicating them.
+  const reportAi = ai ? { ...ai, promptAudits: [] } : undefined;
   const rootManifest = evidence.manifests[0]!;
   const selectedVariant = evidence.hls?.selection
     ? evidence.hls.variants.find((variant) => variant.index === evidence.hls?.selection?.variantIndex)
@@ -216,9 +310,16 @@ export function buildManifestReport(
           ? "The reported symptom prioritized a candidate DASH boundary. The media facts are observed, but the actual player switch and device buffer state are not available in this investigation."
           : "The manifest and a bounded media sample are directly observed, but root-cause confidence requires broader playback and delivery evidence.",
     },
-    evidence,
-    ...(ai ? { ai } : {}),
+    evidence: reportEvidence(evidence),
+    ...(reportAi ? { ai: reportAi } : {}),
     generatedBy: "deterministic-media-v1",
+  };
+}
+
+function reportEvidence(evidence: EvidenceBundleV2): EvidenceBundleV2 {
+  return {
+    ...evidence,
+    manifests: evidence.manifests.map(({ content: _content, ...manifest }) => manifest),
   };
 }
 
@@ -307,6 +408,29 @@ function formatOffset(offset: number): string {
   return `${milliseconds} ms ${offset >= 0 ? "after" : "before"}`;
 }
 
+function collectDrmSchemes(samples: MediaSample[]): Set<string> {
+  const schemes = new Set<string>();
+  for (const sample of samples) {
+    for (const pssh of sample.probe?.fmp4?.init?.drm?.pssh ?? []) {
+      if (pssh.classification !== "unknown") schemes.add(pssh.classification);
+    }
+  }
+  return schemes;
+}
+
+function toVariantTopology(manifest: Manifest): HlsVariantTopology {
+  const match = /^manifest\/variant\/(\d+)$/.exec(manifest.logicalKey);
+  const hls = manifest.inspection.hls;
+  return {
+    index: match ? Number(match[1]) : -1,
+    logicalKey: manifest.logicalKey,
+    segmentCount: manifest.inspection.segmentCount ?? 0,
+    ...(hls?.targetDuration !== undefined ? { targetDuration: hls.targetDuration } : {}),
+    ...(hls?.discontinuityCount ? { discontinuityCount: hls.discontinuityCount } : {}),
+    ...(hls?.hasEndList === undefined ? {} : { hasEndList: hls.hasEndList }),
+  };
+}
+
 function toManifestEvidence(manifest: Manifest): ManifestEvidence {
   requireArtifact(manifest);
   const inspection = manifest.inspection;
@@ -325,13 +449,26 @@ function toManifestEvidence(manifest: Manifest): ManifestEvidence {
     ...(inspection.representationCount !== undefined
       ? { representationCount: inspection.representationCount }
       : {}),
+    ...(manifest.source.http ? { http: manifest.source.http } : {}),
     ...(hls?.targetDuration !== undefined ? { targetDuration: hls.targetDuration } : {}),
     ...(hls?.mediaSequence !== undefined ? { mediaSequence: hls.mediaSequence } : {}),
     ...(hls?.discontinuitySequence !== undefined
       ? { discontinuitySequence: hls.discontinuitySequence }
       : {}),
     ...(hls ? { discontinuityCount: hls.discontinuityCount, hasEndList: hls.hasEndList } : {}),
+    ...(manifest.content.bytes.byteLength > 0
+      ? { content: boundedManifestContent(manifest.content.bytes) }
+      : {}),
   };
+}
+
+const MAX_MANIFEST_CONTENT_CHARS = 32_768;
+
+function boundedManifestContent(bytes: Uint8Array): string {
+  const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  if (text.length <= MAX_MANIFEST_CONTENT_CHARS) return text;
+  const kept = text.slice(0, MAX_MANIFEST_CONTENT_CHARS);
+  return `${kept}\n[... manifest content truncated to ${MAX_MANIFEST_CONTENT_CHARS} characters; the full artifact is preserved. ...]`;
 }
 
 function requireArtifact(

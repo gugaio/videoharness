@@ -137,6 +137,31 @@ describe("SafeHttpClient", () => {
     expect(result.text).toBe("#EXTM3U");
   });
 
+  it("captures HTTP facts across redirects and from final response headers", async () => {
+    const resolver = vi.fn(async () => [{ address: "93.184.216.34", family: 4 as const }]);
+    const requester = vi.fn<PinnedRequester>()
+      .mockResolvedValueOnce(response(302, "", { location: "https://cdn.example/live.m3u8" }))
+      .mockResolvedValueOnce(response(200, "#EXTM3U", {
+        "content-type": "application/vnd.apple.mpegurl",
+        server: "nginx",
+        "cache-control": "no-store",
+        etag: "\"abc\"",
+        via: "1.1 varnish",
+      }));
+    const client = new SafeHttpClient({ resolver, requester });
+
+    const result = await client.getText("https://stream.example/master.m3u8");
+
+    expect(result.http.redirectCount).toBe(1);
+    expect(result.http.redirectChain).toEqual(["https://cdn.example/live.m3u8"]);
+    expect(result.http.server).toBe("nginx");
+    expect(result.http.cacheControl).toBe("no-store");
+    expect(result.http.etag).toBe("\"abc\"");
+    expect(result.http.via).toBe("1.1 varnish");
+    expect(result.http.latencyMs).toBeGreaterThanOrEqual(0);
+    expect(result.http.firstByteMs).toBeGreaterThanOrEqual(0);
+  });
+
   it("stops reading when the response exceeds the byte limit", async () => {
     const client = new SafeHttpClient({
       resolver: async () => [{ address: "93.184.216.34", family: 4 }],

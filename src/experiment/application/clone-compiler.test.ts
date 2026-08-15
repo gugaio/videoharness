@@ -43,6 +43,28 @@ describe("CloneCompiler", () => {
     expect(plan.transformations).toContainEqual(expect.objectContaining({ kind: "filter_video_representations" }));
   });
 
+  it("expands an explicit representation subset for a diagnosis-specific treatment", () => {
+    const richerSource = {
+      ...source,
+      representations: [
+        { id: "variant-0", codecs: "mp4a.40.2,avc1.4D401E" },
+        { id: "variant-1", codecs: "mp4a.40.2,avc1.4D401F" },
+        { id: "variant-2", codecs: "ec-3,avc1.4D401F" },
+      ],
+    };
+    const spec = expandCloneRecipe({
+      recipe: "representation_subset",
+      investigationId,
+      shortLabel: "AAC-ONLY",
+      hypothesisIds: [hypothesisId],
+      representationIds: ["variant-0", "variant-1"],
+    }, richerSource);
+
+    expect(spec.abr).toEqual({ mode: "subset", representationIds: ["variant-0", "variant-1"] });
+    expect(compileCloneSpec(spec, richerSource).selection.videoRepresentationIds).toEqual(["variant-0", "variant-1"]);
+    expect(CloneSpecSchema.safeParse(spec).success).toBe(true);
+  });
+
   it("supports the same selection plan for deterministic DASH evidence", () => {
     const dash = { ...source, protocol: "dash" as const, representations: [{ id: "video_por=1483000" }, { id: "video_por=7094000" }], audioRenditionCount: 1 };
     const spec = { ...control(), packaging: { protocol: "dash" as const } };

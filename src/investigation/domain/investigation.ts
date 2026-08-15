@@ -2,6 +2,8 @@ export const investigationStates = [
   "queued",
   "validating",
   "collecting",
+  "evidence_ready",
+  "analysis_queued",
   "analyzing",
   "synthesizing",
   "completed",

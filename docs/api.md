@@ -19,9 +19,18 @@ sem run ativo, o clone e servido com o perfil baseline.
 flowchart TD
     Client[Web client] --> Health[GET /v1/health]
     Client --> Create[POST /v1/investigations]
+    Client --> List[GET /v1/investigations]
+    Client --> Delete[DELETE /v1/investigations/:id]
     Client --> Detail[GET /v1/investigations/:id]
     Client --> Events[GET /v1/investigations/:id/events - SSE]
     Client --> Report[GET /v1/investigations/:id/report]
+    Client --> Evidence[GET /v1/investigations/:id/evidence]
+    Client --> Analysis[POST /v1/investigations/:id/analysis]
+    Client --> Question[POST /v1/investigations/:id/questions]
+    Evidence --> Analysis
+    Analysis --> AnalysisJob[worker investigation-analysis job]
+    AnalysisJob --> AiRuns
+    AnalysisJob --> Report
     Report --> AbrAssessment[EvidenceBundle.abr]
     Client --> AiRuns[GET /v1/investigations/:id/ai-runs]
     Client --> Artifacts[GET /v1/investigations/:id/artifacts]
@@ -48,6 +57,11 @@ flowchart TD
     Client --> SelectTreatment[POST /v1/test-requests/:id/activate]
     Client --> TestResult[POST /v1/test-requests/:id/results]
     Client --> Evaluate[POST /v1/experiments/:id/evaluate]
+    Evaluate --> EvaluationJob[worker experiment-evaluation job]
+    EvaluationJob --> EvidenceAuditor[Evidence Auditor]
+    EvidenceAuditor --> CausalAnalyst[Causal Analyst]
+    CausalAnalyst --> ExperimentLead[Lead Experiment Investigator]
+    ExperimentLead --> Evaluation[(structured evaluation)]
     SelectTreatment --> ExperimentDataPlane[GET/HEAD/OPTIONS /streams/experiments/:experimentId/*]
     Device --> ExperimentDataPlane
     ExperimentDataPlane --> RecordingStore
@@ -62,11 +76,16 @@ flowchart TD
 | Status | Method | Path | Descricao |
 |---|---|---|---|
 | Implementado | GET | `/v1/health` | Saude da API e PostgreSQL |
-| Implementado | POST | `/v1/investigations` | Criar investigacao e enfileirar pipeline |
+| Implementado | POST | `/v1/investigations` | Criar investigacao e enfileirar somente a coleta deterministica |
+| Implementado | GET | `/v1/investigations` | Listar investigations (mais recentes primeiro) para o workspace |
+| Implementado | DELETE | `/v1/investigations/:id` | Apagar investigation e todos os seus dados: jobs, eventos, artifacts (arquivos), reports, snapshots, agent runs, playback sessions, shell runs, experiments e recordings vinculadas (arquivos e workspaces) |
 | Implementado | GET | `/v1/investigations/:id` | Estado atual e metadados do caso |
 | Implementado | GET | `/v1/investigations/:id/events` | Historico e stream SSE da timeline |
 | Implementado | GET | `/v1/investigations/:id/report` | Report final, incluindo baseline `AbrAssessment` em coletas novas |
-| Implementado | GET | `/v1/investigations/:id/ai-runs` | Prompts e pacote de evidencia enviados em cada chamada de IA |
+| Implementado | GET | `/v1/investigations/:id/evidence` | Ultimo snapshot imutavel de evidencia deterministica, disponivel antes do report |
+| Implementado | POST | `/v1/investigations/:id/analysis` | Enfileirar a analise dos agentes somente depois de `evidence_ready` |
+| Implementado | POST | `/v1/investigations/:id/questions` | Persistir uma pergunta do usuario na timeline do caso; nao aciona IA implicitamente |
+| Implementado | GET | `/v1/investigations/:id/ai-runs` | Runs persistidos com snapshot, prompt, ferramentas e output validado |
 | Implementado | GET | `/v1/investigations/:id/artifacts` | Lista artifacts preservados do caso |
 | Implementado | GET | `/v1/investigations/:id/artifacts/:artifactId` | Baixa um artifact preservado |
 | Implementado | POST | `/v1/investigations/:id/playback-sessions` | Iniciar validacao explicita no navegador |
@@ -96,7 +115,7 @@ flowchart TD
 | Implementado | GET | `/v1/experiments/:id/test-requests` | Listar testes humanos/device |
 | Implementado | POST | `/v1/test-requests/:id/activate` | Selecionar o tratamento entregue pela URL fixa do experiment |
 | Implementado | POST | `/v1/test-requests/:id/results` | Registrar resultado atribuido e estruturado |
-| Implementado | POST | `/v1/experiments/:id/evaluate` | Avaliar evidencias e concluir ou pedir follow-up |
+| Implementado | POST | `/v1/experiments/:id/evaluate` | Enfileirar avaliacao recuperavel por tres agentes; `202` idempotente enquanto ativa |
 | Implementado | GET/POST | `/v1/test-environments` | Listar ou salvar environments reutilizaveis |
 | Implementado | GET | `/v1/clone-capabilities` | Operacoes realmente suportadas e limites atuais |
 | Implementado | POST | `/v1/clone-specs/validate` | Validacao tipada sem executar media |
@@ -137,17 +156,62 @@ Resposta: `202 Accepted`.
 investigacao com `replayed=true` e header `x-idempotency-replayed: true`. Reutilizar
 a chave com outro payload retorna `409 IDEMPOTENCY_CONFLICT`.
 
+## Adicionar pergunta ao caso
+
+```http
+POST /v1/investigations/:id/questions
+Content-Type: application/json
+```
+
+```json
+{ "question": "Compare o GOP em torno da transicao de qualidade." }
+```
+
+Resposta: `201 Created` com `{ "ok": true }`.
+
+A pergunta vira `investigation.question_asked` no mesmo journal SSE do caso. Ela
+nao dispara uma chamada de IA nem cria progresso ficticio; o proximo AgentRun
+persistido devera referenciá-la explicitamente.
+
 Somente `url` e obrigatoria. `problemDescription` aceita ate 20.000 caracteres e
 pode conter sintomas, modelo/firmware e trechos de log de qualquer player. Esse
 texto e persistido como contexto relatado: nomes de eventos encontrados nele nao
 viram callbacks observados nem capability evidence.
 
+## Iniciar analise dos agentes
+
+```http
+POST /v1/investigations/:id/analysis
+```
+
+Sem body, o endpoint aceita a transicao quando a coleta chegou a
+`evidence_ready`, cria um job `investigation-analysis` e muda o caso para
+`analysis_queued`. Resposta de uma nova solicitacao: `202 Accepted`.
+
+```json
+{ "accepted": true, "started": true }
+```
+
+A operacao e idempotente por estado. Repetir enquanto a analise esta enfileirada
+ou rodando retorna `200` e `started=false`, sem criar outro job. Depois de
+`completed`, `{ "rerun": true }` cria uma nova analise sobre o snapshot atual;
+sem esse campo o report concluido continua idempotente. Antes da evidencia estar
+pronta retorna `409 EVIDENCE_NOT_READY`.
+
+O job de coleta nunca chama IA. O job de analise le a revisao mais recente de
+`evidence_snapshots`, registra cada chamada em `agent_runs` e somente entao cria o
+report final.
+
 ## State machine inicial
 
 ```text
-queued -> validating -> collecting -> analyzing -> synthesizing -> completed
-   |          |             |            |              |
-   +----------+-------------+------------+--------------+-> failed
+queued -> validating -> collecting -> evidence_ready
+   |          |             |                  |
+   +----------+-------------+------------------> failed
+                                               |
+                         POST /analysis -------+
+                                               v
+                                    analysis_queued -> analyzing -> synthesizing -> completed
 ```
 
 ## SSE
@@ -165,6 +229,10 @@ Eventos previstos no contrato:
 - `investigation.observation`;
 - `investigation.collection_limited`;
 - `investigation.evidence_found`;
+- `investigation.evidence_ready`;
+- `investigation.analysis_requested`;
+- `investigation.agent_runs_recorded`;
+- `investigation.question_asked`;
 - `investigation.hypothesis_updated`;
 - `investigation.report_ready`;
 - `investigation.failed`;
@@ -270,22 +338,51 @@ GET /v1/investigations/:id
 
 Retorna `{ "investigation": Investigation }` ou `404 INVESTIGATION_NOT_FOUND`.
 
+## Consultar evidencia deterministica
+
+```http
+GET /v1/investigations/:id/evidence
+```
+
+Retorna `{ "evidence": EvidenceBundle }` com a ultima revisao imutavel publicada
+pela coleta, sem depender da conclusao do report ou dos agentes. `mediaSamples`
+contem somente chunks/init preservados pela janela limitada; a ladder declarada
+continua em `hls.variants` ou `dash.representations`, portanto uma representacao
+sem sample nao deve ser interpretada como vazia na origem.
+
+Em coletas novas, `mediaSamples[].probe.boundary` preserva contagens completas de
+packets, video frames e GOPs, boundary samples de inicio/fim e um mapa compacto de
+GOPs. Cada GOP contem start frame, PTS inicial/final, quantidade de frames,
+indicacao de key frame e os frames observados com tipo I/P/B, PTS/DTS e duracao.
+O snapshot limita o mapa a 24 GOPs e 360 frames por GOP; `totalGopCount`,
+`frameCount` e `truncated` mantem essa cobertura explicita. O artifact de media
+completo permanece a fonte para um drill-down posterior. Para fMP4/HEVC, o probe
+tambem pode expor samples de boundary e classificacao de random access
+IDR/CRA/BLA ou sync sample, sem inferir tipos P/B ausentes.
+
 ## Consultar report
 
 ```http
 GET /v1/investigations/:id/report
 ```
 
-Retorna `{ "report": InvestigationReport }`. Antes da conclusao retorna
-`404 REPORT_NOT_READY`. Reports antigos da Fase 1 possuem
+Retorna `{ "report": InvestigationReport }`. Antes da conclusao explicita da
+analise dos agentes retorna `404 REPORT_NOT_READY`; `evidence_ready` possui
+snapshot consultavel, mas ainda nao possui report. Reports antigos da Fase 1 possuem
 `placeholder=true`. A coleta de manifest da Fase 2 produz `placeholder=false`,
 `generatedBy=deterministic-manifest-v2` e um `EvidenceBundle` v2 com source,
 manifests, media samples, observations e limitations. Reports anteriores com
 `generatedBy=deterministic-manifest-v1` e `EvidenceBundle` v1 continuam aceitos.
-Para masters HLS, o bundle inclui `hls.variants`, `hls.renditions` e
-`hls.selection`. `manifests` pode conter os logical keys `manifest/root`,
-`manifest/variant/0` e `manifest/rendition/audio/0`. A selecao atual usa maior
-bandwidth e no maximo uma rendition de audio vinculada. O report mais recente usa
+Para masters HLS, o bundle inclui `hls.variants`, `hls.renditions`,
+`hls.selection` e `hls.topology`. `manifests` pode conter os logical keys
+`manifest/root`, `manifest/variant/<indice>` (playlist de cada variant da
+ladder, ate 8) e `manifest/rendition/audio/0`. A selecao usa maior bandwidth e
+no maximo uma rendition de audio vinculada. A amostragem de media cobre a
+variant selecionada e sua vizinha de menor bandwidth, dentro de uma janela
+compartilhada; `hls.selection.sampledVariants` lista as variants preservadas.
+`hls.topology` resume por variant os fatos declarados (segment count,
+targetDuration, discontinuities e end list), permitindo comparar o alinhamento
+da ladder sem baixar media de todas as rungs. O report mais recente usa
 `generatedBy=deterministic-media-v1`: alem dos manifests, `mediaSamples` pode
 trazer init/media artifacts, sequencia, duracao declarada e o resultado
 estruturado do FFprobe (container, tracks, codecs e timestamps). O modo default
@@ -295,6 +392,27 @@ existir; sem horario, a janela parte do inicio. O modo `sample` baixa somente
 inicio/meio/fim. Os limites de bytes funcionam como redes de seguranca. A coleta
 e limitada e nao representa uma simulacao completa de playback.
 
+Cada manifest preservado e cada media sample podem carregar `http` opcional com
+fatos de rede observados durante a coleta: `latencyMs`, `firstByteMs`,
+`redirectCount`/`redirectChain` e headers finais (`server`, `cacheControl`,
+`etag`, `via`). Os campos sao opcionais e snapshots antigos sem esses dados
+continuam legiveis.
+
+Media samples tambem podem carregar `probe.structural` (sanidade MPEG-TS:
+sync errors, PAT/PMT/PCR, continuities e truncamento), `probe.fmp4.init.drm`
+(classificado como widevine/playready/fairplay/clearkey) e, em `abr.capability`,
+a projecao do decoder necessario por rung da ladder. O bundle pode ainda incluir
+`timeline` com fatos de continuidade entre chunks contiguos (gaps/overlaps de
+apresentacao por variante/audio). Todos opcionais.
+
+Durante a analise dos agentes, o worker pode anexar `evidence.playbackSwitches`:
+`AbrSwitchEvidence` com `evidenceBasis=PLAYBACK_NETWORK_OBSERVED` proveniente do
+journal de playback runs de recordings relacionados via Experiments
+(`experiments.investigation_id` -> `experiment_clones.recording_id` ->
+`playback_runs`). So dados ja persistidos no journal sao usados; nada e
+inventado. Esses switches entram no pacote do ABR Quality Investigator como
+transicoes observadas, distintas dos candidatos estaticos.
+
 Reports novos tambem incluem `evidence.abr` (`AbrAssessment` schema v1):
 `protocol`, `verdict`, `reportedPriority`, `coverage`, `ladder`, `findings`,
 `transitions`, `transitionMatrix` e `recommendedMeasurements`. O baseline usa a
@@ -302,15 +420,17 @@ ladder declarada completa. `NO_ISSUE_DETECTED` significa apenas que nenhuma
 anomalia foi encontrada dentro da cobertura descrita; nao comprova playback,
 decode ou render perfeitos. Reports historicos sem `abr` continuam aceitos.
 
-Quando `VIDEO_HARNESS_AI_API_KEY` esta configurada, o mesmo report pode incluir
-`content.ai`, com findings, recomendacoes e execucoes dos especialistas Pi. Todo
+Quando `VIDEO_HARNESS_AI_API_KEY` esta configurada, o report iniciado por
+`POST /analysis` pode incluir `content.ai`, com findings, recomendacoes e
+execucoes dos especialistas Pi. Todo
 finding de IA referencia apenas IDs presentes na evidencia serializada; sem chave
 o report deterministico continua sendo concluido com a limitacao correspondente.
 
 ### Auditoria de prompts de IA
 
 `GET /v1/investigations/:id/ai-runs` retorna `{ "runs": AiPromptAudit[] }`
-depois que o primeiro report estiver pronto. Cada item representa uma chamada
+depois que os agentes executarem. Antes de `POST /analysis`, retorna uma lista
+vazia. Cada item representa uma chamada
 efetiva ao modelo, inclusive retries, e contem `agentId`, `attempt`,
 `provider`, `model`, `systemPrompt`, `prompt`, `toolNames`, `toolCalls` e o estado publico da
 tentativa. O campo `prompt` e o pacote exato de contexto e evidencia fornecido
@@ -396,8 +516,9 @@ localhost.
 
 ## Record HLS e DASH VOD - contratos R1/R2
 
-O worker aceita HLS VOD clear/MPEG-TS com 2--8 variants e DASH VOD `static`
-clear/fMP4 com `SegmentTemplate` e 2--8 video representations. Para DASH o MPD
+O worker aceita HLS VOD clear/MPEG-TS e DASH VOD `static` clear/fMP4 com
+`SegmentTemplate`, preservando a ladder selecionada inteira ate o teto de
+seguranca configuravel de 32 video variants/representations. Para DASH o MPD
 local referencia somente init e segmentos ja registrados. Live/dynamic, DRM,
 `SegmentBase` e byte ranges falham explicitamente antes da publicacao.
 
@@ -501,10 +622,10 @@ adicionara sao:
 - `recording.failed`.
 
 Contagens publicadas representam trabalho real. Nao existe percentual estimado.
-No Record DASH, `recording.resource_retry` identifica `targetId`, tipo de
-recurso, numero do segmento quando aplicavel, error code e tentativa limitada;
-nao inclui a URL assinada. Downloads concorrentes ja iniciados sao encerrados
-antes de uma tentativa inteira liberar e recriar seu workspace.
+Em HLS e DASH, `recording.resource_retry` identifica `targetId`, tipo de recurso,
+numero do segmento quando aplicavel, error code e tentativa limitada; nao inclui
+a URL assinada. Falhas transitorias de um segmento sao repetidas localmente antes
+de uma tentativa inteira liberar e recriar seu workspace.
 
 ### Criar playback run
 
@@ -739,6 +860,8 @@ materializadores existentes:
 - `CONTROL`: preserva a ladder/media suportada ao passar pelo caminho Record;
 - `force_representation`, `single_video_representation` e `fixed_bitrate`/
   `fixed_resolution`: selecionam uma representation ja comprovada na evidencia;
+- `representation_subset`: preserva um subconjunto explicito de representations
+  e somente as renditions vinculadas, permitindo tratamentos como `AAC-ONLY`;
 - `single_audio`: somente quando mais de uma rendition vinculada torna a mudanca
   discriminante.
 
@@ -806,6 +929,11 @@ IDs opacos de representations observados no manifest podem conter `=`, como
 `video_por=7094000`. O schema preserva esse formato para DASH, mas continua
 rejeitando whitespace e metacaracteres de comando. O compiler somente aceita um
 ID que exista na evidencia deterministica da origem e nunca o interpola em shell.
+
+O Lead Investigator pode persistir `ai.validationPlan` no report com `goal`,
+`hypothesis`, `rationale`, `proofBoundary` e um treatment suportado. A UI usa
+esse plano em vez de aplicar LOW-BR a todo diagnostico. O backend volta a validar
+recipe e IDs contra a evidencia antes de criar qualquer CloneSpec.
 
 ### Criar, planejar e enfileirar
 
@@ -903,11 +1031,50 @@ agente autorizado pode transcrever uma afirmacao do usuario, mas nao existe
 endpoint que invente observacao; metadata/manifests permanecem dados nao
 confiaveis, nunca instrucoes.
 
-`POST /v1/experiments/:id/evaluate` monta evidencia estruturada com report
-original, CONTROL, CloneSpecs/hashes, verificacao e resultados. Retorna
-`CONCLUDED`, `MORE_TESTS_REQUIRED` ou `INCONCLUSIVE`, confidence qualitativa e
-updates por hipotese. Resultado ausente permanece `NOT_REPORTED`. Um follow-up e
-criado somente por novo `POST .../iterations`; evaluation nunca enfileira clones
+`POST /v1/experiments/:id/evaluate` valida que todos os resultados da iteracao
+foram observados e cria um job recuperavel `experiment-evaluation`. A resposta e
+`202 Accepted`; enquanto existir job `pending/running`, chamadas repetidas
+devolvem o mesmo job com `replayed=true`.
+
+```json
+{
+  "evaluationJob": {
+    "job": {
+      "id": "uuid",
+      "experimentId": "uuid",
+      "iterationId": "uuid",
+      "status": "pending",
+      "attempts": 0,
+      "maxAttempts": 3,
+      "createdAt": "2026-08-15T15:00:00.000Z"
+    },
+    "replayed": false
+  }
+}
+```
+
+O worker primeiro monta um guardrail deterministico com report original,
+CONTROL, CloneSpecs/hashes, verificacao e TestResults. Depois executa, em serie:
+
+1. `experiment-evidence-auditor`, que audita fatos, atribuicao e lacunas;
+2. `experiment-causal-analyst`, que confronta a hipotese com a variavel realmente
+   alterada e levanta mecanismos concorrentes;
+3. `experiment-lead-investigator`, que produz a sintese e um proximo teste
+   discriminante.
+
+Os agentes nao podem alterar o outcome observado, os evidence IDs, o claim
+causal maximo ou os itens `notEstablished` do guardrail. Um tratamento
+discriminante isolado atualiza a hipotese para `PARTIALLY_SUPPORTED`, nao para
+`SUPPORTED`, quando comprova somente um efeito mais estreito que a afirmacao
+causal original. Sem provider, a avaliacao deterministica permanece disponivel e
+os tres agentes aparecem como `UNAVAILABLE`, sem fingir execucao de IA.
+
+`GET /v1/experiments/:id` expoe o ultimo `evaluationJob` e cada evaluation pode
+incluir `analysis` com `observation`, `supportedClaim`, `interpretation`,
+`notEstablished`, `alternativeExplanations`, `limitations`,
+`confidenceRationale`, `nextTest`, `evidenceIds` e o resumo dos tres AgentRuns.
+O resultado final continua sendo `CONCLUDED`, `MORE_TESTS_REQUIRED` ou
+`INCONCLUSIVE`; follow-up so nasce por novo `POST .../iterations`, nunca
 automaticamente.
 
 ### Workflow curl resumido

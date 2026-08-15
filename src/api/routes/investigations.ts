@@ -1,16 +1,20 @@
 import type { FastifyInstance } from "fastify";
-import { CompletePlaybackSessionRequestSchema, CreatePlaybackSessionRequestSchema, StartInvestigationRequestSchema } from "../../contracts/investigation.js";
+import { z } from "zod";
+import { AskInvestigationQuestionRequestSchema, CompletePlaybackSessionRequestSchema, CreatePlaybackSessionRequestSchema, StartInvestigationRequestSchema } from "../../contracts/investigation.js";
 import type { PostgresPlaybackSessions } from "../../investigation/adapters/postgres-playback-session.js";
 import type { StartInvestigation } from "../../investigation/application/start-investigation.js";
 import type { InvestigationQueries } from "../../investigation/application/investigation-queries.js";
+import type { DeleteInvestigation } from "../../investigation/application/delete-investigation.js";
 import type { InvestigationEvent } from "../../investigation/domain/investigation-event.js";
 import { IdempotencyConflictError } from "../../investigation/ports/investigation-intake.js";
 import { ApiError } from "../errors.js";
 import type { ArtifactStore } from "../../investigation/ports/artifact-store.js";
+import type { AskInvestigationQuestion } from "../../investigation/ports/investigation-questions.js";
+import type { StartInvestigationAnalysis } from "../../investigation/ports/investigation-analysis.js";
 
 export function registerInvestigationRoutes(
   server: FastifyInstance,
-  dependencies: { startInvestigation: StartInvestigation; queries: InvestigationQueries; playbackSessions?: PostgresPlaybackSessions; artifactStore?: ArtifactStore },
+  dependencies: { startInvestigation: StartInvestigation; queries: InvestigationQueries; deleteInvestigation?: DeleteInvestigation; startAnalysis?: StartInvestigationAnalysis; askQuestion?: AskInvestigationQuestion; playbackSessions?: PostgresPlaybackSessions; artifactStore?: ArtifactStore },
 ): void {
   server.post<{ Body: unknown }>("/v1/investigations", async (request, reply) => {
     const parsed = StartInvestigationRequestSchema.safeParse(request.body);
@@ -49,6 +53,18 @@ export function registerInvestigationRoutes(
     return { investigation };
   });
 
+  server.get("/v1/investigations", async () => ({
+    investigations: await dependencies.queries.listInvestigations(),
+  }));
+
+  server.delete<{ Params: { id: string } }>("/v1/investigations/:id", async (request) => {
+    if (!dependencies.deleteInvestigation) throw new ApiError(503, "DELETION_UNAVAILABLE", "Investigation deletion is not configured");
+    const id = parseInvestigationId(request.params.id);
+    const result = await dependencies.deleteInvestigation(id);
+    if (!result.deleted) throw new ApiError(404, "INVESTIGATION_NOT_FOUND", "Investigation not found");
+    return { deleted: true };
+  });
+
   server.get<{ Params: { id: string } }>("/v1/investigations/:id/report", async (request) => {
     const id = parseInvestigationId(request.params.id);
     const investigation = await dependencies.queries.getInvestigation(id);
@@ -58,18 +74,45 @@ export function registerInvestigationRoutes(
     return { report };
   });
 
-  // Prompt audit is intentionally a workspace endpoint: it can contain source
-  // URLs and detailed evidence packets, so it must never be used for sharing.
-  server.get<{ Params: { id: string } }>("/v1/investigations/:id/ai-runs", async (request) => {
+  server.get<{ Params: { id: string } }>("/v1/investigations/:id/evidence", async (request) => {
+    if (!dependencies.queries.getEvidence) throw new ApiError(503, "EVIDENCE_UNAVAILABLE", "Evidence reading is not configured");
     const id = parseInvestigationId(request.params.id);
     const investigation = await dependencies.queries.getInvestigation(id);
     if (!investigation) throw new ApiError(404, "INVESTIGATION_NOT_FOUND", "Investigation not found");
-    const report = await dependencies.queries.getReport(id);
-    if (!report) throw new ApiError(404, "REPORT_NOT_READY", "AI prompt audit is available after the initial report");
-    const ai = report.content.placeholder
-      ? undefined
-      : (report.content as { ai?: { promptAudits?: unknown[] } }).ai;
-    return { runs: ai?.promptAudits ?? [] };
+    const evidence = await dependencies.queries.getEvidence(id);
+    if (!evidence) throw new ApiError(404, "EVIDENCE_NOT_READY", "Deterministic evidence is not ready");
+    return { evidence };
+  });
+
+  server.post<{ Params: { id: string }; Body: unknown }>("/v1/investigations/:id/analysis", async (request, reply) => {
+    if (!dependencies.startAnalysis) throw new ApiError(503, "ANALYSIS_UNAVAILABLE", "Agent analysis is not configured");
+    const id = parseInvestigationId(request.params.id);
+    const parsed = z.object({ rerun: z.boolean().optional() }).strict().safeParse(request.body ?? {});
+    if (!parsed.success) throw new ApiError(400, "INVALID_ANALYSIS_REQUEST", "Provide rerun as a boolean when reanalyzing a completed investigation");
+    const result = await dependencies.startAnalysis(id, parsed.data.rerun === undefined ? {} : { rerun: parsed.data.rerun });
+    if (result === "not_found") throw new ApiError(404, "INVESTIGATION_NOT_FOUND", "Investigation not found");
+    if (result === "not_ready") throw new ApiError(409, "EVIDENCE_NOT_READY", "Deterministic evidence must be ready before agent analysis starts");
+    return reply.status(result === "started" ? 202 : 200).send({ accepted: true, started: result === "started" });
+  });
+
+  server.post<{ Params: { id: string }; Body: unknown }>("/v1/investigations/:id/questions", async (request, reply) => {
+    if (!dependencies.askQuestion) throw new ApiError(503, "QUESTIONS_UNAVAILABLE", "Question storage is not configured");
+    const id = parseInvestigationId(request.params.id);
+    const parsed = AskInvestigationQuestionRequestSchema.safeParse(request.body);
+    if (!parsed.success) throw new ApiError(400, "INVALID_QUESTION", "A question between 1 and 4,000 characters is required");
+    const saved = await dependencies.askQuestion({ investigationId: id, question: parsed.data.question });
+    if (!saved) throw new ApiError(404, "INVESTIGATION_NOT_FOUND", "Investigation not found");
+    return reply.status(201).send({ ok: true });
+  });
+
+  // Prompt audit is intentionally a workspace endpoint: it can contain source
+  // URLs and detailed evidence packets, so it must never be used for sharing.
+  server.get<{ Params: { id: string } }>("/v1/investigations/:id/ai-runs", async (request) => {
+    if (!dependencies.queries.listAgentRuns) throw new ApiError(503, "AGENT_RUNS_UNAVAILABLE", "Agent run storage is not configured");
+    const id = parseInvestigationId(request.params.id);
+    const investigation = await dependencies.queries.getInvestigation(id);
+    if (!investigation) throw new ApiError(404, "INVESTIGATION_NOT_FOUND", "Investigation not found");
+    return { runs: await dependencies.queries.listAgentRuns(id) };
   });
 
   server.get<{ Params: { id: string } }>("/v1/investigations/:id/artifacts", async (request) => {

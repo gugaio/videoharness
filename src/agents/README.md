@@ -16,10 +16,24 @@ core de agentes do detalhe de provider. Nenhuma dependencia de runtime de
   `manifest-delivery`), o `abr-switch-investigator` focado em qualidade ABR e o
   `lead-investigator`.
 - Prompts de especialista e de Lead, com contratos JSON explícitos.
-- Validacao tolerante das respostas (confidence finita, findings individuais).
-- Orquestracao: especialistas com fan-out limitado a duas chamadas concorrentes,
-  retry com backoff e progresso real, depois sintese do Lead; falha de um agente
-  nao esconde os demais nem o report deterministico.
+- Validacao tolerante das respostas (confidence finita, aliases camel/snake case,
+  envelopes comuns e findings individuais), sem relaxar a exigencia de summary
+  nem as citacoes contra evidence IDs reais.
+- Orquestracao: especialistas serializados sobre a credencial compartilhada,
+  correction retry curto para contrato e backoff orientado ao tipo de erro para
+  rate limit/transientes, depois sintese do Lead; falha de um agente nao esconde
+  os demais nem o report deterministico.
+- O prompt repetido recebe resumos compactos de probes, boundaries e fragments.
+  Frames/NALs completos continuam no snapshot e so entram no contexto por
+  `inspect_preserved_sample`, evitando multiplicar tokens pela equipe inteira.
+- A especialista `manifest-delivery` recebe uma packet dedicada com o texto cru
+  dos manifests (campo `content` por logicalKey), enquanto as demais agentes
+  mantem o pacote compacto; o conteudo e preservado de forma limitada no evidence
+  bundle e removido da projecao do report.
+- A especialista `timeline-playback` recebe uma packet dedicada com as janelas
+  deterministicas de continuidade de timeline (`timeline` com gaps/overlaps por
+  variant), mantendo as demais agentes compactas; snapshots historicos sem o
+  campo sao tratados como limitacao explicita.
 - Port `AgentModelRunner` separa o core da equipe do provider LLM concreto.
 - Auditoria serializavel de cada prompt enviado, incluindo retry, provider,
   modelo e ferramentas disponibilizadas; o registro nao armazena raciocinio

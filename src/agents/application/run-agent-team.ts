@@ -1,8 +1,8 @@
 import { logger } from "../../infra/logger.js";
-import { classifyAiError, publicError } from "../domain/errors.js";
+import { aiRetryAfterMs, aiValidationIssues, classifyAiError, publicError } from "../domain/errors.js";
 import { parseLeadOutput, parseSpecialistOutput } from "../domain/parsing.js";
 import { LEAD_AGENT_ID, SPECIALIST_PROFILES } from "../domain/profiles.js";
-import { ABR_QUALITY_INVESTIGATOR_SYSTEM_PROMPT, leadPrompt, specialistPrompt } from "../domain/prompts.js";
+import { ABR_QUALITY_INVESTIGATOR_SYSTEM_PROMPT, leadPrompt, manifestDeliverySpecialistPrompt, specialistPrompt, timelinePlaybackSpecialistPrompt } from "../domain/prompts.js";
 import { buildAbrQualityAgentPacket, parseAbrQualityAgentOutput, type AbrQualityAgentOutput } from "./abr-quality-investigator-agent.js";
 import type { AbrAssessment } from "../../abr/domain/assessment.js";
 import type { AbrSwitchEvidence } from "../../abr/domain/evidence.js";
@@ -24,6 +24,14 @@ export type RunAgentTeamInput = {
   hasLab: boolean;
   evidenceIds: Set<string>;
   packet: string;
+  /** Optional dedicated packet for the manifest-delivery specialist. Keeps
+   * the shared packet compact while giving the manifest specialist the raw
+   * manifest text it needs to verify declared topology and delivery facts. */
+  manifestDeliveryPacket?: string;
+  /** Optional dedicated packet for the timeline-playback specialist. Carries
+   * the deterministic timeline continuity windows (gaps/overlaps per variant)
+   * that this specialist must analyze. */
+  timelinePlaybackPacket?: string;
   abrAssessment: AbrAssessment;
   abrTransitions: AbrSwitchEvidence[];
   onProgress?: ((update: AiAgentProgress) => Promise<void>) | undefined;
@@ -48,8 +56,16 @@ export async function runAgentTeam(input: RunAgentTeamInput): Promise<AiInvestig
       profile,
       output: await team.runOne(
         profile.id,
-        specialistPrompt(profile.label, profile.focus),
-        input.packet,
+        profile.id === "manifest-delivery"
+          ? manifestDeliverySpecialistPrompt()
+          : profile.id === "timeline-playback"
+            ? timelinePlaybackSpecialistPrompt()
+            : specialistPrompt(profile.label, profile.focus),
+        profile.id === "manifest-delivery" && input.manifestDeliveryPacket
+          ? input.manifestDeliveryPacket
+          : profile.id === "timeline-playback" && input.timelinePlaybackPacket
+            ? input.timelinePlaybackPacket
+            : input.packet,
         parseSpecialistOutput,
         input.specialistTools,
       ),
@@ -65,10 +81,10 @@ export async function runAgentTeam(input: RunAgentTeamInput): Promise<AiInvestig
       ),
     }),
   ];
-  // Provider accounts commonly allow fewer concurrent long-running generations
-  // than the team roster. A bounded fan-out avoids deterministic rate-limit
-  // failures while preserving parallelism and per-agent lifecycle events.
-  const taskResults = await runBounded(tasks, 2);
+  // The same provider credential is shared by every specialist. Serial calls
+  // avoid turning one malformed response and its correction retry into a burst
+  // that rate-limits the rest of the team.
+  const taskResults = await runBounded(tasks, 1);
   const specialistResults = taskResults.flatMap((result) => result.kind === "general" ? [result] : []);
   const abrOutput = taskResults.find((result): result is AbrResult => result.kind === "abr")?.output;
   const completed = [
@@ -92,6 +108,7 @@ export async function runAgentTeam(input: RunAgentTeamInput): Promise<AiInvestig
   }
 
   const filtered = filterSpecialist(lead, input.evidenceIds);
+  const validationPlan = validateValidationPlan(lead.validationPlan, input.abrAssessment);
   return {
     available: true,
     summary: lead.summary,
@@ -100,9 +117,24 @@ export async function runAgentTeam(input: RunAgentTeamInput): Promise<AiInvestig
     findings: filtered.findings,
     recommendations: lead.recommendations.slice(0, 6),
     limitations: filtered.limitations,
+    ...(validationPlan ? { validationPlan } : {}),
     agents: team.runs,
     promptAudits: team.promptAudits,
   };
+}
+
+function validateValidationPlan(
+  plan: import("../domain/types.js").AiValidationPlan | undefined,
+  assessment: AbrAssessment,
+): import("../domain/types.js").AiValidationPlan | undefined {
+  if (!plan) return undefined;
+  const known = new Set(assessment.ladder.representations.map((entry) => entry.id));
+  const representationIds = [...new Set(plan.treatment.representationIds)];
+  if (representationIds.some((id) => !known.has(id))) return undefined;
+  if (plan.treatment.recipe === "single_video_representation" && representationIds.length !== 1) return undefined;
+  if (plan.treatment.recipe === "representation_subset" && (representationIds.length === 0 || representationIds.length >= known.size)) return undefined;
+  if (plan.treatment.recipe === "single_audio" && representationIds.length > 0) return undefined;
+  return { ...plan, treatment: { ...plan.treatment, representationIds } };
 }
 
 export function unavailableResult(): AiInvestigationResult {
@@ -186,8 +218,9 @@ async function runStructured<T>(input: {
   model: string;
 }): Promise<T> {
   let lastError: unknown;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (attempt > 0) await delay(1_000);
+  let previousErrorType: string | undefined;
+  const failureCounts = new Map<string, number>();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     const startedAt = Date.now();
     logger.info("ai.agent_attempt_started", {
       investigationId: input.investigationId,
@@ -195,9 +228,11 @@ async function runStructured<T>(input: {
       attempt: attempt + 1,
     });
     try {
-      const retryInstruction = attempt === 0
+      const retryInstruction = previousErrorType === undefined
         ? ""
-        : "\nThis is a contract-correction retry. Check every required field and return one valid JSON object only.";
+        : isContractError(previousErrorType)
+          ? "\nThis is a contract-correction retry. Check every required field and return one valid JSON object only. Use the exact field names from the contract; arrays must remain arrays."
+          : "\nThe provider request is being retried. Return exactly the requested JSON object without markdown.";
       const prompt = `${input.prompt}${retryInstruction}`;
       const audit: AiPromptAudit = {
         agentId: input.agentId,
@@ -228,19 +263,55 @@ async function runStructured<T>(input: {
         durationMs: Date.now() - startedAt,
       });
       audit.state = "completed";
+      audit.output = output;
       return output;
     } catch (error) {
       lastError = error;
+      const errorType = classifyAiError(error);
+      const failureCount = (failureCounts.get(errorType) ?? 0) + 1;
+      failureCounts.set(errorType, failureCount);
       logger.warn("ai.agent_attempt_failed", {
         investigationId: input.investigationId,
         agentId: input.agentId,
         attempt: attempt + 1,
         durationMs: Date.now() - startedAt,
-        errorType: classifyAiError(error),
+        errorType,
+        ...(aiValidationIssues(error) ? { validationIssues: aiValidationIssues(error) } : {}),
       });
+      if (!shouldRetry(errorType, failureCount, attempt + 1)) break;
+      const delayMs = retryDelayMs(errorType, failureCount, error);
+      logger.info("ai.agent_retry_scheduled", {
+        investigationId: input.investigationId,
+        agentId: input.agentId,
+        attempt: attempt + 2,
+        errorType,
+        delayMs,
+      });
+      previousErrorType = errorType;
+      await delay(delayMs);
     }
   }
   throw lastError;
+}
+
+function shouldRetry(errorType: string, failureCount: number, totalAttempts: number): boolean {
+  if (totalAttempts >= 3) return false;
+  if (isContractError(errorType)) return failureCount < 2;
+  if (errorType === "provider_rate_limit") return failureCount < 3;
+  return ["timeout", "provider_server_error", "provider_transport"].includes(errorType) && failureCount < 2;
+}
+
+function isContractError(errorType: string): boolean {
+  return ["response_validation", "invalid_json", "empty_content"].includes(errorType);
+}
+
+function retryDelayMs(errorType: string, failureCount: number, error: unknown): number {
+  if (errorType === "provider_rate_limit") {
+    return aiRetryAfterMs(error) ?? (failureCount === 1 ? 5_000 : 15_000);
+  }
+  return errorType === "response_validation" || errorType === "invalid_json" || errorType === "empty_content"
+    ? 250
+    : 1_000;
 }
 
 async function runBounded<T>(tasks: Array<() => Promise<T>>, concurrency: number): Promise<T[]> {

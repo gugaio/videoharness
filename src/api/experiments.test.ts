@@ -36,6 +36,16 @@ describe("experiment REST routes", () => {
     await server.close();
   });
 
+  it("queues recoverable agent evaluation instead of returning a template conclusion", async () => {
+    const service = fakeService();
+    const server = build(service);
+    const response = await server.inject({ method: "POST", url: `/v1/experiments/${experimentId}/evaluate` });
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toMatchObject({ evaluationJob: { job: { status: "pending" }, replayed: false } });
+    expect(service.evaluate).toHaveBeenCalledWith(experimentId);
+    await server.close();
+  });
+
   it("accepts an observed DASH representation ID when creating an iteration", async () => {
     const service = fakeService();
     const server = build(service);
@@ -86,7 +96,7 @@ function build(experimentService: ExperimentService) {
   return buildApiServer({
     database: { check: async () => undefined },
     startInvestigation: async () => ({ created: true, investigation: { id: investigationId, sourceUrl: "https://example.test/master.m3u8", state: "completed", createdAt: "2026-08-11T00:00:00.000Z", updatedAt: "2026-08-11T00:00:00.000Z" } }),
-    investigationQueries: { getInvestigation: async () => null, getReport: async () => null, listEventsAfter: async () => [] },
+    investigationQueries: { getInvestigation: async () => null, getReport: async () => null, listEventsAfter: async () => [], listInvestigations: async () => [] },
     experimentService,
   });
 }
@@ -100,7 +110,7 @@ function fakeService(): ExperimentService {
     previewSpec: vi.fn(), expandRecipe: vi.fn(),
     createExperiment: vi.fn(async () => detail), listExperiments: vi.fn(async () => [detail]), getExperiment: vi.fn(async () => detail), getClone: vi.fn(async () => detail.clones[0]!),
     listTestRequests: vi.fn(async () => detail.testRequests), activateTestRequest: vi.fn(async () => ({ testRequest: detail.testRequests[0]!, playbackUrl: detail.testRequests[0]!.testUrl })),
-    createIteration: vi.fn(async () => detail.iterations[0]!), queueClones: vi.fn(async () => detail), submitTestResult: vi.fn(), evaluate: vi.fn(), createEnvironment: vi.fn(), listEnvironments: vi.fn(async () => []),
+    createIteration: vi.fn(async () => detail.iterations[0]!), queueClones: vi.fn(async () => detail), submitTestResult: vi.fn(), evaluate: vi.fn(async () => ({ job: { id: "119cf9db-e502-4c50-950d-a88c8f3644d9", experimentId, iterationId, status: "pending", attempts: 0, maxAttempts: 3, createdAt: "2026-08-11T00:00:00.000Z" }, replayed: false })), createEnvironment: vi.fn(), listEnvironments: vi.fn(async () => []),
   } as unknown as ExperimentService;
 }
 

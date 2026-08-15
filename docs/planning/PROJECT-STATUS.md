@@ -1,15 +1,15 @@
 # Project Status - Video Harness Space
 
-Ultima atualizacao: **2026-08-11**
+Ultima atualizacao: **2026-08-15**
 
 ## Resumo
 
-- Fase ativa: **Record R2 - DASH VOD**.
+- Fase ativa: **Investigation Workspace**.
 - Estado: **em andamento**.
 - Repositorio: novo e independente.
 - Runtime: API, worker, UI e PostgreSQL executaveis.
-- Objetivo imediato: validar em MPD real/player externo a evidencia de switch ABR
-  agora produzida por Investigate e Record.
+- Objetivo imediato: persistir hipoteses no nivel da investigation para fechar o
+  loop controlado, sem ampliar o produto para uma plataforma.
 - Investigate produz e apresenta um baseline de qualidade ABR para HLS e DASH.
 - DASH VOD esta em implementacao sobre o data plane ja comprovado.
 - Closed-loop Experiments ja usam Investigation + Record para CONTROL/treatments,
@@ -27,6 +27,7 @@ Ultima atualizacao: **2026-08-11**
 | 5 | Planejada | Hardening, deploy e validacao com usuarios |
 | Record R1 | Em andamento | HLS VOD, origem controlada e evidencia ABR por requests |
 | Record R2 | Em andamento | DASH VOD sobre a fronteira comprovada em R1 |
+| Workspace | Em andamento | Evidencia visual primeiro, agentes e loop de hipoteses |
 
 ## Entregue
 
@@ -171,9 +172,917 @@ Ultima atualizacao: **2026-08-11**
 
 ## Proximo passo recomendado
 
-Executar um smoke real do primeiro Experiment em device externo: copiar a URL uma
-vez, alternar CONTROL/LOW-BR na UI, repetir playback, registrar os dois resultados
-e avaliar sem reconfigurar o app/device.
+Persistir hipoteses no nivel da investigation e permitir que uma pergunta crie
+um pedido explicito de novo AgentRun sobre o snapshot, sem criar outro dashboard.
+
+### 2026-08-15 - Painel de agentes restaurado com auditoria completa
+
+Fases impactadas: 3, 4 e Investigation Workspace.
+
+Entrega:
+
+- o painel `Agent panel` abaixo do report volta a abrir por padrao depois de
+  `completed`, restaurando o acesso direto a auditoria por agente que o corte
+  orientado pelo estado havia recolhido em uma superficie recolhida;
+- o trilho lateral continua como seletor de especialista e o conteudo principal
+  mostra o run persistido de cada um: todas as tentativas (`Attempt N`),
+  provider/modelo, estado, `Input · evidence packet` (o pacote de evidencia
+  recebido), `System prompt`, tools disponiveis, tool calls com input e
+  resultado, e `Validated output`;
+- a mesma inspecao completa vale durante a execucao em `LiveAnalysis`, refletindo
+  os runs que terminam contra o snapshot;
+- para o `manifest-delivery`, o painel extrai do input packet a secao
+  `Manifest content sent inline` (texto cru por logicalKey), provando que o
+  conteudo dos manifests chega ao agente; verificacao no caso
+  `be1e1951-ce5c-4af9-ab31-ab5fecebb40e` confirmou os 10 manifests com `content`
+  no prompt persistido (330.183 chars), incluindo o master e as playlists de
+  variant;
+- o container web foi reconstruido e reiniciado; o bundle anterior nao exibia o
+  input packet, o que fazia parecer que o agente nao recebia o conteudo;
+- a regra de fronteira permanece: chain of thought e raciocinio bruto do modelo
+  nunca entram na auditoria nem no report compartilhavel.
+
+Arquivos-chave:
+
+- `ui/src/components/InvestigationWorkspace.tsx`;
+- `docs/ui/UI-GUIDE.md`;
+- `docs/architecture/phases/phase-investigation-workspace.md`.
+
+Validacoes:
+
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] `npm run check`;
+- [x] `npm test` - 48 arquivos, 244 testes;
+- [x] `git diff --check`;
+- [x] API `/ai-runs` devolve o prompt com `content` dos 10 manifests no caso
+  `be1e1951`;
+- [x] rebuild do container web e navegacao HTTP 200 com o bundle novo;
+- [ ] smoke visual real com um caso `completed` (depende de caso com agentes
+  persistidos no ambiente atual).
+
+Pendencias:
+
+- nenhuma especifica desta entrega.
+
+Proximo passo recomendado:
+
+- retomar a persistencia de Hypothesis no nivel da investigation.
+
+### 2026-08-15 - CONTROL full-ladder e validacao desenhada pelo Lead
+
+Fases impactadas: 3, 4, Record R1/R2 e Investigation Workspace.
+
+Entrega:
+
+- o teto de seguranca de Record passou de 8 para 32 video
+  variants/representations; CONTROL preserva toda a ladder selecionada e continua
+  limitado por duracao, bytes, recursos, SSRF e publish atomico;
+- HLS e DASH aplicam o limite depois da selecao do CloneSpec, de modo que um
+  treatment pequeno nao falha apenas porque a origem declara uma ladder maior;
+- a coleta Investigate tambem abre ate 32 playlists de variant, evitando declarar
+  a variant mais alta como selecionada sem sequer coletar seu media playlist;
+- o Lead Investigator agora devolve `validationPlan` com goal, hipotese,
+  rationale, proof boundary, recipe, label e IDs exatos de representations;
+- `representation_subset` permite tratamentos causais como `AAC-ONLY`,
+  preservando apenas as renditions vinculadas ao grupo selecionado;
+- downloads HLS de media agora repetem somente o recurso que sofreu uma falha
+  transitoria; o job nao reinicia toda a ladder depois de dezenas de variants ja
+  materializadas;
+- Validate deixou de usar LOW-BR como template universal. LOW-BR fica restrito a
+  diagnosticos de pressao de entrega; codec/audio group e representation usam
+  tratamentos proprios, e causas sem capability ficam sem plano automatico;
+- `POST /v1/investigations/:id/analysis` aceita `{ "rerun": true }` depois de
+  `completed`, mantendo chamadas comuns idempotentes;
+- a investigation `be1e1951-ce5c-4af9-ab31-ab5fecebb40e` foi reanalisada pelos
+  cinco agentes. O Lead criou a hipotese AAC versus E-AC-3 e selecionou
+  `variant-0` a `variant-4` para `AAC-ONLY`;
+- o primeiro Experiment substituto `0b3587e5-4737-40c5-be86-467a422c32eb`
+  confirmou o AAC-ONLY, mas preservou em auditoria uma falha transitoria de DNS
+  sofrida pelo CONTROL antes do retry por recurso;
+- o smoke limpo `a4b2ad29-80c4-4fee-a0df-f47c0bf31653` terminou com CONTROL
+  `READY` e verificado em 10 video variants/3 audios (120.032 s, 276 recursos) e
+  AAC-ONLY `READY` e verificado em 5 video variants/2 audios (120.12 s, 150
+  recursos). A falha DNS real em um segmento do CONTROL foi recuperada dentro da
+  mesma tentativa;
+- a URL permanente foi alternada entre os dois TestRequests: serviu 10/3 no
+  CONTROL e 5/2 no AAC-ONLY. O treatment ficou selecionado, sem registrar um
+  resultado de device que ainda nao foi observado. Os experiments anteriores
+  permanecem como historico auditavel.
+
+Arquivos-chave:
+
+- `src/agents/domain/prompts.ts`;
+- `src/agents/domain/parsing.ts`;
+- `src/agents/application/run-agent-team.ts`;
+- `src/experiment/application/clone-compiler.ts`;
+- `src/record/adapters/hls-vod-materializer.ts`;
+- `src/record/adapters/dash-vod-materializer.ts`;
+- `src/investigation/adapters/http-manifest-collector.ts`;
+- `ui/src/components/InvestigationExperiments.tsx`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 48 arquivos, 244 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] reanalise real com cinco agentes `completed` e plano `AAC-ONLY` validado
+  contra os IDs da evidencia;
+- [x] smoke real: CONTROL 10/3 e AAC-ONLY 5/2 `READY`, verificacao `PASSED` e
+  mesma URL permanente conferida para ambas as selecoes;
+- [x] API/worker/web locais atualizados; `/v1/health` respondeu `ok` com banco
+  `up` e a URL permanente continuou servindo o AAC-ONLY 5/2 apos o recreate;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- preservar a ladder inteira aumenta o tempo e o volume do clone; a proxima
+  evolucao de performance deve paralelizar targets sob um budget agregado, sem
+  remover variants silenciosamente;
+- request journal e telemetria atribuida do device continuam necessarios para
+  provar a troca AAC/E-AC-3 e o mecanismo de decode/render.
+
+Proximo passo recomendado:
+
+- reproduzir CONTROL e AAC-ONLY no mesmo AVPlay/VLC e anexar request journal,
+  eventos de buffer e erro de decoder ao TestRequest selecionado.
+
+### 2026-08-15 - Pagina de investigations com abertura e delecao completa
+
+Fases impactadas: API, dados, storage e UX Investigate.
+
+Entrega:
+
+- `GET /v1/investigations` lista os cases (mais recentes primeiro) para o
+  workspace;
+- `DELETE /v1/investigations/:id` apaga a investigation e tudo que o banco
+  cascateia (jobs, eventos, artifacts, reports, snapshots, agent runs, playback
+  sessions, shell runs, experiments e recordings vinculadas) e remove do
+  filesystem os artifacts, o workspace lab e os workspaces/recordings dos
+  experiments;
+- a limpeza de filesystem e best-effort: uma falha de disco nao transforma uma
+  delecao confirmada no banco em erro;
+- pagina `/investigations` na UI lista os cases com `Open`, `Delete` e
+  confirmacao explicita, estados, data e descricao do problema;
+- o card Investigate da home navega para a lista; o formulario da home continua
+  criando cases novos.
+
+Arquivos-chave:
+
+- `src/investigation/ports/investigation-deletion.ts`,
+  `src/investigation/adapters/postgres-investigation-deletion.ts`,
+  `src/investigation/adapters/filesystem-investigation-cleanup.ts`,
+  `src/investigation/application/delete-investigation.ts`;
+- `src/investigation/ports/investigation-query.ts`,
+  `src/investigation/adapters/postgres-investigation-query.ts`,
+  `src/investigation/application/investigation-queries.ts`;
+- `src/api/routes/investigations.ts`, `src/api/server.ts`, `src/api/index.ts`;
+- `ui/src/pages/InvestigationsPage.tsx`, `ui/src/App.tsx`,
+  `ui/src/pages/HomePage.tsx`, `ui/src/lib/api.ts`;
+- `docs/api.md`, `docs/ui/UI-GUIDE.md`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 48 arquivos, 237 testes (inclui novos testes de delete da
+  API e do service);
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] `git diff --check`;
+- [x] smoke real no Compose: investigation criada via API, artifacts e lab
+  workspace confirmados no volume, `DELETE` removeu DB (todas as tabelas) e
+  arquivos; delete repetido retornou 404;
+- [x] smoke de delecao em caso ainda em `collecting`.
+
+Pendencias:
+
+- smoke visual headless da pagina de lista (Chromium nao subiu no ambiente atual
+  por sandbox/snap);
+- rebuild do web no Compose ja feito; validar navegacao na UI real.
+
+### 2026-08-15 - Avaliacao pos-experimento por equipe de agentes
+
+Fases impactadas: 3, 4, Record/ABR e Investigation Workspace.
+
+Entrega:
+
+- o endpoint de avaliacao passou a criar um job persistido e recuperavel, em vez
+  de concluir o experimento de forma sincrona com um texto deterministico;
+- uma camada factual compara CONTROL e tratamentos, limita o escopo causal e
+  classifica `CONTROL FAIL + LOW-BR PASS` como evidencia parcial, sem transformar
+  reducao de demanda em prova de latencia de origem;
+- tres agentes especializados executam a avaliacao: Evidence Auditor, Causal
+  Analyst e Lead Experiment Investigator;
+- o contrato do Lead inclui `causalScope`, validado contra o guardrail factual
+  para rejeitar conclusoes causalmente mais fortes que os dados;
+- a migration `014_experiment_agent_evaluations.sql` persiste jobs, analise
+  estruturada, retries, lease e os estados dos agentes;
+- Validate mostra o progresso real dos agentes e apresenta observacao, suporte,
+  limites, alternativas, confianca e proximo teste antes da evidencia bruta;
+- avaliacoes antigas recebem `Reanalyze with agents`, e formularios/provenance
+  ficam recolhidos quando ja existe resultado;
+- o experimento `ae4cb20e-684d-4faa-982e-322b9f55948f` foi reanalisado no ambiente
+  local: os tres agentes concluiram, H1 ficou `PARTIALLY_SUPPORTED` e a avaliacao
+  ficou `MORE_TESTS_REQUIRED`.
+
+Arquivos-chave:
+
+- `src/experiment/application/evaluate-experiment.ts`;
+- `src/experiment/application/run-experiment-evaluation.ts`;
+- `src/experiment/adapters/pi-experiment-analysis.ts`;
+- `src/experiment/adapters/postgres-experiment-evaluation-job.ts`;
+- `src/database/migrations/014_experiment_agent_evaluations.sql`;
+- `ui/src/components/InvestigationExperiments.tsx`;
+- `ui/src/lib/api.ts`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 47 arquivos, 230 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] `git diff --check`;
+- [x] migration 014 aplicada via Docker Compose e API saudavel;
+- [x] smoke real com uma resposta HTTP 200 do provedor para cada um dos tres
+  agentes e `completedAgents: 3` no worker;
+- [x] validacao do DOM da pagina real: sintese causal visivel, nenhuma secao
+  tecnica aberta por padrao e formulario de nova validacao recolhido.
+
+Pendencias:
+
+- associar automaticamente cada TestRequest a um PlaybackRun com journal e
+  telemetria do device; sem isso a equipe avalia somente o resultado reportado e
+  a transformacao aplicada;
+- persistir o prompt audit completo desta equipe pode ser um corte posterior; a
+  analise estruturada e os estados dos agentes ja ficam persistidos.
+
+Proximo passo recomendado:
+
+- criar o PlaybackRun atribuido ao TestRequest ativo e anexar request journal e
+  telemetria observada ao snapshot entregue ao Evidence Auditor.
+
+### 2026-08-15 - Investigation Workspace reorganizado por intencao do usuario
+
+Fases impactadas: 3, 4 e Investigation Workspace.
+
+Entrega:
+
+- a navegacao do caso agora explicita `Stream data -> Diagnosis -> Validate`, com
+  Validate opcional e persistido em `?view=validate`;
+- durante a execucao Diagnosis continua mostrando atividade real; depois de
+  `completed`, abre pelo report e recolhe timeline, agentes e prompt audit em uma
+  unica superficie de auditoria;
+- findings deixaram de ser apresentados incorretamente como hipoteses; uma
+  hipotese real nasce somente dentro do Experiment;
+- `Ask the agents` virou `Question for the next analysis` e informa que apenas
+  persiste a pergunta, sem sugerir uma chamada imediata ao modelo;
+- Experiments saiu do rodape escuro e passou a compor Validate dentro da mesma
+  superficie clara do workspace;
+- Validate recebe a causa provavel como contexto, cria uma hipotese falsificavel
+  sobre CONTROL versus LOW-BR e explicita que esse tratamento nao reproduz
+  latencia de origem nem prova decode/render sem resultado do device;
+- a pagina concluida caiu de aproximadamente 4.308 px para 2.538 px no caso real,
+  com a conclusao visivel na primeira viewport e a auditoria recolhida.
+
+Arquivos-chave:
+
+- `ui/src/pages/InvestigationPage.tsx`;
+- `ui/src/components/InvestigationWorkspace.tsx`;
+- `ui/src/components/InvestigationReport.tsx`;
+- `ui/src/components/InvestigationExperiments.tsx`;
+- `docs/ui/UI-GUIDE.md`;
+- `docs/architecture/phases/phase-investigation-workspace.md`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 45 arquivos, 223 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] revisao visual real em 1440x1200 de Diagnosis e Validate pelo Chrome
+  DevTools Protocol;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- a persistencia de Hypothesis no nivel da investigation e o novo AgentRun a
+  partir de pergunta continuam como proximos cortes; esta entrega nao simula
+  nenhum dos dois.
+
+Proximo passo recomendado:
+
+- permitir que um finding/causa provavel seja promovido explicitamente a uma
+  Hypothesis persistida antes de compilar tratamentos adicionais.
+
+### 2026-08-15 - Ladder preserva as variants realmente amostradas no explorer
+
+Fases impactadas: 2, Workspace e UX Investigate.
+
+Entrega:
+
+- diagnostico: `selection.variantLogicalKey` apontava para a primeira variant
+  coletada (`manifest/variant/0`) em vez da variant selecionada por maior
+  bandwidth; o explorer ainda dependia so desse campo e ignorava
+  `sampledVariants`, entao variants com chunks preservados apareciam como
+  `Not preserved in this pass / 0 preserved`;
+- backend: `variantLogicalKey` agora aponta para a variant selecionada
+  (`manifest/variant/<variantIndex>`), mantendo `sampledVariants` como fonte de
+  verdade das variants preservadas;
+- UI: `buildLadderRows` resolve o logicalKey por variant a partir de
+  `sampledVariants` (com fallback para `variantLogicalKey`), vinculando as
+  samples preservadas as linhas corretas;
+- smoke real `e85303a1-6fe6-4b44-a1a0-a3e3dc164ca8`: variantes 3 e 4 agora
+  mostram 4 e 10 chunks preservados, respectivamente.
+
+Arquivos-chave:
+
+- `src/investigation/application/build-manifest-evidence.ts`;
+- `ui/src/components/DeterministicStreamExplorer.tsx`;
+- `src/investigation/application/run-investigation.test.ts`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] testes direcionados de `run-investigation` - 12 testes, incluindo o novo
+  caso da variant selecionada != primeira (falha sem o fix);
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- rebuild do web no Compose para o caso real refletir a correcao sem re-coleta;
+- o teste `evaluate-experiment.test.ts` falha por mudanca pre-existente no
+  working tree (avaliacao migrada para job assincrono), sem relacao com esta
+  entrega.
+
+### 2026-08-15 - Especialista de timeline recebe as janelas de continuidade
+
+Fases impactadas: 3 e Investigation Workspace.
+
+Entrega:
+
+- `evidence.timeline` (janelas deterministicas de continuidade com gaps/overlaps
+  por variant) entra no evidence index como `timeline:<key>`, permitindo que os
+  findings citem cada janela;
+- a especialista `timeline-playback` passa a receber uma packet dedicada com o
+  array `timeline` inline, enquanto as demais agentes mantem o pacote compacto;
+- prompt proprio da especialista instrui a ler as janelas deterministicas antes
+  de afirmar continuidade e a declarar limitacao quando o snapshot historico nao
+  possui o campo;
+- snapshots historicos sem `timeline` continuam validos e sao tratados como
+  limitacao explicita.
+
+Arquivos-chave:
+
+- `src/investigation/adapters/pi-investigation-ai.ts`;
+- `src/agents/application/run-agent-team.ts`;
+- `src/agents/domain/prompts.ts`;
+- `src/investigation/adapters/pi-investigation-ai.test.ts`;
+- `src/agents/README.md`;
+- `docs/architecture/README.md`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 45 arquivos, 224 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- smoke real com a especialista `timeline-playback` no provider configurado.
+
+Proximo passo recomendado:
+
+- persistir Hypothesis no nivel da investigation, mantendo as packets dedicadas
+  como fonte inline de evidencia deterministica.
+
+### 2026-08-15 - Especialista de manifesto recebe o conteudo dos manifests
+
+Fases impactadas: 3 e Investigation Workspace.
+
+Entrega:
+
+- `ManifestEvidence` agora preserva `content` com o texto cru do manifest,
+  limitado a 32.768 caracteres com marcador de truncamento explicito; snapshots
+  historicos sem o campo continuam validos;
+- a packet compartilhada continua compacta e sem o corpo dos manifests; a
+  especialista `manifest-delivery` passa a receber uma packet dedicada com
+  `evidence.manifests[].content` por logicalKey, permitindo verificar topologia,
+  atributos declarados e fatos de delivery no texto real;
+- a projecao do report remove `content` dos manifests, preservando a regra de que
+  o corpo baixado nao trafega na projecao compartilhavel;
+- prompt proprio da especialista `manifest-delivery` instrui a ler o conteudo
+  inline e a declarar limitacao quando o snapshot historico nao o possui.
+
+Arquivos-chave:
+
+- `src/investigation/domain/evidence.ts`;
+- `src/investigation/application/build-manifest-evidence.ts`;
+- `src/investigation/adapters/pi-investigation-ai.ts`;
+- `src/agents/application/run-agent-team.ts`;
+- `src/agents/domain/prompts.ts`;
+- `src/contracts/investigation.ts`;
+- `ui/src/lib/api.ts`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 45 arquivos, 223 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- smoke real com a especialista `manifest-delivery` para confirmar o uso do
+  conteudo inline no provider configurado.
+
+Proximo passo recomendado:
+
+- smoke real do fluxo de analise com manifests reais e, depois, persistir
+  Hypothesis no nivel da investigation.
+
+### 2026-08-15 - Confiabilidade da equipe de agentes
+
+Fases impactadas: 3 e Investigation Workspace.
+
+Entrega:
+
+- os quatro especialistas agora usam a credencial compartilhada em serie; uma
+  correcao de JSON nao cria mais um burst concorrente que limita os agentes
+  seguintes;
+- retries distinguem contrato, rate limit, falha transiente e erro permanente;
+  429 usa hint do provider quando existe e backoff limitado quando nao existe;
+- os parsers aceitam envelopes comuns, aliases camel/snake case, confidence
+  numerica/string e listas escalares, preservando summary obrigatorio e removendo
+  findings sem evidence IDs conhecidos;
+- o contrato ABR recebeu a mesma tolerancia controlada, com defaults conservadores
+  (`INCONCLUSIVE`/`LOW`) para campos ausentes, sem promover root cause sem citacao;
+- o pacote repetido para os modelos remove URLs e listas completas de frames/NALs;
+  contagens e boundaries compactos ficam no prompt, enquanto o detalhe completo
+  permanece no snapshot e em `inspect_preserved_sample`;
+- logs de falha de validacao registram somente paths/codigos do schema, nunca o
+  conteudo bruto ou raciocinio do modelo;
+- smoke real com evidencia sintetica minima no provider/model configurado concluiu
+  timeline, container, manifest, ABR e Lead, com cinco AgentRuns na primeira
+  tentativa, nenhum 429 e nenhum agente falho.
+
+Arquivos-chave:
+
+- `src/agents/application/run-agent-team.ts`;
+- `src/agents/domain/parsing.ts`, `errors.ts`;
+- `src/agents/application/abr-quality-investigator-agent.ts`;
+- `src/agents/adapters/pi-model-runner.ts`;
+- `src/investigation/adapters/pi-investigation-ai.ts`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 45 arquivos, 221 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] smoke real do boundary Pi com cinco agentes completos, cinco attempts e
+  zero failures;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- repetir a analise do snapshot que exibiu as falhas depois de publicar/reiniciar
+  o worker com esta versao; o smoke nao reutilizou evidencia real do usuario.
+
+Proximo passo recomendado:
+
+- publicar o worker e solicitar novamente Agent analysis no caso afetado; depois,
+  retomar a persistencia de Hypothesis no nivel da investigation.
+
+### 2026-08-15 - Report final restaurado no Investigation Workspace
+
+Fases impactadas: 3, 4 e Investigation Workspace.
+
+Entrega:
+
+- confirmada no caso `2f013658-2bc2-42f4-851e-03ca4453acf2` a existencia do
+  report persistido e valido na API; a regressao estava somente na composicao da
+  UI criada para o workspace;
+- a etapa `Agent analysis` volta a terminar com um report final visivel, agora
+  adaptado a superficie clara do workspace e sem restaurar o layout legado;
+- summary, confianca, causa provavel, recomendacoes, findings, checks
+  deterministicos e limitacoes aparecem antes de Experiments;
+- estados de carregamento e erro da consulta do report sao apresentados de forma
+  explicita, evitando que uma falha pareca ausencia silenciosa de conteudo.
+
+Arquivos-chave:
+
+- `ui/src/components/InvestigationReport.tsx`;
+- `ui/src/components/InvestigationWorkspace.tsx`;
+- `ui/src/pages/InvestigationPage.tsx`;
+- `docs/ui/UI-GUIDE.md`.
+
+Validacoes:
+
+- [x] parse do report real pela fronteira Zod da UI;
+- [x] renderizacao estatica do componente com o report real - todas as secoes
+  esperadas presentes;
+- [x] `npm run check`;
+- [x] `npm test` - 45 arquivos, 221 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] rebuild do container web local e confirmacao do bundle novo em
+  `localhost:5173`;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- nenhuma especifica desta correcao.
+
+Proximo passo recomendado:
+
+- retomar a persistencia de Hypothesis no nivel da investigation.
+
+### 2026-08-15 - Observabilidade do worker: progresso deterministico no logger
+
+Fases impactadas: 2, 3, Record R1/R2, Workspace e worker.
+
+Entrega:
+
+- o worker passou a emitir logs estruturados e seguros no stdout, em vez de
+  depender apenas do PostgreSQL/SSE: `worker.job_claimed`, `job.state_changed`
+  por estagio, `collection_limited`, `media_probe_failed`,
+  `abr_decode_tests_unavailable`, `analysis_unavailable`, `resource_retry`,
+  `evidence_ready`, `report_ready`, `recording.ready`, `playback.review_completed`
+  e `worker.job_failed`;
+- os tres workers de aplicacao (`run-investigation.ts`, `run-investigation-analysis.ts`
+  e `run-recording.ts`) e o `run-playback-review.ts` recebem um `logger`
+  opcional injetado, com default no-op que preserva os testes;
+- nenhuma URL assinada e nenhum path de request e registrado; os logs usam IDs,
+  estagios, contagens, error codes e disposicao de retry, sem linha por byte/chunk;
+- o job de coleta fecha com um sumario equivalente ao smoke: protocol,
+  `manifestCount`, `mediaSampleCount`, `probeCount`, `limitationCount` e
+  `snapshotId`, correlacionando log e SSE;
+- falhas terminam com `worker.job_failed` trazendo `code`, `retryable`,
+  `disposition` (Record) e mensagem truncada em 500 caracteres.
+
+Arquivos-chave:
+
+- `src/infra/logger.ts` (tipo `WorkerLogger`);
+- `src/investigation/application/run-investigation.ts`,
+  `run-investigation-analysis.ts`, `run-playback-review.ts`;
+- `src/record/application/run-recording.ts`;
+- `src/worker/index.ts`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 45 arquivos, 216 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- nenhuma especifica desta entrega.
+
+Proximo passo recomendado:
+
+- persistir Hypothesis no nivel da investigation, mantendo a observabilidade
+  nova como trilha de correlacao para o passe deterministico.
+
+### 2026-08-15 - Abertura visual da investigation durante a coleta
+
+Fases impactadas: Workspace e UX Investigate.
+
+Entrega:
+
+- o placeholder tecnico amarelo que abria a tela foi substituido por uma
+  composicao de investigacao em andamento integrada a folha clara do workspace;
+- headline, atividade atual e quatro marcos do passe acompanham os estados
+  persistidos e os eventos reais de `collection`, sem percentual ou prazo
+  inventado;
+- o estado inicial mantem o problema relatado visivel, comunica a fronteira
+  facts-first e diferencia conexao SSE, limitations e falha terminal;
+- a composicao e responsiva e preserva os estados `queued`, `validating`,
+  `collecting`, `evidence_ready` e `failed` enquanto o explorer ainda nao abriu.
+
+Arquivos-chave:
+
+- `ui/src/components/InvestigationWorkspace.tsx`;
+- `docs/ui/UI-GUIDE.md`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 45 arquivos, 210 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] smoke visual headless do estado `collecting` em 1440x1000 e 390x844 com
+  API/SSE mock;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- nenhuma especifica desta entrega.
+
+Proximo passo recomendado:
+
+- persistir Hypothesis no nivel da investigation, mantendo esta abertura como
+  feedback visual do passe deterministico.
+
+### 2026-08-15 - Evidencia deterministica rica e apresentacao no workspace
+
+Fases impactadas: 2, 3, Workspace, API, dados e UX Investigate.
+
+Entrega:
+
+- HTTP/network facts capturados na coleta (latencia, first-byte, redirects e
+  headers finais) agora trafegam por manifest e media sample ate o evidence
+  bundle e o report; `SafeHttpClient` mede timing real em volta do requester.
+- O coletor de manifests HLS busca as playlists de todas as variants da ladder
+  (ate 8, texto), com falha isolada por variant virando limitation; a amostragem
+  de media cobre a variant selecionada e a vizinha de menor bandwidth, dentro de
+  uma janela compartilhada, alem da rendition de audio.
+- `hls.topology` resume a topologia declarada por variant e observacoes novas
+  detectam target-duration e discontinuity mismatches; `selection.sampledVariants`
+  lista as variants preservadas.
+- Sanidade estrutural MPEG-TS deterministica por chunk (`probe.structural`):
+  sync errors, PAT/PMT/PCR, continuities e truncamento.
+- DRM classificado (`widevine`/`playready`/`fairplay`/`clearkey`) a partir dos
+  system IDs do init, com observacao e limitation explicita de ciphertext.
+- `abr.capability` projeta o decoder necessario por rung da ladder (perfil/nivel
+  AVC e HEVC, resolucao maxima) e um aviso para niveis altos (>= 5.1).
+- `timeline` reune fatos de continuidade entre chunks contiguos
+  (gaps/overlaps de apresentacao por variante/audio).
+- Correlacao de playback: o worker de analise anexa `playbackSwitches`
+  observados (`PLAYBACK_NETWORK_OBSERVED`) do journal de playback runs de
+  recordings relacionados via Experiments; somente dados persistidos sao usados.
+- O explorer deterministico apresenta os novos fatos em seccoes dedicadas
+  (`Delivery facts`, `Ladder alignment`, `Timeline continuity`, `Observed
+  playback switches`), decoder requerido e badges de DRM no header, e
+  `Container structure`/`Delivery` no inspector de chunk; tudo opcional e
+  somente quando medido.
+
+Arquivos-chave:
+
+- `src/stream-tools/safe-http-client.ts`, `ts-sanity.ts`, `isobmff.ts`;
+- `src/investigation/adapters/http-manifest-collector.ts`,
+  `http-media-sample-collector.ts`, `ffprobe-media-probe.ts`,
+  `filesystem-lab-workspace.ts`, `postgres-playback-correlation.ts`;
+- `src/investigation/application/build-manifest-evidence.ts`,
+  `run-investigation-analysis.ts`, `analyze-timeline-continuity.ts`;
+- `src/abr/application/project-decoder-capability.ts`, `src/abr/domain/assessment.ts`;
+- `src/contracts/investigation.ts`, `src/contracts/abr.ts`;
+- `ui/src/components/DeterministicStreamExplorer.tsx`, `ui/src/lib/api.ts`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 45 arquivos, 210 testes;
+- [x] `npm run build`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- smoke visual headless HLS/DASH real para conferir as novas seccoes do explorer
+  com manifests e chunks reais;
+- `InvestigationReport` nao existe mais como componente proprio; a sintese e o
+  replay continuam pela etapa de agentes e Experiments.
+
+Proximo passo recomendado:
+
+- smoke visual headless e, depois, persistir Hypothesis no nivel da
+  investigation (proximo corte do workspace).
+
+### 2026-08-14 - Coleta deterministica antes da analise dos agentes
+
+Fases impactadas: Workspace, worker, API, dados e UX Investigate.
+
+Entrega:
+
+- a investigation agora possui duas etapas reais e navegaveis: `Stream data` em
+  largura total e `Agent analysis` com agentes, timeline, hipoteses e perguntas;
+- o job inicial para em `evidence_ready` depois de persistir artifacts e um
+  `evidence_snapshot`; nenhum agente e chamado e nenhum report e criado nessa etapa;
+- `POST /v1/investigations/:id/analysis` cria de forma idempotente o segundo job,
+  muda o caso para `analysis_queued` e referencia o snapshot deterministico atual;
+- o analysis worker publica progresso real por agente, persiste prompt/tool
+  calls/output em `agent_runs` e somente entao sintetiza o report final;
+- falha terminal do segundo job preserva a evidencia e devolve o caso a
+  `evidence_ready`, em vez de inutilizar a investigation inteira;
+- Experiments aparece apenas na etapa de agentes e depois do report; o CTA de
+  replay aparece somente quando ja existe uma sintese;
+- smoke real `42361f0e-9ab1-4a1f-838e-10ac469e1c9c` confirmou a pausa em
+  `evidence_ready` com 2 manifests, 3 chunks, zero AgentRuns e report `404`; o CTA
+  abriu `?view=analysis` e iniciou as atividades reais dos especialistas;
+- o mesmo smoke concluiu com 5 agentes, 6 chamadas auditadas (um retry), 8 findings
+  e report final; repetir `POST /analysis` retornou `started=false` sem novo job;
+- novas execucoes sobre o mesmo snapshot deslocam o numero das tentativas por
+  agente, preservando audits anteriores em vez de sobrescreve-los.
+
+Arquivos-chave:
+
+- `src/investigation/application/run-investigation.ts`;
+- `src/investigation/application/run-investigation-analysis.ts`;
+- `src/investigation/adapters/postgres-investigation-analysis.ts`;
+- `src/investigation/adapters/postgres-investigation-job.ts`;
+- `src/database/migrations/013_investigation_analysis_stage.sql`;
+- `ui/src/components/InvestigationWorkspace.tsx`;
+- `ui/src/pages/InvestigationPage.tsx`;
+- `src/api/routes/investigations.ts`.
+
+Pendencias:
+
+- perguntas continuam sendo persistidas na timeline para um proximo pass; ainda
+  nao criam automaticamente um novo AgentRun;
+- Hypothesis continua projetada do report/Experiment e ainda nao e um agregado
+  proprio da investigation.
+
+Validacoes:
+
+- [x] migration 013 aplicada no PostgreSQL do Compose;
+- [x] smoke HTTP confirmou `evidence_ready`, `/evidence` disponivel,
+  `/ai-runs` vazio e `/report` indisponivel antes do CTA;
+- [x] clique real no CTA via Chromium iniciou o job e navegou para a etapa 2;
+- [x] navegacao ida/volta confirmou que Stream data nao mostra agentes,
+  hipoteses ou Experiments e que Agent analysis restaura todos eles;
+- [x] screenshots headless confirmaram as duas composicoes desktop e o report;
+- [x] `npm run check`;
+- [x] `npm test` - 41 arquivos, 190 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build`;
+- [x] `git diff --check`;
+- [x] rebuild Docker de API, worker e web; API/PostgreSQL saudaveis.
+
+Proximo passo recomendado:
+
+- persistir Hypothesis no caso e permitir que uma pergunta solicite um AgentRun
+  explicito sobre uma revisao de evidencia.
+
+### 2026-08-14 - Investigation Workspace claro e leve
+
+Fases impactadas: Workspace e UX Investigate.
+
+Entrega:
+
+- o wrapper principal do workspace agora e uma superficie clara e continua sobre
+  o shell escuro, seguindo o tom visual do `vhsdesign`;
+- agentes, explorer, timeline e hipoteses usam fundo cinza muito suave, cards
+  brancos, texto grafite e acentos violeta, azul, amber e mint;
+- ladders, chunks selecionados, lanes, GOPs e frames ganharam contraste proprio
+  para fundo claro, sem alterar seus dados ou interacoes;
+- o escopo da mudanca ficou restrito aos dois componentes do workspace, mantendo
+  a pagina e Experiments atuais sem uma refatoracao visual ampla;
+- os casos reais HLS `975ed1be-1fa5-46d3-8dce-f23fd88b4e87` e DASH
+  `c69cd0ae-c64d-4cca-b743-4dd533336948` foram renderizados novamente no Chromium
+  headless e confirmaram o layout claro com ladders e GOPs completos.
+
+Arquivos-chave:
+
+- `ui/src/components/InvestigationWorkspace.tsx`;
+- `ui/src/components/DeterministicStreamExplorer.tsx`;
+- `docs/ui/UI-GUIDE.md`.
+
+Pendencias:
+
+- o bloco Experiments ainda segue o visual escuro global e pode ser revisto em um
+  corte proprio se passar a fazer parte da mesma folha de trabalho.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 40 arquivos, 187 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build`;
+- [x] `git diff --check`;
+- [x] rebuild Docker do web e smoke visual headless HLS/DASH;
+- [x] API e PostgreSQL saudaveis; web, worker e lab ativos no Compose.
+
+Proximo passo recomendado:
+
+- persistir Hypothesis no caso e ligar sua acao ao plano de replay controlado.
+
+### 2026-08-14 - Ladder, chunks e GOPs visuais
+
+Fases impactadas: Workspace, evidencia deterministica, API e UX Investigate.
+
+Entrega:
+
+- o explorer segue a hierarquia do `vhsdesign`: root manifest e metricas, ladder
+  por representation, chunks clicaveis na propria linha e inspector expandido;
+- HLS e DASH usam a ladder declarada completa, enquanto a UI diferencia de forma
+  explicita representations preservadas e nao amostradas;
+- o inspector mostra lanes temporais, offset inicial A/V observado, GOPs
+  selecionaveis e frames I/P/B ou random access com PTS/DTS/duracao;
+- FFprobe agora projeta um resumo compacto de ate 24 GOPs e 360 frames por GOP,
+  com contagens completas e truncamento explicito;
+- o contrato de evidencia preserva `probe.boundary` e detalhes de codec ao ler o
+  snapshot do PostgreSQL; antes esses campos eram descartados pelo Zod da API;
+- o smoke real encontrou FFprobe emitindo `packets_and_frames`; o adapter agora
+  normaliza esse formato e os arrays separados antes de construir os GOPs;
+- o workspace continua simples como orquestrador e o explorer deterministico fica
+  isolado em um componente dedicado;
+- smoke HLS `975ed1be-1fa5-46d3-8dce-f23fd88b4e87`: 5 variants declaradas,
+  3 chunks 1080p preservados, 600 frames por chunk e 2--3 GOPs com I/P/B;
+- smoke DASH `c69cd0ae-c64d-4cca-b743-4dd533336948`: 6 video representations +
+  audio, 18 chunks, 6 INITs, uma representation nao amostrada explicita e GOPs
+  I/P com fallback fMP4/sync;
+- screenshots headless de ambas as paginas confirmaram ladder, coverage, lanes,
+  selecao de GOP e detalhe de frames no layout desktop.
+
+Arquivos-chave:
+
+- `ui/src/components/DeterministicStreamExplorer.tsx`;
+- `ui/src/components/InvestigationWorkspace.tsx`;
+- `src/investigation/adapters/ffprobe-media-probe.ts`;
+- `src/investigation/ports/media-sample-collector.ts`;
+- `src/contracts/investigation.ts`;
+- `ui/src/lib/api.ts`.
+
+Pendencias:
+
+- snapshots antigos usam o fallback de frame/fMP4 boundary quando ainda nao
+  possuem o mapa compacto;
+- Hypothesis e test plan continuam no agregado Experiment.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 40 arquivos, 187 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build`;
+- [x] `git diff --check`;
+- [x] rebuild Docker de API, worker e web;
+- [x] smoke API/snapshot e captura headless HLS/DASH;
+- [x] worker restaurado com a configuracao normal de IA depois do smoke.
+
+### 2026-08-14 - Primeiro corte do Investigation Workspace
+
+Fases impactadas: Workspace, API e UX Investigate.
+
+Entrega:
+
+- a tela de investigation foi reorganizada como workspace de tres colunas:
+  agentes/prompts, explorer de manifestos e chunks, e hipoteses;
+- o inspector usa somente facts preservados: tracks, PTS/DTS, contagem de frames,
+  boundary frames e fMP4/GOP quando a coleta os produziu;
+- perguntas do usuario agora sao atividades persistidas em `investigation_events`;
+  elas nao disparam uma chamada de IA implicitamente;
+- Experiments permanece como caminho real para URL estavel, replay controlado e
+  feedback ao caso.
+
+Arquivos-chave:
+
+- `ui/src/components/InvestigationWorkspace.tsx`;
+- `ui/src/pages/InvestigationPage.tsx`;
+- `src/investigation/adapters/postgres-investigation-questions.ts`;
+- `src/api/routes/investigations.ts`.
+
+Pendencias:
+
+- Hypothesis ainda pertence ao Experiment e e o proximo refactor deliberado.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 39 arquivos, 184 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build`;
+- [x] `git diff --check`.
+
+### 2026-08-14 - Snapshots e AgentRun fora do report
+
+Fases impactadas: Workspace, worker e persistencia Investigate.
+
+Entrega:
+
+- migration 012 cria `evidence_snapshots` imutaveis por investigation e
+  `agent_runs` com prompt, ferramentas e output validado;
+- a publicacao de artifacts cria o snapshot na mesma transacao; o explorer le o
+  snapshot mais recente, sem procurar metadata em um artifact arbitrario;
+- o worker persiste cada tentativa de agente contra o snapshot usado;
+- o report permanece uma projecao compartilhavel e nao duplica prompt audits.
+- corrigida a compatibilidade do build web ES2020: o selector de auditoria usa
+  indexacao comum, sem `Array.prototype.at`.
+
+Pendencias:
+
+- Hypothesis e test plan ainda pertencem ao agregado Experiment; o proximo corte
+  deve movê-los para a investigation sem criar um segundo fluxo de UI.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 39 arquivos, 184 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build`;
+- [x] `git diff --check` pendente da revisão final desta fatia.
 
 ### 2026-08-11 - Isolamento entre tentativas concorrentes do Record DASH
 

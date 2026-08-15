@@ -20,11 +20,15 @@ export class HlsVodMaterializer implements RecordingMaterializer {
   private readonly maxVariants: number;
   private readonly maxTotalBytes: number;
   private readonly maxConcurrentDownloads: number;
+  private readonly maxRequestAttempts: number;
+  private readonly retryDelayMs: number;
 
-  constructor(private readonly http: SafeHttpClient, options: { maxVariants?: number; maxTotalBytes?: number; maxConcurrentDownloads?: number } = {}) {
-    this.maxVariants = options.maxVariants ?? 8;
+  constructor(private readonly http: SafeHttpClient, options: { maxVariants?: number; maxTotalBytes?: number; maxConcurrentDownloads?: number; maxRequestAttempts?: number; retryDelayMs?: number } = {}) {
+    this.maxVariants = options.maxVariants ?? 32;
     this.maxTotalBytes = options.maxTotalBytes ?? 1_073_741_824;
     this.maxConcurrentDownloads = options.maxConcurrentDownloads ?? 3;
+    this.maxRequestAttempts = Math.max(1, Math.min(4, options.maxRequestAttempts ?? 3));
+    this.retryDelayMs = Math.max(0, Math.min(2_000, options.retryDelayMs ?? 250));
   }
 
   async materialize(input: Parameters<RecordingMaterializer["materialize"]>[0]): Promise<MaterializedRecording> {
@@ -37,12 +41,12 @@ export class HlsVodMaterializer implements RecordingMaterializer {
       .map((variant, sourceIndex) => ({ variant, sourceIndex }))
       .filter((entry): entry is { variant: HlsVariant & { url: string }; sourceIndex: number } => Boolean(entry.variant.url));
     if (sourceVariants.length < 2) throw unsupported("Record R1 requires at least two fetchable video variants for ABR");
-    if (sourceVariants.length > this.maxVariants) throw unsupported(`The HLS master exceeds the ${this.maxVariants} variant limit`);
     const requestedIds = input.job.recording.clonePlan?.selection.videoRepresentationIds;
     const variants = requestedIds
       ? sourceVariants.filter((entry) => requestedIds.includes(`variant-${entry.sourceIndex}`))
       : sourceVariants;
     if (variants.length === 0) throw unsupported("The CloneSpec did not select a fetchable HLS video variant");
+    if (variants.length > this.maxVariants) throw unsupported(`The selected HLS ladder exceeds the ${this.maxVariants} variant safety limit`);
 
     const targets: MediaTarget[] = [
       ...variants.map(({ variant: source, sourceIndex }) => ({ id: `video-${sourceIndex}`, kind: "video" as const, sourceUrl: source.url, source })),
@@ -68,7 +72,11 @@ export class HlsVodMaterializer implements RecordingMaterializer {
       const localPath = target.kind === "video" ? `variants/${target.id}/index.m3u8` : `renditions/${target.id}/index.m3u8`;
       const downloaded = await mapConcurrent(selected, this.maxConcurrentDownloads, async (selection, index) => {
         if (!selection.segment.url) throw unsupported(`The ${target.kind} playlist ${target.id} has an unresolved segment URL`);
-        const bytes = await this.http.getBytes(selection.segment.url);
+        const bytes = await this.getBytesWithRetry(selection.segment.url, input.onProgress, {
+          targetId: target.id,
+          targetKind: target.kind,
+          sourceSegment: selection.segment.sequence ?? index,
+        });
         const sequence = selection.segment.sequence ?? index;
         const segmentPath = `${path.dirname(localPath)}/segments/${sequence}.ts`;
         await writeWorkspaceFile(input.workspace.path, segmentPath, bytes.bytes);
@@ -101,6 +109,27 @@ export class HlsVodMaterializer implements RecordingMaterializer {
     await writeWorkspaceFile(input.workspace.path, "index.m3u8", masterBytes);
     resources.push(resource(input.job.recording.id, "index.m3u8", "master", masterBytes, "application/vnd.apple.mpegurl", { variantCount: variants.length, audioRenditionCount: targets.length - variants.length }));
     return { coverageSeconds: Math.min(...coverage), totalBytes, resources };
+  }
+
+  private async getBytesWithRetry(
+    url: string,
+    onProgress: Parameters<RecordingMaterializer["materialize"]>[0]["onProgress"],
+    context: { targetId: string; targetKind: "video" | "audio"; sourceSegment: number },
+  ): Promise<Awaited<ReturnType<SafeHttpClient["getBytes"]>>> {
+    for (let attempt = 1; attempt <= this.maxRequestAttempts; attempt += 1) {
+      try {
+        return await this.http.getBytes(url);
+      } catch (error) {
+        if (!(error instanceof StreamCollectionError) || !error.retryable || attempt === this.maxRequestAttempts) throw error;
+        await onProgress?.({
+          type: "recording.resource_retry",
+          message: `Retrying segment ${context.sourceSegment} for ${context.targetId} after ${error.code}.`,
+          payload: { ...context, resourceKind: "media_segment", errorCode: error.code, nextAttempt: attempt + 1, maxAttempts: this.maxRequestAttempts },
+        });
+        if (this.retryDelayMs > 0) await delay(this.retryDelayMs * attempt);
+      }
+    }
+    throw new Error("HLS resource retry loop ended unexpectedly");
   }
 }
 
@@ -188,6 +217,7 @@ async function writeWorkspaceFile(workspace: string, logicalPath: string, bytes:
 }
 
 function unsupported(message: string): StreamCollectionError { return new StreamCollectionError("UNSUPPORTED_MANIFEST", message, false); }
+function delay(ms: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function quote(value: string): string { return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`; }
 
 async function mapConcurrent<Input, Output>(values: Input[], limit: number, mapper: (value: Input, index: number) => Promise<Output>): Promise<Output[]> {

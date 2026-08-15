@@ -119,6 +119,25 @@ const AbrTransitionAssessmentSchema = EvidenceRefSchema.extend({
   findingRuleIds: z.array(z.string()),
 });
 
+export const CapabilityRepresentationSchema = z.object({
+  id: z.string(),
+  codec: z.string().optional(),
+  requiredProfile: z.string().optional(),
+  requiredLevel: z.string().optional(),
+  requiredLevelNumeric: z.number().nonnegative().optional(),
+  width: z.number().int().nonnegative().optional(),
+  height: z.number().int().nonnegative().optional(),
+});
+
+export const CapabilityProjectionSchema = z.object({
+  codecFamily: z.enum(["H264", "HEVC", "AV1", "VP9", "OTHER", "UNKNOWN"]),
+  profiles: z.array(z.string()),
+  maxRequiredLevelNumeric: z.number().nonnegative().optional(),
+  maxRequiredLevel: z.string().optional(),
+  maxResolution: z.object({ width: z.number().int().nonnegative(), height: z.number().int().nonnegative() }).optional(),
+  representations: z.array(CapabilityRepresentationSchema),
+});
+
 export const AbrAssessmentSchema = EvidenceRefSchema.extend({
   schemaVersion: z.literal(1),
   protocol: z.enum(["hls", "dash"]),
@@ -154,4 +173,5 @@ export const AbrAssessmentSchema = EvidenceRefSchema.extend({
     findingRuleIds: z.array(z.string()),
   })),
   recommendedMeasurements: z.array(z.string()),
+  capability: CapabilityProjectionSchema.optional(),
 });

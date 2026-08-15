@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildAbrAssessment } from "../../abr/application/assess-stream-abr.js";
-import { ABRQualityInvestigatorAgent, buildAbrQualityAgentPacket } from "./abr-quality-investigator-agent.js";
+import { ABRQualityInvestigatorAgent, buildAbrQualityAgentPacket, parseAbrQualityAgentOutput } from "./abr-quality-investigator-agent.js";
 
 describe("ABRQualityInvestigatorAgent", () => {
   it("sends a protocol-neutral ladder assessment even without a switch candidate", () => {
@@ -21,6 +21,44 @@ describe("ABRQualityInvestigatorAgent", () => {
     const output = await new ABRQualityInvestigatorAgent(run).investigate({ investigationId: "case-1", assessment: assessment() });
     expect(output.strongest_hypothesis.category).toBe("INCONCLUSIVE");
     expect(output.findings).toEqual([]);
+  });
+
+  it("normalizes common JSON variations while preserving evidence citations", () => {
+    const output = parseAbrQualityAgentOutput({
+      result: {
+        assessmentId: "abr-assessment:hls",
+        analysis_summary: "The declared ladder has bounded static coverage.",
+        abrQualityExplained: "No playback request sequence was observed.",
+        strongestHypothesis: {
+          category: "inconclusive",
+          confidence: 0.2,
+          hypothesis: "Playback behavior remains unobserved.",
+          evidenceIds: [],
+        },
+        findings: [{
+          ruleId: "AI_ABR_001",
+          category: "ladder topology",
+          severity: "low",
+          confidence: "medium",
+          title: "Declared ladder inspected",
+          evidenceIds: ["abr-assessment:hls"],
+          explanation: "The manifest exposes two representations.",
+        }],
+        missingEvidence: "player request sequence",
+        recommendedMeasurements: "Run a controlled playback.",
+      },
+    });
+
+    expect(output.strongest_hypothesis).toMatchObject({ category: "INCONCLUSIVE", confidence: "LOW" });
+    expect(output.findings[0]).toMatchObject({
+      rule_id: "AI_ABR_001",
+      category: "LADDER_TOPOLOGY",
+      severity: "LOW",
+      confidence: "MEDIUM",
+      evidence_ids: ["abr-assessment:hls"],
+      technical_explanation: "The manifest exposes two representations.",
+    });
+    expect(output.missing_evidence).toEqual(["player request sequence"]);
   });
 });
 

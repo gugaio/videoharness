@@ -1,4 +1,5 @@
 import type { HlsManifestSelection } from "../../stream-tools/hls-manifest.js";
+import type { HttpRequestFacts } from "../../stream-tools/safe-http-client.js";
 import type { ManifestInspection } from "../../stream-tools/manifest.js";
 import type { MediaSample } from "./media-sample-collector.js";
 import type { ReportedContext } from "../application/parse-reported-context.js";
@@ -11,6 +12,7 @@ export type Manifest = {
     finalUrl: string;
     statusCode: number;
     contentType?: string;
+    http?: HttpRequestFacts;
   };
   content: {
     bytes: Uint8Array;
@@ -40,7 +42,7 @@ export type CollectionProgress = {
   total?: number;
   limitation?: {
     errorCode: string;
-    resourceKind: "init_segment" | "media_segment" | "repeat_hash";
+    resourceKind: "init_segment" | "media_segment" | "repeat_hash" | "variant_manifest" | "rendition_manifest";
     logicalKey?: string;
     representationId?: string;
     sourceSegment?: number;

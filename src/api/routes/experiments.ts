@@ -99,9 +99,8 @@ export function registerExperimentRoutes(server: FastifyInstance, service: Exper
     return reply.status(201).send({ result });
   });
 
-  server.post<{ Params: { id: string } }>("/v1/experiments/:id/evaluate", async (request) => ({
-    evaluation: await service.evaluate(uuid(request.params.id, "INVALID_EXPERIMENT_ID")),
-  }));
+  server.post<{ Params: { id: string } }>("/v1/experiments/:id/evaluate", async (request, reply) =>
+    reply.status(202).send({ evaluationJob: await service.evaluate(uuid(request.params.id, "INVALID_EXPERIMENT_ID")) }));
 
   server.get("/v1/test-environments", async () => ({ environments: await service.listEnvironments() }));
   server.post<{ Body: unknown }>("/v1/test-environments", async (request, reply) => {

@@ -23,7 +23,7 @@ describe("stable experiment playback URL", () => {
     const server = buildApiServer({
       database: { check: async () => undefined },
       startInvestigation: async () => ({ created: true, investigation: { id: experimentId, sourceUrl: "https://example.test/master.m3u8", state: "queued", createdAt: "2026-08-11T00:00:00.000Z", updatedAt: "2026-08-11T00:00:00.000Z" } }),
-      investigationQueries: { getInvestigation: async () => null, getReport: async () => null, listEventsAfter: async () => [] },
+      investigationQueries: { getInvestigation: async () => null, getReport: async () => null, listEventsAfter: async () => [], listInvestigations: async () => [] },
       playbackRuns: { create: async () => "recording_not_ready", findById: async () => null, findLatestOpen: async () => null, finish: async () => null, recordDelivery: async () => undefined, listDeliveries: async () => [] },
       recordingStore: store,
       experimentStreams: { resolveActiveStream: async (id) => id === experimentId ? { experimentId, testRequestId: "b27d184e-b47a-4a5c-b8a6-b42152083ea9", cloneId: "4a30ea1e-1272-4f48-bbf0-7f24b84521ea", recordingId: selected, protocol: "hls" } : null },

@@ -125,6 +125,7 @@ export const cloneRecipeNames = [
   "aac_stereo",
   "single_audio",
   "single_video_representation",
+  "representation_subset",
   "fixed_bitrate",
   "fixed_resolution",
   "fixed_frame_rate",

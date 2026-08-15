@@ -3,6 +3,9 @@ import type { HealthResponse } from "../contracts/health.js";
 import type { DatabaseHealth } from "../database/client.js";
 import type { StartInvestigation } from "../investigation/application/start-investigation.js";
 import type { InvestigationQueries } from "../investigation/application/investigation-queries.js";
+import type { DeleteInvestigation } from "../investigation/application/delete-investigation.js";
+import type { AskInvestigationQuestion } from "../investigation/ports/investigation-questions.js";
+import type { StartInvestigationAnalysis } from "../investigation/ports/investigation-analysis.js";
 import type { PostgresPlaybackSessions } from "../investigation/adapters/postgres-playback-session.js";
 import { ApiError } from "./errors.js";
 import { registerInvestigationRoutes } from "./routes/investigations.js";
@@ -23,6 +26,9 @@ export type ApiServerDependencies = {
   database: DatabaseHealth;
   startInvestigation: StartInvestigation;
   investigationQueries: InvestigationQueries;
+  deleteInvestigation?: DeleteInvestigation;
+  startInvestigationAnalysis?: StartInvestigationAnalysis;
+  askInvestigationQuestion?: AskInvestigationQuestion;
   playbackSessions?: PostgresPlaybackSessions;
   artifactStore?: ArtifactStore;
   startRecording?: StartRecording;
@@ -91,6 +97,9 @@ export function buildApiServer(dependencies: ApiServerDependencies): FastifyInst
   registerInvestigationRoutes(server, {
     startInvestigation: dependencies.startInvestigation,
     queries: dependencies.investigationQueries,
+    ...(dependencies.deleteInvestigation ? { deleteInvestigation: dependencies.deleteInvestigation } : {}),
+    ...(dependencies.startInvestigationAnalysis ? { startAnalysis: dependencies.startInvestigationAnalysis } : {}),
+    ...(dependencies.askInvestigationQuestion ? { askQuestion: dependencies.askInvestigationQuestion } : {}),
     ...(dependencies.playbackSessions ? { playbackSessions: dependencies.playbackSessions } : {}),
     ...(dependencies.artifactStore ? { artifactStore: dependencies.artifactStore } : {}),
   });

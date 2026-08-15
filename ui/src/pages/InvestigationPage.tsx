@@ -1,13 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { CaseHero } from "../components/CaseHero";
-import { InvestigationFeed } from "../components/InvestigationFeed";
-import { InvestigationReportView } from "../components/InvestigationReport";
-import { PlaybackValidation } from "../components/PlaybackValidation";
-import { InvestigationExperiments } from "../components/InvestigationExperiments";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import { InvestigationWorkspace, type InvestigationWorkspaceView } from "../components/InvestigationWorkspace";
 import {
   getInvestigation,
+  getInvestigationEvidence,
   getInvestigationReport,
   InvestigationEventSchema,
   type InvestigationEvent,
@@ -15,6 +12,11 @@ import {
 
 export function InvestigationPage(): JSX.Element {
   const { investigationId = "" } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedView = searchParams.get("view");
+  const workspaceView: InvestigationWorkspaceView = requestedView === "analysis" || requestedView === "validate"
+    ? requestedView
+    : "evidence";
   const [events, setEvents] = useState<InvestigationEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const queryClient = useQueryClient();
@@ -24,13 +26,18 @@ export function InvestigationPage(): JSX.Element {
     enabled: Boolean(investigationId),
     refetchInterval: (query) => {
       const state = query.state.data?.state;
-      return state === "completed" || state === "failed" ? false : 2_000;
+      return state === "evidence_ready" || state === "completed" || state === "failed" ? false : 2_000;
     },
   });
   const report = useQuery({
     queryKey: ["investigation-report", investigationId],
     queryFn: () => getInvestigationReport(investigationId),
     enabled: investigation.data?.state === "completed",
+  });
+  const evidence = useQuery({
+    queryKey: ["investigation-evidence", investigationId],
+    queryFn: () => getInvestigationEvidence(investigationId),
+    enabled: Boolean(investigationId),
   });
 
   useEffect(() => {
@@ -42,12 +49,16 @@ export function InvestigationPage(): JSX.Element {
       try {
         const parsed = InvestigationEventSchema.safeParse(JSON.parse((rawEvent as MessageEvent<string>).data));
         if (!parsed.success) return;
+        void queryClient.invalidateQueries({ queryKey: ["investigation", investigationId] });
         setEvents((current) => {
           if (current.some((event) => event.id === parsed.data.id)) return current;
           return [...current, parsed.data].sort((left, right) => Number(left.id) - Number(right.id));
         });
         if (parsed.data.type === "investigation.report_updated" || parsed.data.type === "investigation.report_ready") {
           void queryClient.invalidateQueries({ queryKey: ["investigation-report", investigationId] });
+        }
+        if (parsed.data.type === "investigation.evidence_found") {
+          void queryClient.invalidateQueries({ queryKey: ["investigation-evidence", investigationId] });
         }
       } catch {
         // Ignore malformed transport events; persisted events remain available on reconnect.
@@ -59,7 +70,7 @@ export function InvestigationPage(): JSX.Element {
   return (
     <main className="relative min-h-screen bg-harness-bg text-harness-text">
       <AuroraBackdrop />
-      <div className="relative mx-auto w-full max-w-3xl px-5 pb-24 pt-6 sm:px-8">
+      <div className="relative mx-auto w-full max-w-[1600px] px-4 pb-24 pt-5 sm:px-6 lg:px-8">
         <header className="flex items-center justify-between">
           <Link className="group flex items-center gap-3 text-sm font-semibold" to="/">
             <span className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-sky-400/80 via-violet-500/80 to-fuchsia-500/80 font-mono text-[11px] font-bold text-white shadow-lg shadow-violet-500/20 transition group-hover:brightness-110">
@@ -87,16 +98,20 @@ export function InvestigationPage(): JSX.Element {
         )}
 
         {investigation.data && (
-          <div className="mt-8">
-            <CaseHero investigation={investigation.data} />
-            <InvestigationFeed
+          <div className="mt-6">
+            <InvestigationWorkspace
               connected={connected}
               events={events}
-              state={investigation.data.state}
+              investigation={investigation.data}
+              evidence={evidence.data}
+              report={report.data}
+              reportError={report.error}
+              reportLoading={report.isLoading}
+              view={workspaceView}
+              onViewChange={(nextView) => {
+                setSearchParams(nextView === "evidence" ? {} : { view: nextView }, { replace: true });
+              }}
             />
-            {report.data && <InvestigationReportView report={report.data} />}
-            {report.data && <PlaybackValidation investigationId={investigationId} />}
-            {report.data && <InvestigationExperiments investigationId={investigationId} />}
           </div>
         )}
       </div>

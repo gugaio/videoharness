@@ -128,7 +128,7 @@ export type Fmp4InitInspection = {
   drm: {
     schemes: Array<{ schemeType: string; schemeVersion: number }>;
     tenc: Array<{ isProtected: boolean; perSampleIvSize: number; defaultKid: string }>;
-    pssh: Array<{ systemId: string; sha256: string; size: number }>;
+    pssh: Array<{ systemId: string; sha256: string; size: number; classification: DrmSchemeName }>;
   };
   boxTypes: string[];
   structuralErrors: string[];
@@ -460,8 +460,22 @@ function parseDrm(bytes: Uint8Array, boxes: Box[], errors: string[]): Fmp4InitIn
     if (cursor + 18 > box.payloadEnd) { errors.push("tenc is truncated."); return []; }
     return [{ isProtected: bytes[cursor]! !== 0, perSampleIvSize: bytes[cursor + 1]!, defaultKid: hex(bytes.subarray(cursor + 2, cursor + 18)) }];
   });
-  const pssh = boxes.filter((box) => box.type === "pssh").flatMap((box) => box.payloadStart + 20 <= box.payloadEnd ? [{ systemId: hex(bytes.subarray(box.payloadStart + 4, box.payloadStart + 20)), sha256: createHash("sha256").update(bytes.subarray(box.start, box.end)).digest("hex"), size: box.end - box.start }] : []);
+  const pssh = boxes.filter((box) => box.type === "pssh").flatMap((box) => box.payloadStart + 20 <= box.payloadEnd ? [{ systemId: hex(bytes.subarray(box.payloadStart + 4, box.payloadStart + 20)), sha256: createHash("sha256").update(bytes.subarray(box.start, box.end)).digest("hex"), size: box.end - box.start, classification: classifyDrmSystemId(hex(bytes.subarray(box.payloadStart + 4, box.payloadStart + 20))) }] : []);
   return { schemes, tenc, pssh };
+}
+
+export type DrmSchemeName = "widevine" | "playready" | "fairplay" | "clearkey" | "unknown";
+
+const KNOWN_DRM_SYSTEM_IDS: Record<string, DrmSchemeName> = {
+  "edef8ba979d64acea3c827dcd51d21ed": "widevine",
+  "9a04f07998404286ab92e65be0885f95": "playready",
+  "94ce86fb07ff4f43adb893d2fa968ca2": "fairplay",
+  "1077efecc0b24d02ace33c1e52e2fb4b": "clearkey",
+};
+
+export function classifyDrmSystemId(systemId: string): DrmSchemeName {
+  const normalized = systemId.replace(/[^0-9a-f]/gi, "").toLowerCase();
+  return KNOWN_DRM_SYSTEM_IDS[normalized] ?? "unknown";
 }
 function parseMdhdTimescale(bytes: Uint8Array, box: Box, errors: string[]): number | undefined { const { version } = fullBox(bytes, box); const offset = box.payloadStart + (version === 1 ? 20 : 12); if (offset + 4 > box.payloadEnd) { errors.push("mdhd is truncated."); return undefined; } return u32(bytes, offset); }
 function parseHvcc(bytes: Uint8Array, errors: string[]): { nalLengthSize?: number; hevc?: HevcDecoderConfiguration } {

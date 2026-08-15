@@ -59,7 +59,11 @@ type ResultRow = {
 type EvaluationRow = {
   id: string; experiment_id: string; iteration_id: string; status: ExperimentEvaluation["status"];
   confidence: ExperimentEvaluation["confidence"]; summary: string; hypothesis_updates: unknown; evidence_bundle: unknown;
-  proposed_next_plan: unknown | null; created_at: Date;
+  analysis: unknown | null; proposed_next_plan: unknown | null; created_at: Date;
+};
+type EvaluationJobRow = {
+  id: string; status: NonNullable<ExperimentDetail["evaluationJob"]>["status"]; attempts: number; max_attempts: number;
+  error_code: string | null; error_message: string | null; created_at: Date; started_at: Date | null; completed_at: Date | null;
 };
 
 export class PostgresExperimentRepository implements ExperimentRepository {
@@ -101,7 +105,7 @@ export class PostgresExperimentRepository implements ExperimentRepository {
       `SELECT id, investigation_id, goal, status, created_by, target_environment_id, active_test_request_id, created_at, updated_at FROM experiments WHERE id = $1`, [id]);
     const row = experimentResult.rows[0];
     if (!row) return null;
-    const [hypotheses, iterations, clones, requests, results, evaluations, environments] = await Promise.all([
+    const [hypotheses, iterations, clones, requests, results, evaluations, environments, evaluationJobs] = await Promise.all([
       this.pool.query<HypothesisRow>(`SELECT * FROM hypotheses WHERE experiment_id = $1 ORDER BY created_at`, [id]),
       this.pool.query<IterationRow>(`SELECT * FROM experiment_iterations WHERE experiment_id = $1 ORDER BY iteration_number`, [id]),
       this.pool.query<CloneRow>(`SELECT * FROM experiment_clones WHERE experiment_id = $1 ORDER BY created_at`, [id]),
@@ -111,6 +115,7 @@ export class PostgresExperimentRepository implements ExperimentRepository {
       row.target_environment_id
         ? this.pool.query<EnvironmentRow>(`SELECT * FROM test_environments WHERE id = $1`, [row.target_environment_id])
         : Promise.resolve({ rows: [] as EnvironmentRow[] }),
+      this.pool.query<EvaluationJobRow>(`SELECT id, status, attempts, max_attempts, error_code, error_message, created_at, started_at, completed_at FROM experiment_evaluation_jobs WHERE experiment_id = $1 ORDER BY created_at DESC LIMIT 1`, [id]),
     ]);
     const resultByRequest = new Map(results.rows.map((entry) => [entry.test_request_id, toTestResult(entry)]));
     return {
@@ -121,6 +126,7 @@ export class PostgresExperimentRepository implements ExperimentRepository {
       clones: clones.rows.map(toClone),
       testRequests: requests.rows.map((entry) => toTestRequest(entry, resultByRequest.get(entry.id))),
       evaluations: evaluations.rows.map(toEvaluation),
+      ...(evaluationJobs.rows[0] ? { evaluationJob: toEvaluationJob(evaluationJobs.rows[0]) } : {}),
     };
   }
 
@@ -314,10 +320,11 @@ export class PostgresExperimentRepository implements ExperimentRepository {
       const locked = await client.query<{ status: Experiment["status"] }>(`SELECT status FROM experiments WHERE id = $1 FOR UPDATE`, [evaluation.experimentId]);
       if (!locked.rows[0] || (locked.rows[0].status !== "EVALUATING" && locked.rows[0].status !== "AWAITING_TESTS")) { await client.query("ROLLBACK"); return "invalid_state"; }
       const inserted = await client.query<EvaluationRow>(
-        `INSERT INTO experiment_evaluations (id, experiment_id, iteration_id, status, confidence, summary, hypothesis_updates, evidence_bundle, proposed_next_plan)
-         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb) RETURNING *`,
+        `INSERT INTO experiment_evaluations (id, experiment_id, iteration_id, status, confidence, summary, hypothesis_updates, evidence_bundle, analysis, proposed_next_plan)
+         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb) RETURNING *`,
         [evaluation.id, evaluation.experimentId, evaluation.iterationId, evaluation.status, evaluation.confidence, evaluation.summary,
           JSON.stringify(evaluation.hypothesisUpdates), JSON.stringify(evaluation.evidenceBundle),
+          evaluation.analysis ? JSON.stringify(evaluation.analysis) : null,
           evaluation.proposedNextExperimentPlan ? JSON.stringify(evaluation.proposedNextExperimentPlan) : null],
       );
       for (const update of evaluation.hypothesisUpdates) {
@@ -477,7 +484,21 @@ function toEvaluation(row: EvaluationRow): ExperimentEvaluation {
   const next = row.proposed_next_plan === null ? undefined : record(row.proposed_next_plan) as ExperimentEvaluation["proposedNextExperimentPlan"];
   return { id: row.id, experimentId: row.experiment_id, iterationId: row.iteration_id, status: row.status,
     confidence: row.confidence, summary: row.summary, hypothesisUpdates: updates, evidenceBundle: record(row.evidence_bundle),
+    ...(row.analysis ? { analysis: record(row.analysis) as NonNullable<ExperimentEvaluation["analysis"]> } : {}),
     ...(next ? { proposedNextExperimentPlan: next } : {}), createdAt: row.created_at.toISOString() };
+}
+function toEvaluationJob(row: EvaluationJobRow): NonNullable<ExperimentDetail["evaluationJob"]> {
+  return {
+    id: row.id,
+    status: row.status,
+    attempts: row.attempts,
+    maxAttempts: row.max_attempts,
+    ...optional("errorCode", row.error_code),
+    ...optional("errorMessage", row.error_message),
+    createdAt: row.created_at.toISOString(),
+    ...optional("startedAt", row.started_at?.toISOString()),
+    ...optional("completedAt", row.completed_at?.toISOString()),
+  };
 }
 function record(value: unknown): Record<string, unknown> { return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function stringArray(value: unknown): string[] { return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : []; }

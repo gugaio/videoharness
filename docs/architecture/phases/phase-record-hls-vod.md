@@ -46,7 +46,8 @@ URL HLS VOD
    composicao de producao aguardara o materializador HLS do Slice 2 antes de
    aceitar requests.**
 2. Clone HLS VOD completo e protegido. **Implementado para master clear/MPEG-TS
-   com 2--8 variants e renditions de audio vinculadas; os recursos e playlists
+   com a ladder selecionada completa, ate o teto de seguranca de 32 variants, e
+   renditions de audio vinculadas; os recursos e playlists
    locais sao registrados antes de marcar o recording como pronto.**
 3. Data plane com URL fixa e recursos publicados. **Implementado para GET:
    `/streams/recordings/:recordingId/*` e estavel por recording; cada request

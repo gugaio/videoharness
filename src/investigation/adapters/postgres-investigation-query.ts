@@ -1,8 +1,10 @@
 import type pg from "pg";
-import { InvestigationReportContentSchema } from "../../contracts/investigation.js";
+import { EvidenceBundleV2Schema, EvidenceBundleV3Schema, InvestigationReportContentSchema } from "../../contracts/investigation.js";
+import type { AgentId, AiPromptAudit } from "../../agents/domain/types.js";
 import type { InvestigationEvent } from "../domain/investigation-event.js";
 import type { InvestigationReport, InvestigationReportContent } from "../domain/investigation-report.js";
 import type { Investigation } from "../domain/investigation.js";
+import type { EvidenceBundleV2, EvidenceBundleV3 } from "../domain/evidence.js";
 import type { InvestigationArtifact, InvestigationQueryRepository } from "../ports/investigation-query.js";
 
 type InvestigationRow = {
@@ -34,6 +36,8 @@ type InvestigationReportRow = {
   updated_at: Date;
 };
 type ArtifactRow = { id: string; logical_key: string; kind: string; storage_key: string; content_type: string | null; size_bytes: number | null; created_at: Date };
+type EvidenceRow = { evidence: unknown };
+type AgentRunRow = { agent_id: AgentId; attempt: number; state: "completed" | "failed"; provider: string; model: string; system_prompt: string; prompt: string; tool_names: unknown; tool_calls: unknown; output: unknown };
 
 function toInvestigation(row: InvestigationRow): Investigation {
   return {
@@ -58,6 +62,17 @@ export class PostgresInvestigationQuery implements InvestigationQueryRepository 
       [id],
     );
     return result.rows[0] ? toInvestigation(result.rows[0]) : null;
+  }
+
+  async list(limit = 100): Promise<Investigation[]> {
+    const result = await this.pool.query<InvestigationRow>(
+      `SELECT id, source_url, problem_description, state, created_at, updated_at, completed_at
+         FROM investigations
+        ORDER BY created_at DESC
+        LIMIT $1`,
+      [Math.max(1, Math.min(500, limit))],
+    );
+    return result.rows.map(toInvestigation);
   }
 
   async listEventsAfter(investigationId: string, afterEventId: string, limit: number): Promise<InvestigationEvent[]> {
@@ -100,6 +115,45 @@ export class PostgresInvestigationQuery implements InvestigationQueryRepository 
       : null;
   }
 
+  async findEvidence(investigationId: string): Promise<EvidenceBundleV2 | EvidenceBundleV3 | null> {
+    const result = await this.pool.query<EvidenceRow>(
+      `SELECT evidence
+         FROM evidence_snapshots
+        WHERE investigation_id = $1
+        ORDER BY revision DESC
+        LIMIT 1`,
+      [investigationId],
+    );
+    const evidence = result.rows[0]?.evidence;
+    if (!evidence || typeof evidence !== "object") return null;
+    const schemaVersion = (evidence as { schemaVersion?: unknown }).schemaVersion;
+    if (schemaVersion === 2) return EvidenceBundleV2Schema.parse(evidence) as EvidenceBundleV2;
+    if (schemaVersion === 3) return EvidenceBundleV3Schema.parse(evidence) as EvidenceBundleV3;
+    return null;
+  }
+
+  async listAgentRuns(investigationId: string): Promise<AiPromptAudit[]> {
+    const result = await this.pool.query<AgentRunRow>(
+      `SELECT agent_id, attempt, state, provider, model, system_prompt, prompt, tool_names, tool_calls, output
+         FROM agent_runs
+        WHERE investigation_id = $1
+        ORDER BY created_at, agent_id, attempt`,
+      [investigationId],
+    );
+    return result.rows.map((row) => ({
+      agentId: row.agent_id,
+      attempt: row.attempt,
+      state: row.state,
+      provider: row.provider,
+      model: row.model,
+      systemPrompt: row.system_prompt,
+      prompt: row.prompt,
+      toolNames: stringArray(row.tool_names),
+      toolCalls: toolCalls(row.tool_calls),
+      ...(row.output === null ? {} : { output: row.output }),
+    }));
+  }
+
   async listArtifacts(investigationId: string): Promise<InvestigationArtifact[]> {
     const result = await this.pool.query<ArtifactRow>(`SELECT id, logical_key, kind, storage_key, content_type, size_bytes, created_at FROM artifacts WHERE investigation_id=$1 ORDER BY logical_key`, [investigationId]);
     return result.rows.map(toArtifact);
@@ -112,3 +166,14 @@ export class PostgresInvestigationQuery implements InvestigationQueryRepository 
 }
 
 function toArtifact(row: ArtifactRow): InvestigationArtifact { return { id: row.id, logicalKey: row.logical_key, kind: row.kind, storageKey: row.storage_key, ...(row.content_type ? { contentType: row.content_type } : {}), ...(row.size_bytes === null ? {} : { sizeBytes: row.size_bytes }), createdAt: row.created_at.toISOString() }; }
+function stringArray(value: unknown): string[] { return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : []; }
+function toolCalls(value: unknown): AiPromptAudit["toolCalls"] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (entry === null || typeof entry !== "object") return [];
+    const call = entry as Record<string, unknown>;
+    return typeof call.name === "string" && typeof call.input === "string" && typeof call.output === "string"
+      ? [{ name: call.name, input: call.input, output: call.output }]
+      : [];
+  });
+}

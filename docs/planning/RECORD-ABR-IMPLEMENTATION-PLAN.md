@@ -62,7 +62,9 @@ do player, nao afirma que essa representation foi decodificada ou renderizada.
 Defaults configuraveis, sempre sujeitos a hard caps no backend:
 
 - janela default 120 s, maximo 600 s;
-- ate 8 variants e 8 renditions vinculadas;
+- ladder selecionada completa, ate 32 variants/representations como teto de
+  seguranca; renditions vinculadas continuam sujeitas aos budgets de recursos e
+  bytes;
 - manifest: 1 MiB por response;
 - media/init: 64 MiB por response;
 - recording: 1 GiB agregado;
@@ -98,6 +100,9 @@ Campos minimos:
 
 Um retry pode reconstruir o workspace temporario, mas somente publica um recording
 quando manifests, recursos e metadata estiverem consistentes.
+HLS e DASH repetem falhas transitorias de media no nivel do recurso antes de
+consumir uma nova tentativa do job inteiro; cada retry continua limitado e
+observavel sem registrar a URL assinada.
 
 ### RecordedResource
 

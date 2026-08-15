@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StreamCollectionError } from "../../stream-tools/errors.js";
 import type { InvestigationJobRepository } from "../ports/investigation-job.js";
-import type { InvestigationAI } from "../ports/investigation-ai.js";
 import { createInvestigationWorker } from "./run-investigation.js";
 
 const claimedJob = {
@@ -18,12 +17,20 @@ const claimedJob = {
 function createRepository(): InvestigationJobRepository {
   return {
     claimNext: vi.fn(async () => claimedJob),
+    claimNextAnalysis: vi.fn(async () => null),
     heartbeat: vi.fn(async () => true),
     transition: vi.fn(async () => undefined),
-    recordEvidenceBatch: vi.fn(async () => ({ supersededStorageKeys: [] })),
+    recordEvidenceBatch: vi.fn(async () => ({ snapshotId: "8dc67e09-4b25-4fe5-a69a-58f896fb5197", supersededStorageKeys: [] })),
+    recordAgentRuns: vi.fn(async () => undefined),
+    loadLatestEvidence: vi.fn(async () => null),
+    completeCollection: vi.fn(async () => undefined),
     complete: vi.fn(async () => undefined),
     fail: vi.fn(async () => "retrying" as const),
   };
+}
+
+function createLogger() {
+  return { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 }
 
 const collector = {
@@ -56,7 +63,7 @@ describe("investigation worker", () => {
     vi.clearAllMocks();
   });
 
-  it("persists manifest evidence and completes with a deterministic report", async () => {
+  it("persists manifest evidence and stops when deterministic evidence is ready", async () => {
     const repository = createRepository();
     const worker = createInvestigationWorker({
       repository, collector, artifactStore, workerId: "worker-test", leaseMs: 30_000,
@@ -64,12 +71,10 @@ describe("investigation worker", () => {
 
     await expect(worker.runNext()).resolves.toBe(true);
 
-    expect(repository.transition).toHaveBeenCalledTimes(4);
+    expect(repository.transition).toHaveBeenCalledTimes(2);
     expect(vi.mocked(repository.transition).mock.calls.map((call) => call[3].state)).toEqual([
       "validating",
       "collecting",
-      "analyzing",
-      "synthesizing",
     ]);
     expect(repository.recordEvidenceBatch).toHaveBeenCalledOnce();
     expect(repository.recordEvidenceBatch).toHaveBeenCalledWith(
@@ -80,13 +85,12 @@ describe("investigation worker", () => {
       expect.objectContaining({ schemaVersion: 2, manifests: expect.any(Array), mediaSamples: [] }),
       expect.objectContaining({ type: "investigation.evidence_found" }),
     );
-    expect(repository.complete).toHaveBeenCalledWith(
+    expect(repository.completeCollection).toHaveBeenCalledWith(
       claimedJob.id,
       "worker-test",
-      expect.any(String),
-      expect.objectContaining({ placeholder: false, generatedBy: "deterministic-media-v1" }),
-      expect.objectContaining({ type: "investigation.report_ready" }),
+      expect.objectContaining({ type: "investigation.evidence_ready", payload: expect.objectContaining({ state: "evidence_ready" }) }),
     );
+    expect(repository.complete).not.toHaveBeenCalled();
     expect(repository.fail).not.toHaveBeenCalled();
   });
 
@@ -133,7 +137,7 @@ describe("investigation worker", () => {
 
     const events = vi.mocked(repository.transition).mock.calls.map((call) => call[3]);
     const states = events.map((transition) => transition.state);
-    expect(states).toEqual(["validating", "collecting", "collecting", "collecting", "collecting", "collecting", "analyzing", "synthesizing"]);
+    expect(states).toEqual(["validating", "collecting", "collecting", "collecting", "collecting", "collecting"]);
     const progressEvents = events
       .filter((transition) => transition.event.payload.stage === "collection")
       .map((transition) => transition.event.payload);
@@ -143,7 +147,7 @@ describe("investigation worker", () => {
       { state: "collecting", stage: "collection", collectionStage: "media_sample", completed: 0, total: 2 },
       { state: "collecting", stage: "collection", collectionStage: "media_sample", completed: 1, total: 2 },
     ]);
-    expect(repository.complete).toHaveBeenCalledOnce();
+    expect(repository.completeCollection).toHaveBeenCalledOnce();
   });
 
   it("returns idle without fabricating lifecycle events when no job is available", async () => {
@@ -155,7 +159,7 @@ describe("investigation worker", () => {
 
     await expect(worker.runNext()).resolves.toBe(false);
     expect(repository.transition).not.toHaveBeenCalled();
-    expect(repository.complete).not.toHaveBeenCalled();
+    expect(repository.completeCollection).not.toHaveBeenCalled();
   });
 
   it("returns a failed execution to the repository retry policy", async () => {
@@ -173,7 +177,7 @@ describe("investigation worker", () => {
       "database interrupted",
       true,
     );
-    expect(repository.complete).not.toHaveBeenCalled();
+    expect(repository.completeCollection).not.toHaveBeenCalled();
   });
 
   it("does not retry a destination blocked by the network policy", async () => {
@@ -313,6 +317,93 @@ describe("investigation worker", () => {
     );
   });
 
+  it("points the HLS selection to the highest-bandwidth variant, not the first collected", async () => {
+    const repository = createRepository();
+    const ladderCollector = {
+      collect: vi.fn(async () => ({
+        manifests: [
+          {
+            logicalKey: "manifest/root",
+            role: "root" as const,
+            source: {
+              requestedUrl: claimedJob.investigation.sourceUrl,
+              finalUrl: claimedJob.investigation.sourceUrl,
+              statusCode: 200,
+            },
+            content: { bytes: new TextEncoder().encode("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nlow.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2000\nhigh.m3u8") },
+            inspection: {
+              protocol: "hls" as const,
+              kind: "master" as const,
+              variantCount: 2,
+              hls: {
+                kind: "master" as const,
+                variants: [
+                  { index: 0, uri: "low.m3u8", url: "https://example.test/live/low.m3u8", bandwidth: 1_000 },
+                  { index: 1, uri: "high.m3u8", url: "https://example.test/live/high.m3u8", bandwidth: 2_000 },
+                ],
+                renditions: [],
+                segmentCount: 0,
+                discontinuityCount: 0,
+                hasEndList: false,
+              },
+            },
+          },
+          {
+            logicalKey: "manifest/variant/0",
+            role: "variant" as const,
+            source: { requestedUrl: "https://example.test/live/low.m3u8", finalUrl: "https://example.test/live/low.m3u8", statusCode: 200 },
+            content: { bytes: new TextEncoder().encode("#EXTM3U\n#EXTINF:4,\nlow.ts") },
+            inspection: { protocol: "hls" as const, kind: "media" as const, segmentCount: 1, hls: { kind: "media" as const, variants: [], renditions: [], segmentCount: 1, discontinuityCount: 0, hasEndList: false } },
+          },
+          {
+            logicalKey: "manifest/variant/1",
+            role: "variant" as const,
+            source: { requestedUrl: "https://example.test/live/high.m3u8", finalUrl: "https://example.test/live/high.m3u8", statusCode: 200 },
+            content: { bytes: new TextEncoder().encode("#EXTM3U\n#EXTINF:4,\nhigh.ts") },
+            inspection: { protocol: "hls" as const, kind: "media" as const, segmentCount: 1, hls: { kind: "media" as const, variants: [], renditions: [], segmentCount: 1, discontinuityCount: 0, hasEndList: false } },
+          },
+        ],
+        hlsSelection: {
+          rule: "highest-bandwidth" as const,
+          variant: { index: 1, uri: "high.m3u8", url: "https://example.test/live/high.m3u8", bandwidth: 2_000 },
+        },
+        mediaSamples: [{
+          logicalKey: "sample/variant/1/media/0",
+          kind: "media-segment" as const,
+          sourceManifestLogicalKey: "manifest/variant/1",
+          sampleIndex: 0,
+          content: { bytes: new TextEncoder().encode("segment") },
+        }],
+      })),
+    };
+    const worker = createInvestigationWorker({
+      repository,
+      collector: ladderCollector,
+      artifactStore,
+      workerId: "worker-test",
+      leaseMs: 30_000,
+    });
+
+    await expect(worker.runNext()).resolves.toBe(true);
+
+    expect(repository.recordEvidenceBatch).toHaveBeenCalledWith(
+      claimedJob.id,
+      "worker-test",
+      30_000,
+      expect.anything(),
+      expect.objectContaining({
+        hls: expect.objectContaining({
+          selection: expect.objectContaining({
+            variantIndex: 1,
+            variantLogicalKey: "manifest/variant/1",
+            sampledVariants: [{ index: 1, logicalKey: "manifest/variant/1" }],
+          }),
+        }),
+      }),
+      expect.anything(),
+    );
+  });
+
   it("removes a stored file when artifact metadata cannot be committed", async () => {
     const repository = createRepository();
     vi.mocked(repository.recordEvidenceBatch).mockRejectedValueOnce(new Error("artifact transaction failed"));
@@ -334,6 +425,7 @@ describe("investigation worker", () => {
   it("removes the superseded artifact only after the replacement metadata is committed", async () => {
     const repository = createRepository();
     vi.mocked(repository.recordEvidenceBatch).mockResolvedValueOnce({
+      snapshotId: "8dc67e09-4b25-4fe5-a69a-58f896fb5197",
       supersededStorageKeys: ["artifacts/case/previous.m3u8"],
     });
     const worker = createInvestigationWorker({
@@ -344,70 +436,7 @@ describe("investigation worker", () => {
 
     expect(artifactStore.remove).toHaveBeenCalledWith("artifacts/case/previous.m3u8");
     expect(artifactStore.remove).not.toHaveBeenCalledWith("artifacts/case/manifest.m3u8");
-    expect(repository.complete).toHaveBeenCalledOnce();
-  });
-
-  it("publishes real per-agent progress events while the AI analysis runs", async () => {
-    const repository = createRepository();
-    const ai: InvestigationAI = {
-      investigate: async (input) => {
-        await input.onProgress?.({ agent: "timeline-playback", stage: "started", completed: 0, total: 4 });
-        await input.onProgress?.({ agent: "timeline-playback", stage: "completed", completed: 1, total: 4 });
-        await input.onProgress?.({
-          agent: "container-encoding",
-          stage: "failed",
-          completed: 2,
-          total: 4,
-          limitation: "The AI analysis timed out after retry.",
-        });
-        return {
-          available: true,
-          findings: [],
-          recommendations: [],
-          limitations: [],
-          agents: [
-            { id: "timeline-playback", state: "completed" },
-            { id: "container-encoding", state: "failed" },
-            { id: "manifest-delivery", state: "completed" },
-            { id: "lead-investigator", state: "completed" },
-          ],
-          promptAudits: [],
-        };
-      },
-    };
-    const worker = createInvestigationWorker({
-      repository, collector, artifactStore, ai, workerId: "worker-test", leaseMs: 30_000,
-    });
-
-    await expect(worker.runNext()).resolves.toBe(true);
-
-    const events = vi.mocked(repository.transition).mock.calls.map((call) => call[3].event);
-    const progressEvents = events.filter((event) => event.payload.stage === "ai_agent");
-    expect(progressEvents).toEqual([
-      {
-        type: "investigation.observation",
-        actor: "timeline-playback",
-        message: "Timeline & Playback analysis started.",
-        payload: { state: "analyzing", stage: "ai_agent", agent: "timeline-playback", agentStage: "started", completed: 0, total: 4 },
-      },
-      {
-        type: "investigation.observation",
-        actor: "timeline-playback",
-        message: "Timeline & Playback analysis complete.",
-        payload: { state: "analyzing", stage: "ai_agent", agent: "timeline-playback", agentStage: "completed", completed: 1, total: 4 },
-      },
-      {
-        type: "investigation.observation",
-        actor: "container-encoding",
-        message: "Container & Encoding analysis could not complete: The AI analysis timed out after retry.",
-        payload: { state: "analyzing", stage: "ai_agent", agent: "container-encoding", agentStage: "failed", completed: 2, total: 4 },
-      },
-    ]);
-    const aiSpecialistsIndex = events.findIndex((event) => event.payload.stage === "ai_specialists");
-    const aiCompleteIndex = events.findIndex((event) => event.payload.stage === "ai_complete");
-    expect(aiSpecialistsIndex).toBeGreaterThan(-1);
-    expect(aiCompleteIndex).toBeGreaterThan(aiSpecialistsIndex + progressEvents.length);
-    expect(repository.complete).toHaveBeenCalledOnce();
+    expect(repository.completeCollection).toHaveBeenCalledOnce();
   });
 
   it("renews the lease while a lifecycle stage is still running", async () => {
@@ -434,6 +463,77 @@ describe("investigation worker", () => {
     expect(repository.heartbeat).toHaveBeenCalledWith(claimedJob.id, "worker-test", 3_000);
     releaseStage?.();
     await execution;
-    expect(repository.complete).toHaveBeenCalledOnce();
+    expect(repository.completeCollection).toHaveBeenCalledOnce();
+  });
+
+  it("logs claimed, stage changes and evidence_ready without logging the source URL", async () => {
+    const repository = createRepository();
+    const logger = createLogger();
+    const worker = createInvestigationWorker({
+      repository, collector, artifactStore, workerId: "worker-test", leaseMs: 30_000, logger,
+    });
+
+    await expect(worker.runNext()).resolves.toBe(true);
+
+    expect(logger.info).toHaveBeenCalledWith("worker.job_claimed", expect.objectContaining({
+      jobId: claimedJob.id,
+      jobKind: "investigation",
+      investigationId: claimedJob.investigation.id,
+      attempt: 1,
+      maxAttempts: 3,
+    }));
+    expect(logger.info).toHaveBeenCalledWith("investigation.state_changed", expect.objectContaining({ state: "validating" }));
+    expect(logger.info).toHaveBeenCalledWith("investigation.state_changed", expect.objectContaining({ state: "collecting" }));
+    expect(logger.info).toHaveBeenCalledWith("investigation.evidence_ready", expect.objectContaining({
+      protocol: "hls",
+      manifestCount: 1,
+      mediaSampleCount: 0,
+      probeCount: 0,
+      snapshotId: "8dc67e09-4b25-4fe5-a69a-58f896fb5197",
+    }));
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(JSON.stringify(logger.info.mock.calls)).not.toContain("example.test");
+  });
+
+  it("logs collection limitations and terminal failures as structured events", async () => {
+    const repository = createRepository();
+    const logger = createLogger();
+    const progressCollector = {
+      collect: vi.fn(async (_url: string, onProgress?: (p: {
+        stage: string;
+        message: string;
+        limitation?: { errorCode: string; resourceKind: string; logicalKey?: string };
+      }) => Promise<void>) => {
+        await onProgress?.({
+          stage: "media_sample",
+          message: "A media segment could not be sampled.",
+          limitation: { errorCode: "STREAM_REQUEST_TIMEOUT", resourceKind: "media_segment", logicalKey: "manifest/variant/0" },
+        });
+        throw new StreamCollectionError("STREAM_DESTINATION_BLOCKED", "The stream destination is not a public network address", false);
+      }),
+    };
+    const worker = createInvestigationWorker({
+      repository,
+      collector: progressCollector,
+      artifactStore,
+      workerId: "worker-test",
+      leaseMs: 30_000,
+      logger,
+    });
+
+    await expect(worker.runNext()).resolves.toBe(true);
+
+    expect(logger.warn).toHaveBeenCalledWith("investigation.collection_limited", expect.objectContaining({
+      stage: "media_sample",
+      errorCode: "STREAM_REQUEST_TIMEOUT",
+      resourceKind: "media_segment",
+      logicalKey: "manifest/variant/0",
+    }));
+    expect(logger.error).toHaveBeenCalledWith("worker.job_failed", expect.objectContaining({
+      jobKind: "investigation",
+      code: "STREAM_DESTINATION_BLOCKED",
+      retryable: false,
+    }));
   });
 });

@@ -2,7 +2,7 @@ import { StreamCollectionError } from "../../stream-tools/errors.js";
 import { createHash } from "node:crypto";
 import { SafeHttpClient } from "../../stream-tools/safe-http-client.js";
 import type { MediaSample, MediaSampleCollector } from "../ports/media-sample-collector.js";
-import type { CollectionProgress, ManifestCollection } from "../ports/manifest-collector.js";
+import type { CollectionProgress, Manifest, ManifestCollection } from "../ports/manifest-collector.js";
 import type { ReportedContext } from "../application/parse-reported-context.js";
 
 export class HttpMediaSampleCollector implements MediaSampleCollector {
@@ -20,11 +20,15 @@ export class HttpMediaSampleCollector implements MediaSampleCollector {
     const targetSeconds = collection.reportedContext?.approximateTimeSeconds;
     const dashRoot = collection.manifests.find((manifest) => manifest.inspection.protocol === "dash");
     if (dashRoot?.inspection.dash) return this.collectDash(dashRoot.logicalKey, dashRoot.inspection.dash.representations, collection.reportedContext, onProgress);
-    const candidates = collection.manifests.filter((manifest) =>
+    const hlsMediaCandidates = collection.manifests.filter((manifest) =>
       manifest.inspection.protocol === "hls" && manifest.inspection.hls?.kind === "media");
     const samples: MediaSample[] = [];
     const limitations: string[] = [];
     let totalBytes = 0;
+    const rootMedia = hlsMediaCandidates.find((manifest) => manifest.role === "root");
+    const candidates = rootMedia
+      ? [rootMedia]
+      : pickHlsVideoSamplingOrder(hlsMediaCandidates, collection);
     for (const manifest of candidates) {
       const hls = manifest.inspection.hls!;
       if (hls.encryptionMethod) {
@@ -152,6 +156,7 @@ export class HttpMediaSampleCollector implements MediaSampleCollector {
         sha256: createHash("sha256").update(response.bytes).digest("hex"),
         httpStatus: response.statusCode,
         ...(response.contentLength === undefined ? {} : { contentLength: response.contentLength }),
+        ...(response.http ? { http: response.http } : {}),
       },
       content: { bytes: response.bytes },
     };
@@ -256,6 +261,34 @@ export class HttpMediaSampleCollector implements MediaSampleCollector {
 
 function sampleIndices(length: number): number[] {
   return [...new Set([0, Math.floor((length - 1) / 2), length - 1])];
+}
+
+function pickHlsVideoSamplingOrder(mediaCandidates: Manifest[], collection: ManifestCollection): Manifest[] {
+  const videoVariants = mediaCandidates.filter((manifest) => manifest.role === "variant");
+  const audioRenditions = mediaCandidates.filter((manifest) => manifest.role === "rendition");
+  const root = collection.manifests.find((manifest) => manifest.role === "root");
+  const declaredVariants = root?.inspection.hls?.variants ?? [];
+  const selectedIndex = collection.hlsSelection?.variant.index;
+  const selectedManifest = videoVariants.find((manifest) => manifest.logicalKey === `manifest/variant/${selectedIndex}`)
+    ?? videoVariants.find((manifest) => manifest.logicalKey === "manifest/variant/0")
+    ?? videoVariants[0];
+  const orderedByBandwidth = [...declaredVariants]
+    .filter((variant): variant is typeof variant & { url: string } => Boolean(variant.url))
+    .sort((left, right) => (left.bandwidth ?? 0) - (right.bandwidth ?? 0));
+  const position = selectedIndex === undefined ? -1 : orderedByBandwidth.findIndex((variant) => variant.index === selectedIndex);
+  const neighbor = position === -1
+    ? undefined
+    : position > 0
+      ? orderedByBandwidth[position - 1]
+      : position + 1 < orderedByBandwidth.length
+        ? orderedByBandwidth[position + 1]
+        : undefined;
+  const neighborManifest = neighbor
+    ? videoVariants.find((manifest) => manifest.logicalKey === `manifest/variant/${neighbor.index}`)
+    : undefined;
+  const ordered = [selectedManifest, neighborManifest].filter((manifest): manifest is Manifest => manifest !== undefined);
+  return [...new Map(ordered.map((manifest) => [manifest.logicalKey, manifest])).values()]
+    .concat(audioRenditions);
 }
 
 function sampleKey(manifestKey: string, suffix: string): string {

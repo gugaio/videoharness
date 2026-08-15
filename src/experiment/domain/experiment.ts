@@ -6,7 +6,7 @@ export const experimentStatuses = [
 ] as const;
 export type ExperimentStatus = (typeof experimentStatuses)[number];
 
-export const hypothesisStatuses = ["OPEN", "SUPPORTED", "WEAKENED", "REJECTED", "UNRESOLVED"] as const;
+export const hypothesisStatuses = ["OPEN", "PARTIALLY_SUPPORTED", "SUPPORTED", "WEAKENED", "REJECTED", "UNRESOLVED"] as const;
 export type HypothesisStatus = (typeof hypothesisStatuses)[number];
 
 export const iterationStatuses = ["PLANNED", "BUILDING_CLONES", "AWAITING_TESTS", "EVALUATING", "COMPLETED", "FAILED"] as const;
@@ -127,6 +127,34 @@ export type HypothesisEvaluation = {
   explanation: string;
 };
 
+export type ExperimentCausalAnalysis = {
+  schemaVersion: 1;
+  source: "DETERMINISTIC" | "AI_ASSISTED";
+  outcome: "DISCRIMINATING_EFFECT" | "NO_DISCRIMINATING_EFFECT" | "INCONCLUSIVE";
+  title: string;
+  observation: string;
+  interpretation: string;
+  supportedClaim: string;
+  notEstablished: string[];
+  alternativeExplanations: string[];
+  limitations: string[];
+  confidenceRationale: string;
+  nextTest: {
+    title: string;
+    rationale: string;
+    change: string;
+    expectedSignal: string;
+  };
+  evidenceIds: string[];
+  agents: Array<{
+    id: "experiment-evidence-auditor" | "experiment-causal-analyst" | "experiment-lead-investigator";
+    label: string;
+    state: "COMPLETED" | "FAILED" | "UNAVAILABLE";
+    summary?: string;
+    limitation?: string;
+  }>;
+};
+
 export type ExperimentEvaluation = {
   id: string;
   experimentId: string;
@@ -136,6 +164,7 @@ export type ExperimentEvaluation = {
   summary: string;
   hypothesisUpdates: HypothesisEvaluation[];
   evidenceBundle: Record<string, unknown>;
+  analysis?: ExperimentCausalAnalysis;
   proposedNextExperimentPlan?: {
     rationale: string;
     remainingHypothesisIds: string[];
@@ -163,6 +192,17 @@ export type ExperimentDetail = Experiment & {
   clones: ExperimentClone[];
   testRequests: TestRequest[];
   evaluations: ExperimentEvaluation[];
+  evaluationJob?: {
+    id: string;
+    status: "pending" | "running" | "completed" | "failed";
+    attempts: number;
+    maxAttempts: number;
+    errorCode?: string;
+    errorMessage?: string;
+    createdAt: string;
+    startedAt?: string;
+    completedAt?: string;
+  };
 };
 
 const transitions: Record<ExperimentStatus, readonly ExperimentStatus[]> = {
@@ -171,8 +211,8 @@ const transitions: Record<ExperimentStatus, readonly ExperimentStatus[]> = {
   BUILDING_CLONES: ["AWAITING_TESTS", "FAILED", "CANCELLED"],
   AWAITING_TESTS: ["EVALUATING", "CANCELLED"],
   EVALUATING: ["CONCLUDED", "FOLLOWUP_REQUIRED", "FAILED"],
-  FOLLOWUP_REQUIRED: ["PLANNED", "CANCELLED"],
-  CONCLUDED: [],
+  FOLLOWUP_REQUIRED: ["PLANNED", "EVALUATING", "CANCELLED"],
+  CONCLUDED: ["EVALUATING"],
   FAILED: [],
   CANCELLED: [],
 };

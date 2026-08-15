@@ -3,6 +3,7 @@ import { z } from "zod";
 export function classifyAiError(error: unknown): string {
   if (error instanceof z.ZodError) return "response_validation";
   if (error instanceof SyntaxError) return "invalid_json";
+  if (error instanceof Error && error.message.includes("did not contain JSON")) return "invalid_json";
   if (error instanceof Error && error.message.includes("timed out")) return "timeout";
   if (error instanceof Error && error.message.includes("empty content")) return "empty_content";
   if (error instanceof Error && error.message.includes("unavailable")) return "model_unavailable";
@@ -15,6 +16,22 @@ export function classifyAiError(error: unknown): string {
     return `provider_http_${error.status}`;
   }
   return "provider_error";
+}
+
+export function aiValidationIssues(error: unknown): string[] | undefined {
+  if (!(error instanceof z.ZodError)) return undefined;
+  return error.issues.slice(0, 8).map((issue) => {
+    const path = issue.path.length > 0 ? issue.path.join(".") : "response";
+    return `${path}:${issue.code}`;
+  });
+}
+
+export function aiRetryAfterMs(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null || !("retryAfterMs" in error)) return undefined;
+  const value = error.retryAfterMs;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.min(Math.max(Math.round(value), 1_000), 60_000)
+    : undefined;
 }
 
 export function publicError(error: unknown): string {

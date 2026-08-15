@@ -25,7 +25,7 @@ export class DashVodMaterializer implements RecordingMaterializer {
     if (/<(?:[A-Za-z_][\w.-]*:)?ContentProtection\b/i.test(response.text)) throw unsupported("Record DASH does not support protected content");
     if (/<(?:[A-Za-z_][\w.-]*:)?SegmentBase\b/i.test(response.text)) throw unsupported("Record DASH requires SegmentTemplate, not SegmentBase");
 
-    const targets = selectTargets(root.dash.representations, this.options.maxVariants ?? 8, input.job.recording.clonePlan);
+    const targets = selectTargets(root.dash.representations, this.options.maxVariants ?? 32, input.job.recording.clonePlan);
     const selected = targets.map((target) => ({ target, segments: selectWindow(target.source.segments, input.job.recording.requestedStartSeconds, input.job.recording.requestedDurationSeconds) }));
     if (selected.some((entry) => !entry.target.source.initializationUrl || entry.segments.length === 0)) throw unsupported("Every DASH representation needs an init segment and media in the requested window");
     const coverageSeconds = Math.min(...selected.map((entry) => entry.segments.at(-1)!.end - entry.segments[0]!.start));
@@ -94,9 +94,9 @@ function selectTargets(representations: DashRepresentation[], maxVariants: numbe
   const videoGroups = groupBy(representations.filter((item) => item.contentType === "video"), (item) => `${item.periodIndex}:${item.adaptationSetIndex}`);
   const sourceVideo = [...videoGroups.values()].sort((a, b) => b.length - a.length)[0] ?? [];
   if (sourceVideo.length < 2) throw unsupported("Record DASH requires two video representations in one adaptation set for ABR");
-  if (sourceVideo.length > maxVariants) throw unsupported(`The DASH adaptation set exceeds the ${maxVariants} representation limit`);
   const video = plan ? sourceVideo.filter((item) => plan.selection.videoRepresentationIds.includes(item.id)) : sourceVideo;
   if (video.length === 0) throw unsupported("The CloneSpec did not select a DASH video representation");
+  if (video.length > maxVariants) throw unsupported(`The selected DASH ladder exceeds the ${maxVariants} representation safety limit`);
   const audioGroups = groupBy(representations.filter((item) => item.contentType === "audio"), (item) => `${item.periodIndex}:${item.adaptationSetIndex}`);
   const sourceAudio = [...audioGroups.values()].sort((a, b) => b.length - a.length)[0] ?? [];
   const audio = plan?.selection.audioMode === "single" ? sourceAudio.slice(0, 1) : sourceAudio;

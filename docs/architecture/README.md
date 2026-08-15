@@ -36,6 +36,8 @@ Casos de uso esperados:
 
 - `startInvestigation`;
 - `runInvestigation`;
+- `startInvestigationAnalysis`;
+- `runInvestigationAnalysis`;
 - `getInvestigation`;
 - `streamInvestigationEvents`;
 - `getReport`;
@@ -49,6 +51,7 @@ Casos de uso esperados:
 - `activateTestRequest`;
 - `submitTestResult`;
 - `evaluateExperiment`;
+- `runExperimentEvaluation`;
 - `assessStreamAbr`;
 - `analyzeDashSwitchCandidates`;
 - `correlateAbrSwitches`.
@@ -66,6 +69,8 @@ Casos de uso esperados:
 - `RecordingStore`.
 - `ExperimentRepository`;
 - `ExperimentStreamResolver`.
+- `ExperimentEvaluationJobRepository`;
+- `ExperimentAnalysisTeam`;
 
 ### Adapters
 
@@ -125,6 +130,23 @@ preservadas. Para uma transicao ele recebe contrato, semantic INIT/parameter-set
 diff, boundary, timeline, findings e summaries opcionais de delivery,
 decode/conformance/device. Bytes completos permanecem fora do prompt.
 
+A especialista `manifest-delivery` recebe, alem do pacote compartilhado, o texto
+cru dos manifests coletados inline (campo `content` por logicalKey, limitado em
+`build-manifest-evidence`). As demais agentes continuam com o pacote compacto; o
+conteudo bruto permanece no evidence snapshot e e removido da projecao do report.
+
+A especialista `timeline-playback` recebe, alem do pacote compartilhado, as
+janelas deterministicas de continuidade de timeline (`timeline` com
+gaps/overlaps por variant). O evidence index inclui `timeline:<key>` para que os
+findings citem as janelas. Snapshots historicos sem o campo sao tratados como
+limitacao explicita pela especialista.
+
+Os especialistas compartilham uma unica credencial de provider e executam em
+serie. O pacote inicial remove URLs e detalhes repetitivos de frames/NALs; esses
+detalhes continuam preservados e ficam acessiveis somente pela ferramenta de
+inspecao limitada. Retry de contrato e retry de provider usam politicas distintas,
+com backoff para rate limit e sem repetir erros permanentes de auth/contexto.
+
 ## Fluxo principal
 
 ```mermaid
@@ -145,7 +167,13 @@ sequenceDiagram
     K->>D: claim pending job
     K->>T: collect deterministic evidence
     T-->>K: evidence bundle
-    K->>I: explain evidence
+    K->>D: immutable snapshot + evidence_ready
+    A-->>W: evidence_ready event
+    U->>W: Start agent analysis
+    W->>A: POST /v1/investigations/:id/analysis
+    A->>D: investigation-analysis job
+    K->>D: claim analysis job + snapshot
+    K->>I: explain selected evidence snapshot
     I-->>K: structured report
     K->>D: report + final events
     A-->>W: persisted events
@@ -194,12 +222,12 @@ sequenceDiagram
     participant F as Recording storage
     participant P as Device/player
 
-    U->>A: Investigation + diagnostic goal + hypotheses
+    U->>A: Agent validationPlan + diagnostic hypothesis
     A->>D: Experiment DRAFT
     U->>A: small iteration of versioned CloneSpecs
     A->>A: validate + compile declarative plans
     A->>D: iteration + Record jobs + provenance
-    K->>F: materialize selected local resources
+    K->>F: materialize full-ladder CONTROL or selected treatment
     K->>A: deterministic post-clone verification
     A->>D: clone READY + TestRequests
     U->>A: activate CONTROL
@@ -245,13 +273,15 @@ investigacao ou recording usa um workspace isolado.
 - Claim com lease e `FOR UPDATE SKIP LOCKED`.
 - Heartbeat do worker para jobs longos.
 - Retry limitado e classificacao de falhas.
-- Um job representa inicialmente o pipeline inteiro.
+- `investigation` representa somente coleta deterministica;
+  `investigation-analysis` representa a analise explicitamente solicitada.
 - Sem Redis ou queue framework no MVP.
 - Claim seleciona jobs pendentes ou leases expirados com `FOR UPDATE SKIP LOCKED`.
 - Cada claim incrementa `attempts`; jobs abandonados podem ser retomados ate
   `max_attempts`.
 - Transicoes renovam o lease e persistem estado + evento atomicamente.
-- Conclusao persiste report, investigation, job e evento na mesma transacao.
+- A conclusao da coleta persiste `evidence_ready`, job e evento na mesma
+  transacao; a conclusao da analise persiste report, investigation, job e evento.
 
 Record usa `recording_jobs` porque a tabela `jobs` atual exige
 `investigation_id`. O contrato pequeno de claim, lease, heartbeat e retry e
@@ -404,5 +434,7 @@ O plano completo esta em
 - `phases/phase-3.md` - investigacao assistida por IA.
 - `phases/phase-4.md` - experiencia premium.
 - `phases/phase-5.md` - hardening e validacao.
+- `phases/phase-investigation-workspace.md` - fase ativa: evidencia visual,
+  agentes e loop de hipoteses.
 - `phases/phase-record-hls-vod.md` - fase ativa de Record R1.
 - `phases/phase-record-dash-vod.md` - extensao planejada Record R2.

@@ -28,6 +28,30 @@ describe("Pi investigation output parsing", () => {
     expect(output.confidence).toBe(0.4);
   });
 
+  it("keeps a diagnosis-specific validation plan returned by the Lead", () => {
+    const output = parseLeadOutput({
+      summary: "Audio families are mixed.",
+      likelyCause: "A switch between AAC and E-AC-3 may require decoder reconfiguration.",
+      confidence: 0.7,
+      findings: [], recommendations: [], limitations: [],
+      validation_plan: {
+        objective: "Test the cross-audio-family path",
+        statement: "An AAC-only ladder changes the device result relative to CONTROL.",
+        reason: "The treatment removes E-AC-3 representations.",
+        proof_boundary: "A different result isolates the representation group, not the decoder internals.",
+        treatment: { type: "representation_subset", label: "AAC-ONLY", representation_ids: ["variant-0", "variant-1"] },
+      },
+    });
+
+    expect(output.validationPlan).toEqual({
+      goal: "Test the cross-audio-family path",
+      hypothesis: "An AAC-only ladder changes the device result relative to CONTROL.",
+      rationale: "The treatment removes E-AC-3 representations.",
+      proofBoundary: "A different result isolates the representation group, not the decoder internals.",
+      treatment: { recipe: "representation_subset", shortLabel: "AAC-ONLY", representationIds: ["variant-0", "variant-1"] },
+    });
+  });
+
   it("uses limited confidence when the model returns a non-finite value", () => {
     const output = parseSpecialistOutput({
       summary: "The available sample is not enough to establish causality.",
@@ -95,6 +119,49 @@ describe("Pi investigation output parsing", () => {
     expect(output.summary).toBe("One supported observation remains.");
     expect(output.findings).toHaveLength(1);
     expect(output.findings[0]?.title).toBe("Observed continuity");
+  });
+
+  it("accepts a nested response with snake_case citations and a scalar limitation", () => {
+    const output = parseSpecialistOutput({
+      result: {
+        analysis_summary: "The sampled timeline is continuous.",
+        findings: [{
+          title: "Continuous boundary",
+          severity: "LOW",
+          technical_explanation: "Adjacent samples preserve presentation order.",
+          evidence_ids: ["observation:0"],
+          confidence: 0.7,
+        }],
+        limitations: "Only the bounded window was measured.",
+      },
+    });
+
+    expect(output).toMatchObject({
+      summary: "The sampled timeline is continuous.",
+      limitations: ["Only the bounded window was measured."],
+      findings: [{
+        severity: "info",
+        explanation: "Adjacent samples preserve presentation order.",
+        evidenceIds: ["observation:0"],
+      }],
+    });
+  });
+
+  it("accepts Lead aliases without weakening the required summary", () => {
+    const output = parseLeadOutput({
+      response: {
+        overview: "The evidence does not confirm the reported failure.",
+        likely_cause: "The current capture is inconclusive.",
+        confidence: "0.25",
+        findings: [],
+        next_steps: "Capture an observed playback run.",
+        missing_evidence: [{ description: "No player event timeline is available." }],
+      },
+    });
+
+    expect(output.recommendations).toEqual(["Capture an observed playback run."]);
+    expect(output.limitations).toEqual(["No player event timeline is available."]);
+    expect(output.likelyCause).toBe("The current capture is inconclusive.");
   });
 });
 
@@ -173,7 +240,7 @@ describe("Pi investigation progress reporting", () => {
 
     expect(run).toHaveBeenCalledWith(expect.any(String), "abr-switch-investigator", expect.stringContaining("HLS e DASH"), expect.stringContaining("\"assessment_id\":\"abr-assessment:dash\""), expect.any(Function), expect.arrayContaining([expect.objectContaining({ name: "inspect_preserved_sample" })]));
     expect(result.agents).toContainEqual(expect.objectContaining({ id: "abr-switch-investigator", state: "completed" }));
-    expect(progress).toContainEqual({ agent: "abr-switch-investigator", stage: "started", completed: 2, total: 5 });
+    expect(progress).toContainEqual({ agent: "abr-switch-investigator", stage: "started", completed: 3, total: 5 });
     expect(progress.at(-1)).toEqual({ agent: "lead-investigator", stage: "completed", completed: 5, total: 5 });
   });
 
@@ -237,19 +304,19 @@ describe("Pi investigation progress reporting", () => {
     ]));
     expect(progress).toEqual([
       { agent: "timeline-playback", stage: "started", completed: 0, total: 5 },
-      { agent: "container-encoding", stage: "started", completed: 0, total: 5 },
       { agent: "timeline-playback", stage: "completed", completed: 1, total: 5 },
+      { agent: "container-encoding", stage: "started", completed: 1, total: 5 },
       { agent: "container-encoding", stage: "completed", completed: 2, total: 5 },
       { agent: "manifest-delivery", stage: "started", completed: 2, total: 5 },
-      { agent: "abr-switch-investigator", stage: "started", completed: 2, total: 5 },
       { agent: "manifest-delivery", stage: "completed", completed: 3, total: 5 },
+      { agent: "abr-switch-investigator", stage: "started", completed: 3, total: 5 },
       { agent: "abr-switch-investigator", stage: "completed", completed: 4, total: 5 },
       { agent: "lead-investigator", stage: "started", completed: 4, total: 5 },
       { agent: "lead-investigator", stage: "completed", completed: 5, total: 5 },
     ]);
   });
 
-  it("limits specialist provider calls to two concurrent generations", async () => {
+  it("serializes specialist provider calls on the shared credential", async () => {
     let active = 0;
     let maximum = 0;
     const run = vi.fn<RunStructured>(async (investigationId, agentId) => {
@@ -265,7 +332,123 @@ describe("Pi investigation progress reporting", () => {
       evidence,
     });
 
-    expect(maximum).toBe(2);
+    expect(maximum).toBe(1);
+  });
+
+  it("backs off on rate limiting before retrying the affected specialist", async () => {
+    vi.useFakeTimers();
+    let timelineAttempts = 0;
+    const run = vi.fn<RunStructured>(async (investigationId, agentId) => {
+      if (agentId === "timeline-playback" && timelineAttempts < 2) {
+        timelineAttempts += 1;
+        throw Object.assign(new Error("Pi provider unsuccessful: rate_limit"), { retryAfterMs: 1_000 });
+      }
+      return successfulRun(investigationId, agentId);
+    });
+
+    const pending = createAi(run).investigate({
+      investigationId: "c56a4180-65aa-42ec-a945-5fd21dec0538",
+      evidence,
+    });
+    await vi.runAllTimersAsync();
+    const result = await pending;
+
+    expect(timelineAttempts).toBe(2);
+    expect(run.mock.calls.filter((call) => call[1] === "timeline-playback")).toHaveLength(3);
+    expect(result.agents).toContainEqual(expect.objectContaining({ id: "timeline-playback", state: "completed" }));
+    expect(result.promptAudits.filter((audit) => audit.agentId === "timeline-playback")).toHaveLength(3);
+    vi.useRealTimers();
+  });
+
+  it("keeps full frame details and source URLs out of the repeated model packet", async () => {
+    const run = vi.fn<RunStructured>(successfulRun);
+    const evidenceWithSamples: EvidenceBundleV2 = {
+      ...structuredClone(evidence),
+      mediaSamples: [{
+        artifactId: "22222222-2222-4222-8222-222222222222",
+        logicalKey: "sample/variant/0/media/0",
+        kind: "media-segment",
+        sizeBytes: 2_048,
+        source: {
+          url: "https://origin.example.test/private/segment.m4s",
+          sha256: "a".repeat(64),
+          httpStatus: 200,
+        },
+        probe: {
+          tracks: [],
+          fmp4: {
+            fragment: {
+              trafs: [],
+              samples: [fragmentSample("0", 19), fragmentSample("1", 777), fragmentSample("2", 1)],
+              drmBoxTypes: [],
+              structuralErrors: [],
+            },
+          },
+        },
+      }],
+    };
+
+    await createAi(run).investigate({
+      investigationId: "c56a4180-65aa-42ec-a945-5fd21dec0538",
+      evidence: evidenceWithSamples,
+    });
+
+    const specialistPacket = run.mock.calls.find((call) => call[1] === "timeline-playback")?.[3] ?? "";
+    expect(specialistPacket).not.toContain("origin.example.test/private");
+    expect(specialistPacket).not.toContain('"nalTypes":[777]');
+    expect(specialistPacket).toContain('"sampleCount":3');
+  });
+
+  it("gives only the manifest-delivery specialist the raw manifest content inline", async () => {
+    const run = vi.fn<RunStructured>(successfulRun);
+    const evidenceWithManifestContent: EvidenceBundleV2 = {
+      ...structuredClone(evidence),
+      manifests: [{
+        ...evidence.manifests[0]!,
+        content: "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=246440,RESOLUTION=320x184\nlow.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=6221600,RESOLUTION=1920x1080\nhigh.m3u8",
+      }],
+    };
+
+    await createAi(run).investigate({
+      investigationId: "c56a4180-65aa-42ec-a945-5fd21dec0538",
+      evidence: evidenceWithManifestContent,
+    });
+
+    const manifestPacket = run.mock.calls.find((call) => call[1] === "manifest-delivery")?.[3] ?? "";
+    expect(manifestPacket).toContain("#EXT-X-STREAM-INF:BANDWIDTH=6221600");
+    expect(manifestPacket).toContain("manifest/root");
+    const timelinePacket = run.mock.calls.find((call) => call[1] === "timeline-playback")?.[3] ?? "";
+    expect(timelinePacket).not.toContain("#EXT-X-STREAM-INF");
+  });
+
+  it("gives only the timeline-playback specialist the deterministic timeline windows inline", async () => {
+    const run = vi.fn<RunStructured>(successfulRun);
+    const evidenceWithTimeline: EvidenceBundleV2 = {
+      ...structuredClone(evidence),
+      timeline: [{
+        key: "manifest/variant/0",
+        kind: "video" as const,
+        segmentCount: 2,
+        gaps: [{ fromLogicalKey: "sample/variant/0/media/0", toLogicalKey: "sample/variant/0/media/1", presentationGapMs: 240 }],
+        totalGapMs: 240,
+        maxGapMs: 240,
+        continuous: false,
+      }],
+    };
+
+    await createAi(run).investigate({
+      investigationId: "c56a4180-65aa-42ec-a945-5fd21dec0538",
+      evidence: evidenceWithTimeline,
+    });
+
+    const timelinePacket = run.mock.calls.find((call) => call[1] === "timeline-playback")?.[3] ?? "";
+    expect(timelinePacket).toContain("timeline:manifest/variant/0");
+    expect(timelinePacket).toContain('"presentationGapMs":240');
+    expect(timelinePacket).toContain('"continuous":false');
+    const containerPacket = run.mock.calls.find((call) => call[1] === "container-encoding")?.[3] ?? "";
+    expect(containerPacket).not.toContain('"presentationGapMs":240');
+    const manifestPacket = run.mock.calls.find((call) => call[1] === "manifest-delivery")?.[3] ?? "";
+    expect(manifestPacket).not.toContain('"presentationGapMs":240');
   });
 
   it("reports a failed specialist with its public limitation without hiding the other runs", async () => {
@@ -321,5 +504,24 @@ function abrCandidate(): AbrSwitchEvidence {
     targetRepresentation: { evidenceId: "representation:fhd", id: "fhd", periodIndex: 0, adaptationSetIndex: 0, width: 1920, height: 1080 },
     direction: "DOWNSHIFT", switchKind: "RESOLUTION_CHANGING", switchingContract: { evidenceId: "contract:video", mode: "GENERAL_REINITIALIZATION", codecFamily: "HEVC", representations: ["uhd", "fhd"] },
     networkEvidence: { evidenceId: "network:candidate", requests: [] }, decodeTests: [], deterministicFindings: [], missingEvidence: ["player callback timeline"],
+  };
+}
+
+function fragmentSample(dts: string, nalType: number) {
+  return {
+    dts,
+    pts: dts,
+    nalTypes: [nalType],
+    accessUnit: {
+      nalTypes: [String(nalType)],
+      isIrap: nalType === 19,
+      hasVpsBeforeFirstVcl: false,
+      hasSpsBeforeFirstVcl: false,
+      hasPpsBeforeFirstVcl: false,
+      parameterSetIdsReferenced: { vps: [], sps: [], pps: [] },
+      containsRasl: false,
+      containsRadl: false,
+    },
+    firstFrameKind: nalType === 19 ? "idr" as const : "other" as const,
   };
 }

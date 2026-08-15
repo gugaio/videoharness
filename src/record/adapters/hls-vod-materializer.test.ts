@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SafeHttpClient } from "../../stream-tools/safe-http-client.js";
+import { StreamCollectionError } from "../../stream-tools/errors.js";
 import { HlsVodMaterializer } from "./hls-vod-materializer.js";
 import type { CloneExecutionPlan } from "../../experiment/domain/clone-spec.js";
 
@@ -79,6 +80,59 @@ high.m3u8`,
     expect(master).toContain("variants/video-0/index.m3u8");
     expect(master).not.toContain("video-1");
     expect(result.resources.find((entry) => entry.logicalPath === "variants/video-0/index.m3u8")?.metadata).toMatchObject({ sourceRepresentationId: "variant-0" });
+  });
+
+  it("preserves a ten-variant CONTROL ladder instead of rejecting it at the former limit", async () => {
+    const texts: Record<string, string> = {};
+    const variants = Array.from({ length: 10 }, (_, index) => `#EXT-X-STREAM-INF:BANDWIDTH=${800_000 + index * 300_000},RESOLUTION=640x360\nvideo-${index}.m3u8`).join("\n");
+    texts["https://origin.test/master.m3u8"] = `#EXTM3U\n${variants}`;
+    for (let index = 0; index < 10; index += 1) texts[`https://origin.test/video-${index}.m3u8`] = media(`video-${index}`);
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "video-harness-hls-recording-")); directories.push(directory);
+
+    const result = await new HlsVodMaterializer(fakeHttp(texts)).materialize({
+      job: { id: "8dc67e09-4b25-4fe5-a69a-58f896fb5197", attempts: 1, maxAttempts: 3, recording: { id: recordingId, sourceUrl: "https://origin.test/master.m3u8", protocol: "hls", requestedDurationSeconds: 3, requestedStartSeconds: 0 } },
+      workspace: { recordingId, path: directory },
+    });
+
+    const master = await fs.readFile(path.join(directory, "index.m3u8"), "utf8");
+    expect(master).toContain("variants/video-9/index.m3u8");
+    expect(result.resources.find((entry) => entry.logicalPath === "index.m3u8")?.metadata).toMatchObject({ variantCount: 10 });
+  });
+
+  it("applies an experiment selection before enforcing the variant safety limit", async () => {
+    const texts: Record<string, string> = {};
+    const variants = Array.from({ length: 10 }, (_, index) => `#EXT-X-STREAM-INF:BANDWIDTH=${800_000 + index * 300_000}\nvideo-${index}.m3u8`).join("\n");
+    texts["https://origin.test/master.m3u8"] = `#EXTM3U\n${variants}`;
+    texts["https://origin.test/video-9.m3u8"] = media("video-9");
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "video-harness-hls-recording-")); directories.push(directory);
+
+    const result = await new HlsVodMaterializer(fakeHttp(texts), { maxVariants: 2 }).materialize({
+      job: { id: "8dc67e09-4b25-4fe5-a69a-58f896fb5197", attempts: 1, maxAttempts: 3, recording: { id: recordingId, sourceUrl: "https://origin.test/master.m3u8", protocol: "hls", requestedDurationSeconds: 3, requestedStartSeconds: 0, clonePlan: plan("hls", "variant-9") } },
+      workspace: { recordingId, path: directory },
+    });
+
+    expect(result.resources.find((entry) => entry.logicalPath === "index.m3u8")?.metadata).toMatchObject({ variantCount: 1 });
+  });
+
+  it("retries one transient HLS segment failure without restarting the recording", async () => {
+    const texts: Record<string, string> = {
+      "https://origin.test/master.m3u8": "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000\nlow.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=1800000\nhigh.m3u8",
+      "https://origin.test/low.m3u8": media("low"),
+      "https://origin.test/high.m3u8": media("high"),
+    };
+    const http = fakeHttp(texts);
+    http.getBytes.mockRejectedValueOnce(new StreamCollectionError("STREAM_DNS_FAILED", "Temporary DNS failure", true));
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "video-harness-hls-recording-")); directories.push(directory);
+    const events: string[] = [];
+
+    const result = await new HlsVodMaterializer(http, { retryDelayMs: 0 }).materialize({
+      job: { id: "8dc67e09-4b25-4fe5-a69a-58f896fb5197", attempts: 1, maxAttempts: 3, recording: { id: recordingId, sourceUrl: "https://origin.test/master.m3u8", protocol: "hls", requestedDurationSeconds: 3, requestedStartSeconds: 0 } },
+      workspace: { recordingId, path: directory },
+      onProgress: async (event) => { events.push(event.type); },
+    });
+
+    expect(result.resources.find((entry) => entry.logicalPath === "index.m3u8")?.metadata).toMatchObject({ variantCount: 2 });
+    expect(events).toContain("recording.resource_retry");
   });
 });
 
