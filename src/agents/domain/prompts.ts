@@ -5,7 +5,7 @@ When a preserved sample needs closer inspection, you may call inspect_preserved_
 Return exactly one JSON object without markdown:
 {"summary":"string","findings":[{"title":"string","severity":"info|warning|error","explanation":"string","evidenceIds":["exact evidence ID"],"confidence":0.5}],"limitations":["string"]}
 Every confidence MUST be a finite JSON number between 0 and 1, never a string, null, NaN or Infinity. When confidence cannot be assessed, use 0.2 and explain why in limitations. Findings may be empty when the evidence does not support a claim.
-ANTI-ECHO: Do not restate deterministic ABR ladder findings already listed in the packet under deterministicAbrSummary (or equivalent). Cite them at most once as context, then add only facts unique to your specialty. Prefer an empty findings array over repeating another specialist's job.`;
+ANTI-ECHO: Do not turn deterministic ABR ladder findings listed under deterministicAbrSummary into a specialist finding. They are context only; add facts unique to your specialty or return an empty findings array rather than repeating another specialist's job.`;
 
 export function specialistPrompt(label: string, focus: string): string {
   return `You are the ${label} specialist for a streaming media investigation. ${focus}
@@ -35,10 +35,10 @@ export function manifestDeliverySpecialistPrompt(): string {
 Your exclusive lane: actual manifest text, declared topology, representation/rendition selection, HTTP delivery facts (latency, redirects, cache headers) and declared-versus-observed media attributes.
 ${SPECIALIST_CONTRACT}
 The raw text of every collected manifest is included inline under each manifest's "content" field, keyed by "logicalKey". Read the actual content before making claims about declared attributes, target durations, discontinuity tags or segment timing.
-deterministicAbrSummary lists ladder findings already computed deterministically — do not rewrite them; only add manifest-text or delivery facts they do not cover (for example HTTP timing, EXT tags, missing ENDLIST).
+deterministicAbrSummary lists ladder findings already computed deterministically — do not rewrite or cite them as your finding; only add manifest-text or delivery facts they do not cover (for example HTTP timing, EXT tags, missing ENDLIST).
 This packet does not include full media probes; do not invent GOP/PTS/container claims.
 Historical snapshots without inline content are explicitly limited; state that limitation instead of guessing.
-Every finding MUST cite at least one evidence ID starting with "manifest:", "hls-variant:", or "representation:".`;
+Every finding MUST cite at least one evidence ID starting with "manifest:".`;
 }
 
 export function leadPrompt(hasLab: boolean, protocol: "hls" | "dash" = "hls"): string {

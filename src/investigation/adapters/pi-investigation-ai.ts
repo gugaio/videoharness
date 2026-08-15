@@ -48,22 +48,15 @@ export class PiInvestigationAI implements InvestigationAI {
     input.evidence.abr = abrAssessment;
     if (!this.config.apiKey) return unavailableResult();
     await collectRequiredSymptomMeasurements(input, this.config.lab, this.config.shellRunRecorder);
-    const evidenceIds = new Set(buildEvidenceIndex(input.evidence).map((item) => item.id));
+    const evidenceIndex = buildEvidenceIndex(input.evidence);
+    const evidenceIds = new Set(evidenceIndex.map((item) => item.id));
     const problemDescription = input.problemDescription ?? "No problem was reported; assess the observed stream health.";
+    const deterministicAbrSummary = abrSummaryForPacket(input.evidence.abr);
     const packet = JSON.stringify({
       problemDescription,
-      evidence: sanitizeEvidence(input.evidence),
-      evidenceIndex: buildEvidenceIndex(input.evidence),
-    });
-    const manifestDeliveryPacket = JSON.stringify({
-      problemDescription,
-      evidence: sanitizeEvidence(input.evidence, { includeManifestContent: true }),
-      evidenceIndex: buildEvidenceIndex(input.evidence),
-    });
-    const timelinePlaybackPacket = JSON.stringify({
-      problemDescription,
-      evidence: sanitizeEvidence(input.evidence, { includeTimeline: true }),
-      evidenceIndex: buildEvidenceIndex(input.evidence),
+      evidence: leadEvidence(input.evidence),
+      evidenceIndex,
+      ...(deterministicAbrSummary ? { deterministicAbrSummary } : {}),
     });
     return runAgentTeam({
       investigationId: input.investigationId,
@@ -73,8 +66,11 @@ export class PiInvestigationAI implements InvestigationAI {
       hasLab: Boolean(this.config.lab),
       evidenceIds,
       packet,
-      manifestDeliveryPacket,
-      timelinePlaybackPacket,
+      specialistPackets: {
+        "timeline-playback": specialistPacket(problemDescription, timelineLaneEvidence(input.evidence), laneEvidenceIndex(evidenceIndex, ["timeline:", "sample:"]), deterministicAbrSummary),
+        "container-encoding": specialistPacket(problemDescription, containerLaneEvidence(input.evidence), laneEvidenceIndex(evidenceIndex, ["sample:"]), deterministicAbrSummary),
+        "manifest-delivery": specialistPacket(problemDescription, manifestLaneEvidence(input.evidence), laneEvidenceIndex(evidenceIndex, ["manifest:"]), deterministicAbrSummary),
+      },
       abrAssessment,
       abrTransitions: [...(input.evidence.dash?.switches ?? []), ...(input.evidence.playbackSwitches ?? [])],
       onProgress: input.onProgress,
@@ -83,6 +79,157 @@ export class PiInvestigationAI implements InvestigationAI {
       leadTools: (audit) => createEvidenceTools(input.evidence, this.config.lab, input.investigationId, this.config.shellRunRecorder, createToolCallRecorder(audit)),
     });
   }
+}
+
+function specialistPacket(
+  problemDescription: string,
+  evidence: object,
+  evidenceIndex: Array<{ id: string; summary: string }>,
+  abrSummary: object | undefined,
+): { prompt: string; evidenceIds: string[] } {
+  return {
+    prompt: JSON.stringify({
+    problemDescription,
+    evidence,
+    evidenceIndex,
+    ...(abrSummary ? { deterministicAbrSummary: abrSummary } : {}),
+    }),
+    evidenceIds: evidenceIndex.map((item) => item.id),
+  };
+}
+
+function laneEvidenceIndex(
+  evidenceIndex: Array<{ id: string; summary: string }>,
+  prefixes: readonly string[],
+): Array<{ id: string; summary: string }> {
+  return evidenceIndex.filter((item) => prefixes.some((prefix) => item.id.startsWith(prefix)));
+}
+
+/** Compact anti-echo context: what the deterministic ABR pass already stated,
+ * so specialists do not spend tokens retelling ladder findings. */
+function abrSummaryForPacket(abr: AbrAssessment | undefined): object | undefined {
+  if (!abr) return undefined;
+  return {
+    evidenceId: abr.evidenceId,
+    protocol: abr.protocol,
+    verdict: abr.verdict,
+    coverage: abr.coverage.level,
+    findings: abr.findings.map((finding) => ({
+      ruleId: finding.ruleId,
+      severity: finding.severity,
+      title: finding.title,
+      evidenceId: finding.evidenceId,
+    })),
+  };
+}
+
+function manifestIndex(evidence: EvidenceBundleV2 | EvidenceBundleV3, options: { timingTags?: boolean } = {}): object[] {
+  return evidence.manifests.map((manifest) => ({
+    logicalKey: manifest.logicalKey,
+    kind: manifest.kind,
+    role: manifest.role,
+    ...(manifest.segmentCount === undefined ? {} : { segmentCount: manifest.segmentCount }),
+    ...(manifest.targetDuration === undefined ? {} : { targetDuration: manifest.targetDuration }),
+    ...(manifest.discontinuityCount === undefined ? {} : { discontinuityCount: manifest.discontinuityCount }),
+    ...(options.timingTags ? {
+      ...(manifest.mediaSequence === undefined ? {} : { mediaSequence: manifest.mediaSequence }),
+      ...(manifest.discontinuitySequence === undefined ? {} : { discontinuitySequence: manifest.discontinuitySequence }),
+      ...(manifest.hasEndList === undefined ? {} : { hasEndList: manifest.hasEndList }),
+    } : {}),
+  }));
+}
+
+/** Timeline & Playback lane: timing facts only. */
+function timelineLaneEvidence(evidence: EvidenceBundleV2 | EvidenceBundleV3): object {
+  return {
+    protocol: evidence.source.protocol,
+    manifests: manifestIndex(evidence, { timingTags: true }),
+    mediaSamples: evidence.mediaSamples.map(timingOnlySample),
+    ...(evidence.timeline?.length ? { timeline: evidence.timeline } : {}),
+    limitations: evidence.limitations,
+    reportedContext: evidence.reportedContext,
+    ...(evidence.hls?.selection ? { hlsSelection: evidence.hls.selection } : {}),
+    ...(evidence.playbackSwitches?.length ? { playbackSwitches: evidence.playbackSwitches.map(sanitizeAbrSwitch) } : {}),
+  };
+}
+
+function timingOnlySample(sample: EvidenceBundleV2["mediaSamples"][number]): object {
+  const fragment = sample.probe?.fmp4?.fragment;
+  return {
+    logicalKey: sample.logicalKey,
+    kind: sample.kind,
+    ...(sample.sourceManifestLogicalKey ? { sourceManifestLogicalKey: sample.sourceManifestLogicalKey } : {}),
+    ...(sample.sampleIndex === undefined ? {} : { sampleIndex: sample.sampleIndex }),
+    ...(sample.sequence === undefined ? {} : { sequence: sample.sequence }),
+    ...(sample.declaredDuration === undefined ? {} : { declaredDuration: sample.declaredDuration }),
+    ...(sample.representationId === undefined ? {} : { representationId: sample.representationId }),
+    ...(sample.presentationStartSeconds === undefined ? {} : { presentationStartSeconds: sample.presentationStartSeconds }),
+    ...(sample.presentationEndSeconds === undefined ? {} : { presentationEndSeconds: sample.presentationEndSeconds }),
+    ...(sample.probe ? { probe: {
+      ...(sample.probe.format ? { format: sample.probe.format } : {}),
+      ...(sample.probe.duration === undefined ? {} : { duration: sample.probe.duration }),
+      tracks: (sample.probe.tracks ?? []).map((track) => ({
+        kind: track.kind,
+        ...(track.codec ? { codec: track.codec } : {}),
+        ...(track.duration === undefined ? {} : { duration: track.duration }),
+        ...(track.firstPts === undefined ? {} : { firstPts: track.firstPts }),
+        ...(track.lastPts === undefined ? {} : { lastPts: track.lastPts }),
+        ...(track.sampleRate === undefined ? {} : { sampleRate: track.sampleRate }),
+        ...(track.channels === undefined ? {} : { channels: track.channels }),
+      })),
+      ...(fragment ? { fmp4: { fragment: {
+        ...(fragment.styp ? { styp: fragment.styp } : {}),
+        ...(fragment.sidx ? { sidx: fragment.sidx } : {}),
+        ...(fragment.sequenceNumber === undefined ? {} : { sequenceNumber: fragment.sequenceNumber }),
+        ...(fragment.baseMediaDecodeTime ? { baseMediaDecodeTime: fragment.baseMediaDecodeTime } : {}),
+        sampleCount: fragment.samples.length,
+        syncSampleCount: fragment.samples.filter((entry) => entry.sync).length,
+      } } } : {}),
+    } } : {}),
+  };
+}
+
+/** Container & Encoding lane: probes only, no ladder topology or delivery. */
+function containerLaneEvidence(evidence: EvidenceBundleV2 | EvidenceBundleV3): object {
+  return {
+    protocol: evidence.source.protocol,
+    mediaSamples: compactMediaSamples(evidence.mediaSamples),
+    limitations: evidence.limitations,
+  };
+}
+
+/** Manifest & Delivery lane: raw manifest text, HTTP facts and declared
+ * topology; media appears only as a compact sample index. */
+function manifestLaneEvidence(evidence: EvidenceBundleV2 | EvidenceBundleV3): object {
+  return {
+    protocol: evidence.source.protocol,
+    manifests: evidence.manifests.map((manifest) => {
+      const { requestedUrl: _requestedUrl, finalUrl: _finalUrl, artifactId: _artifactId, sha256: _sha256, ...item } = manifest;
+      return item;
+    }),
+    mediaSampleIndex: evidence.mediaSamples.map((sample) => ({
+      logicalKey: sample.logicalKey,
+      kind: sample.kind,
+      ...(sample.sourceManifestLogicalKey ? { sourceManifestLogicalKey: sample.sourceManifestLogicalKey } : {}),
+      ...(sample.sequence === undefined ? {} : { sequence: sample.sequence }),
+      ...(sample.declaredDuration === undefined ? {} : { declaredDuration: sample.declaredDuration }),
+      ...(sample.representationId === undefined ? {} : { representationId: sample.representationId }),
+    })),
+    limitations: evidence.limitations,
+    ...(evidence.hls ? { hls: sanitizedHls(evidence.hls) } : {}),
+    ...(evidence.dash ? { dash: {
+      type: evidence.dash.type,
+      representations: evidence.dash.representations.map(({
+        baseUrl: _baseUrl,
+        initializationUrl: _initializationUrl,
+        mediaTemplate: _mediaTemplate,
+        contentProtection: _contentProtection,
+        ...representation
+      }) => representation),
+      ...(evidence.dash.switchMatrix?.length ? { switchMatrix: evidence.dash.switchMatrix } : {}),
+      limitations: evidence.dash.limitations,
+    } } : {}),
+  };
 }
 
 function buildEvidenceIndex(evidence: EvidenceBundleV2 | EvidenceBundleV3): Array<{ id: string; summary: string }> {
@@ -97,54 +244,27 @@ function buildEvidenceIndex(evidence: EvidenceBundleV2 | EvidenceBundleV3): Arra
   ];
 }
 
-function sanitizeEvidence(evidence: EvidenceBundleV2 | EvidenceBundleV3, options: { includeManifestContent?: boolean; includeTimeline?: boolean } = {}): object {
-  const { includeManifestContent = false, includeTimeline = false } = options;
+/** The Lead receives deterministic conclusions and indexes, not a fourth copy
+ * of all media probes. It can inspect preserved samples explicitly when a
+ * finding needs deeper support. */
+function leadEvidence(evidence: EvidenceBundleV2 | EvidenceBundleV3): object {
   return {
     protocol: evidence.source.protocol,
-    manifests: evidence.manifests.map((manifest, index) => {
-      const { requestedUrl: _requestedUrl, finalUrl: _finalUrl, content: _content, ...item } = manifest;
-      const sourceContent = evidence.manifests[index]?.content;
-      return includeManifestContent && sourceContent
-        ? { ...item, content: sourceContent }
-        : item;
-    }),
-    mediaSamples: compactMediaSamples(evidence.mediaSamples),
+    manifests: manifestIndex(evidence, { timingTags: true }),
     observations: evidence.observations,
     limitations: evidence.limitations,
-    hls: evidence.hls ? {
-      ...evidence.hls,
-      variants: evidence.hls.variants.map(({ uri: _uri, url: _url, ...variant }) => variant),
-      renditions: evidence.hls.renditions.map(({ uri: _uri, url: _url, ...rendition }) => rendition),
-    } : undefined,
     reportedContext: evidence.reportedContext,
     abr: evidence.abr,
-    dash: evidence.dash ? {
-      ...evidence.dash,
-      representations: evidence.dash.representations.map(({
-        baseUrl: _baseUrl,
-        initializationUrl: _initializationUrl,
-        mediaTemplate: _mediaTemplate,
-        ...representation
-      }) => representation),
-      switches: evidence.dash.switches?.map((entry) => ({
-        evidenceId: entry.evidenceId,
-        switchId: entry.switchId,
-        evidenceBasis: entry.evidenceBasis,
-        transitionStatus: entry.transitionStatus,
-        sourceRepresentation: entry.sourceRepresentation,
-        targetRepresentation: entry.targetRepresentation,
-        direction: entry.direction,
-        switchKind: entry.switchKind,
-        deterministicFindings: entry.deterministicFindings,
-        timelineEvidence: entry.timelineEvidence,
-        sapEvidence: entry.sapEvidence,
-        initSemanticDiff: entry.initSemanticDiff,
-        missingEvidence: entry.missingEvidence,
-      })),
-    } : undefined,
-    ...(evidence.schemaVersion === 3 ? { playbackSessions: evidence.playbackSessions } : {}),
-    ...(includeTimeline && evidence.timeline?.length ? { timeline: evidence.timeline } : {}),
+    ...(evidence.timeline?.length ? { timeline: evidence.timeline } : {}),
     ...(evidence.playbackSwitches?.length ? { playbackSwitches: evidence.playbackSwitches.map(sanitizeAbrSwitch) } : {}),
+  };
+}
+
+function sanitizedHls(hls: NonNullable<EvidenceBundleV2["hls"]>): object {
+  return {
+    ...hls,
+    variants: hls.variants.map(({ uri: _uri, url: _url, ...variant }) => variant),
+    renditions: hls.renditions.map(({ uri: _uri, url: _url, ...rendition }) => rendition),
   };
 }
 

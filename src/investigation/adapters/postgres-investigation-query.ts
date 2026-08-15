@@ -37,7 +37,7 @@ type InvestigationReportRow = {
 };
 type ArtifactRow = { id: string; logical_key: string; kind: string; storage_key: string; content_type: string | null; size_bytes: number | null; created_at: Date };
 type EvidenceRow = { evidence: unknown };
-type AgentRunRow = { agent_id: AgentId; attempt: number; state: "completed" | "failed"; provider: string; model: string; system_prompt: string; prompt: string; tool_names: unknown; tool_calls: unknown; output: unknown };
+type AgentRunRow = { agent_id: AgentId; attempt: number; state: "completed" | "failed"; provider: string; model: string; system_prompt: string; prompt: string; tool_names: unknown; tool_calls: unknown; packet_metrics: unknown; output: unknown };
 
 function toInvestigation(row: InvestigationRow): Investigation {
   return {
@@ -134,7 +134,7 @@ export class PostgresInvestigationQuery implements InvestigationQueryRepository 
 
   async listAgentRuns(investigationId: string): Promise<AiPromptAudit[]> {
     const result = await this.pool.query<AgentRunRow>(
-      `SELECT agent_id, attempt, state, provider, model, system_prompt, prompt, tool_names, tool_calls, output
+      `SELECT agent_id, attempt, state, provider, model, system_prompt, prompt, tool_names, tool_calls, packet_metrics, output
          FROM agent_runs
         WHERE investigation_id = $1
         ORDER BY created_at, agent_id, attempt`,
@@ -150,6 +150,7 @@ export class PostgresInvestigationQuery implements InvestigationQueryRepository 
       prompt: row.prompt,
       toolNames: stringArray(row.tool_names),
       toolCalls: toolCalls(row.tool_calls),
+      ...packetMetrics(row.packet_metrics),
       ...(row.output === null ? {} : { output: row.output }),
     }));
   }
@@ -163,6 +164,21 @@ export class PostgresInvestigationQuery implements InvestigationQueryRepository 
     const result = await this.pool.query<ArtifactRow>(`SELECT id, logical_key, kind, storage_key, content_type, size_bytes, created_at FROM artifacts WHERE investigation_id=$1 AND id=$2`, [investigationId, artifactId]);
     return result.rows[0] ? toArtifact(result.rows[0]) : null;
   }
+}
+function packetMetrics(value: unknown): Pick<AiPromptAudit, "packetMetrics"> {
+  if (value === null || typeof value !== "object") return {};
+  const metrics = value as Record<string, unknown>;
+  return typeof metrics.packetBytes === "number"
+    && typeof metrics.evidenceIdCount === "number"
+    && typeof metrics.sharedEvidenceIdCount === "number"
+    && typeof metrics.sharedEvidenceRatio === "number"
+    ? { packetMetrics: {
+        packetBytes: metrics.packetBytes,
+        evidenceIdCount: metrics.evidenceIdCount,
+        sharedEvidenceIdCount: metrics.sharedEvidenceIdCount,
+        sharedEvidenceRatio: metrics.sharedEvidenceRatio,
+      } }
+    : {};
 }
 
 function toArtifact(row: ArtifactRow): InvestigationArtifact { return { id: row.id, logicalKey: row.logical_key, kind: row.kind, storageKey: row.storage_key, ...(row.content_type ? { contentType: row.content_type } : {}), ...(row.size_bytes === null ? {} : { sizeBytes: row.size_bytes }), createdAt: row.created_at.toISOString() }; }

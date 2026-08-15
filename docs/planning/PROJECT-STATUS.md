@@ -175,6 +175,47 @@ Ultima atualizacao: **2026-08-15**
 Persistir hipoteses no nivel da investigation e permitir que uma pergunta crie
 um pedido explicito de novo AgentRun sobre o snapshot, sem criar outro dashboard.
 
+### 2026-08-15 - Pistas exclusivas e custo auditavel da equipe de agentes
+
+Fases impactadas: 3 e Investigation Workspace.
+
+Entrega:
+
+- timeline, container e manifest/delivery recebem pacotes e `evidenceIndex`
+  exclusivos; o resumo ABR deterministico continua compacto e serve apenas como
+  contexto anti-eco;
+- prompts declaram a pista exclusiva e findings citados fora dela sao removidos
+  antes do Lead, que recebe somente os achados filtrados para deduplicar;
+- cada `agent_run` agora persiste bytes do pacote, quantidade de fatos citaveis
+  e sobreposicao de IDs com outras pistas; o painel mostra essas medidas;
+- migration 015 adiciona `packet_metrics` sem mudar o report compartilhavel ou
+  registrar chain of thought.
+
+Arquivos-chave:
+
+- `src/investigation/adapters/pi-investigation-ai.ts`;
+- `src/agents/application/run-agent-team.ts`;
+- `src/database/migrations/015_agent_run_packet_metrics.sql`;
+- `ui/src/components/InvestigationWorkspace.tsx`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 48 arquivos, 246 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- smoke com um caso real apos aplicar a migration 015, para medir a reducao de
+  bytes e a sobreposicao em uma analise persistida.
+
+Proximo passo recomendado:
+
+- decidir se a selecao condicional de somente duas pistas deve substituir a
+  equipe completa em casos de baixa complexidade.
+
 ### 2026-08-15 - Painel de agentes restaurado com auditoria completa
 
 Fases impactadas: 3, 4 e Investigation Workspace.

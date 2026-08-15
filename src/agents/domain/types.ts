@@ -29,6 +29,14 @@ export type AiPromptAudit = {
   prompt: string;
   toolNames: string[];
   toolCalls: Array<{ name: string; input: string; output: string }>;
+  /** Measured input footprint. Specialist overlap is calculated only across
+   * their citeable evidence IDs, never from model reasoning or output text. */
+  packetMetrics?: {
+    packetBytes: number;
+    evidenceIdCount: number;
+    sharedEvidenceIdCount: number;
+    sharedEvidenceRatio: number;
+  };
   /** Validated structured response, never model reasoning. */
   output?: unknown;
 };

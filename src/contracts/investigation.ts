@@ -345,6 +345,7 @@ const ManifestReportContentBaseSchema = z.object({
       provider: z.string().min(1), model: z.string().min(1),
       systemPrompt: z.string(), prompt: z.string(), toolNames: z.array(z.string()),
       toolCalls: z.array(z.object({ name: z.string(), input: z.string(), output: z.string() })),
+      packetMetrics: z.object({ packetBytes: z.number().int().nonnegative(), evidenceIdCount: z.number().int().nonnegative(), sharedEvidenceIdCount: z.number().int().nonnegative(), sharedEvidenceRatio: z.number().min(0).max(1) }).optional(),
       output: z.unknown().optional(),
     })).optional(),
   }).optional(),

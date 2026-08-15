@@ -312,6 +312,16 @@ function AgentAuditInspector({ audits, selectedAgent }: {
                   <span className="text-slate-400">{audit.provider}/{audit.model}</span>
                 </div>
 
+                {audit.packetMetrics && (
+                  <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-slate-600">
+                    <span className="rounded-full bg-slate-100 px-2 py-1">{formatAuditBytes(audit.packetMetrics.packetBytes)} input</span>
+                    <span className="rounded-full bg-slate-100 px-2 py-1">{audit.packetMetrics.evidenceIdCount} citeable facts</span>
+                    <span className={`rounded-full px-2 py-1 ${audit.packetMetrics.sharedEvidenceIdCount === 0 ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                      {audit.packetMetrics.sharedEvidenceIdCount} shared · {Math.round(audit.packetMetrics.sharedEvidenceRatio * 100)}% overlap
+                    </span>
+                  </div>
+                )}
+
                 <AuditBlock label="Input · evidence packet" value={audit.prompt} />
                 {selectedAgent === "manifest-delivery" && <ManifestContentSent prompt={audit.prompt} />}
                 <AuditBlock label="System prompt" value={audit.systemPrompt} />
@@ -676,6 +686,10 @@ function collectionActivityMessage(state: Investigation["state"], progressEvent:
 function shorten(value: string, maxLength: number): string {
   const normalized = value.replace(/\s+/g, " ").trim();
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1).trimEnd()}…` : normalized;
+}
+
+function formatAuditBytes(bytes: number): string {
+  return bytes < 1_024 ? `${bytes} B` : `${(bytes / 1_024).toFixed(1)} KB`;
 }
 
 function StreamScanIcon(): JSX.Element {

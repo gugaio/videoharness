@@ -48,6 +48,10 @@ uma hipotese em um replay controlado.
   inicial compacto e detalhes de frame/NAL sob inspecao explicita. O boundary
   normaliza variacoes seguras do JSON e aplica backoff distinto para rate limit,
   sem aceitar findings sem evidence IDs validos.
+- Cada especialista recebe somente sua pista citavel (timeline, container ou
+  manifest/delivery), alem de um resumo ABR deterministico anti-eco. O audit
+  persiste bytes de input, fatos citaveis e sobreposicao de IDs entre pistas;
+  findings fora da pista sao descartados antes da sintese do Lead.
 
 ## Proximos cortes
 

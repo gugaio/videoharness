@@ -2,7 +2,7 @@ import { logger } from "../../infra/logger.js";
 import { aiRetryAfterMs, aiValidationIssues, classifyAiError, publicError } from "../domain/errors.js";
 import { parseLeadOutput, parseSpecialistOutput } from "../domain/parsing.js";
 import { LEAD_AGENT_ID, SPECIALIST_PROFILES } from "../domain/profiles.js";
-import { ABR_QUALITY_INVESTIGATOR_SYSTEM_PROMPT, leadPrompt, manifestDeliverySpecialistPrompt, specialistPrompt, timelinePlaybackSpecialistPrompt } from "../domain/prompts.js";
+import { ABR_QUALITY_INVESTIGATOR_SYSTEM_PROMPT, containerEncodingSpecialistPrompt, leadPrompt, manifestDeliverySpecialistPrompt, specialistPrompt, timelinePlaybackSpecialistPrompt } from "../domain/prompts.js";
 import { buildAbrQualityAgentPacket, parseAbrQualityAgentOutput, type AbrQualityAgentOutput } from "./abr-quality-investigator-agent.js";
 import type { AbrAssessment } from "../../abr/domain/assessment.js";
 import type { AbrSwitchEvidence } from "../../abr/domain/evidence.js";
@@ -12,6 +12,7 @@ import type {
   AiFinding,
   AiInvestigationResult,
   AiPromptAudit,
+  SpecialistAgentId,
   SpecialistOutput,
 } from "../domain/types.js";
 import type { AgentModelRunner } from "../ports/agent-model-runner.js";
@@ -23,21 +24,22 @@ export type RunAgentTeamInput = {
   model: string;
   hasLab: boolean;
   evidenceIds: Set<string>;
+  /** Compact shared packet used by the Lead synthesis. */
   packet: string;
-  /** Optional dedicated packet for the manifest-delivery specialist. Keeps
-   * the shared packet compact while giving the manifest specialist the raw
-   * manifest text it needs to verify declared topology and delivery facts. */
-  manifestDeliveryPacket?: string;
-  /** Optional dedicated packet for the timeline-playback specialist. Carries
-   * the deterministic timeline continuity windows (gaps/overlaps per variant)
-   * that this specialist must analyze. */
-  timelinePlaybackPacket?: string;
+  /** Exclusive per-lane evidence packets; each specialist sees only the
+   * evidence of its own lane so the team does not retell the same facts. */
+  specialistPackets?: Partial<Record<SpecialistAgentId, SpecialistPacket>>;
   abrAssessment: AbrAssessment;
   abrTransitions: AbrSwitchEvidence[];
   onProgress?: ((update: AiAgentProgress) => Promise<void>) | undefined;
   runModel: AgentModelRunner;
   specialistTools: (audit: AiPromptAudit) => readonly unknown[];
   leadTools: (audit: AiPromptAudit) => readonly unknown[];
+};
+
+export type SpecialistPacket = {
+  prompt: string;
+  evidenceIds: readonly string[];
 };
 
 /**
@@ -56,18 +58,11 @@ export async function runAgentTeam(input: RunAgentTeamInput): Promise<AiInvestig
       profile,
       output: await team.runOne(
         profile.id,
-        profile.id === "manifest-delivery"
-          ? manifestDeliverySpecialistPrompt()
-          : profile.id === "timeline-playback"
-            ? timelinePlaybackSpecialistPrompt()
-            : specialistPrompt(profile.label, profile.focus),
-        profile.id === "manifest-delivery" && input.manifestDeliveryPacket
-          ? input.manifestDeliveryPacket
-          : profile.id === "timeline-playback" && input.timelinePlaybackPacket
-            ? input.timelinePlaybackPacket
-            : input.packet,
+        specialistSystemPrompt(profile),
+        input.specialistPackets?.[profile.id]?.prompt ?? input.packet,
         parseSpecialistOutput,
         input.specialistTools,
+        specialistPacketMetrics(profile.id, input.specialistPackets),
       ),
     })),
     async (): Promise<AbrResult> => ({
@@ -89,7 +84,7 @@ export async function runAgentTeam(input: RunAgentTeamInput): Promise<AiInvestig
   const abrOutput = taskResults.find((result): result is AbrResult => result.kind === "abr")?.output;
   const completed = [
     ...specialistResults.flatMap(({ profile, output }) =>
-      output ? [{ id: profile.id, output: filterSpecialist(output, input.evidenceIds) }] : []),
+      output ? [{ id: profile.id, output: filterSpecialist(output, input.evidenceIds, { investigationId: input.investigationId, agentId: profile.id }) }] : []),
     ...(abrOutput ? [{ id: "abr-switch-investigator" as const, output: filterSpecialist(toSpecialistOutput(abrOutput), input.evidenceIds) }] : []),
   ];
   if (completed.length === 0) {
@@ -123,6 +118,27 @@ export async function runAgentTeam(input: RunAgentTeamInput): Promise<AiInvestig
   };
 }
 
+function specialistPacketMetrics(
+  agentId: SpecialistAgentId,
+  packets: RunAgentTeamInput["specialistPackets"],
+): AiPromptAudit["packetMetrics"] | undefined {
+  const packet = packets?.[agentId];
+  if (!packet) return undefined;
+  const own = new Set(packet.evidenceIds);
+  const other = new Set(
+    Object.entries(packets)
+      .filter(([id]) => id !== agentId)
+      .flatMap(([, candidate]) => candidate?.evidenceIds ?? []),
+  );
+  const sharedEvidenceIdCount = [...own].filter((id) => other.has(id)).length;
+  return {
+    packetBytes: Buffer.byteLength(packet.prompt, "utf8"),
+    evidenceIdCount: own.size,
+    sharedEvidenceIdCount,
+    sharedEvidenceRatio: own.size === 0 ? 0 : sharedEvidenceIdCount / own.size,
+  };
+}
+
 function validateValidationPlan(
   plan: import("../domain/types.js").AiValidationPlan | undefined,
   assessment: AbrAssessment,
@@ -135,6 +151,15 @@ function validateValidationPlan(
   if (plan.treatment.recipe === "representation_subset" && (representationIds.length === 0 || representationIds.length >= known.size)) return undefined;
   if (plan.treatment.recipe === "single_audio" && representationIds.length > 0) return undefined;
   return { ...plan, treatment: { ...plan.treatment, representationIds } };
+}
+
+function specialistSystemPrompt(profile: (typeof SPECIALIST_PROFILES)[number]): string {
+  switch (profile.id) {
+    case "manifest-delivery": return manifestDeliverySpecialistPrompt();
+    case "timeline-playback": return timelinePlaybackSpecialistPrompt();
+    case "container-encoding": return containerEncodingSpecialistPrompt();
+    default: return specialistPrompt(profile.label, profile.focus);
+  }
 }
 
 export function unavailableResult(): AiInvestigationResult {
@@ -165,6 +190,7 @@ class AgentTeam {
     prompt: string,
     parse: (value: unknown) => T,
     createTools: (audit: AiPromptAudit) => readonly unknown[],
+    packetMetrics?: AiPromptAudit["packetMetrics"],
   ): Promise<T | undefined> {
     await this.report({ agent: agentId, stage: "started" });
     try {
@@ -179,6 +205,7 @@ class AgentTeam {
         promptAudits: this.promptAudits,
         provider: this.input.provider,
         model: this.input.model,
+        packetMetrics,
       });
       this.runs.push({ id: agentId, state: "completed", summary: output.summary });
       await this.report({ agent: agentId, stage: "completed" });
@@ -216,6 +243,7 @@ async function runStructured<T>(input: {
   promptAudits: AiPromptAudit[];
   provider: string;
   model: string;
+  packetMetrics?: AiPromptAudit["packetMetrics"];
 }): Promise<T> {
   let lastError: unknown;
   let previousErrorType: string | undefined;
@@ -244,6 +272,7 @@ async function runStructured<T>(input: {
         prompt,
         toolNames: [],
         toolCalls: [],
+        ...(input.packetMetrics ? { packetMetrics: input.packetMetrics } : {}),
       };
       input.promptAudits.push(audit);
       const tools = input.createTools(audit);
@@ -337,14 +366,35 @@ function fallbackResult(agents: AiAgentRun[], promptAudits: AiPromptAudit[], fin
   return { available: true, findings, recommendations: [], limitations, agents, promptAudits };
 }
 
-function filterSpecialist(output: SpecialistOutput, valid: Set<string>): SpecialistOutput {
-  return {
-    ...output,
-    findings: output.findings
-      .map((finding) => ({ ...finding, evidenceIds: finding.evidenceIds.filter((id) => valid.has(id)) }))
-      .filter((finding) => finding.evidenceIds.length > 0),
-    limitations: output.limitations.slice(0, 8),
-  };
+/** Evidence ID prefixes each specialist may speak from. A finding without
+ * in-lane evidence is another specialist's job (or a deterministic fact) and
+ * is dropped before the Lead synthesis. */
+const SPECIALIST_LANES: Partial<Record<SpecialistAgentId, readonly string[]>> = {
+  "timeline-playback": ["timeline:", "sample:"],
+  "container-encoding": ["sample:"],
+  "manifest-delivery": ["manifest:"],
+};
+
+function filterSpecialist(
+  output: SpecialistOutput,
+  valid: Set<string>,
+  lane?: { investigationId: string; agentId: SpecialistAgentId },
+): SpecialistOutput {
+  const cited = output.findings
+    .map((finding) => ({ ...finding, evidenceIds: finding.evidenceIds.filter((id) => valid.has(id)) }))
+    .filter((finding) => finding.evidenceIds.length > 0);
+  const prefixes = lane ? SPECIALIST_LANES[lane.agentId] : undefined;
+  const findings = prefixes
+    ? cited.filter((finding) => finding.evidenceIds.some((id) => prefixes.some((prefix) => id.startsWith(prefix))))
+    : cited;
+  if (prefixes && findings.length !== cited.length) {
+    logger.info("ai.specialist_lane_filtered", {
+      investigationId: lane!.investigationId,
+      agentId: lane!.agentId,
+      dropped: cited.length - findings.length,
+    });
+  }
+  return { ...output, findings, limitations: output.limitations.slice(0, 8) };
 }
 
 function capConfidence(value: number, findings: AiFinding[]): number {

@@ -393,10 +393,13 @@ describe("Pi investigation progress reporting", () => {
       evidence: evidenceWithSamples,
     });
 
-    const specialistPacket = run.mock.calls.find((call) => call[1] === "timeline-playback")?.[3] ?? "";
-    expect(specialistPacket).not.toContain("origin.example.test/private");
-    expect(specialistPacket).not.toContain('"nalTypes":[777]');
-    expect(specialistPacket).toContain('"sampleCount":3');
+    const containerPacket = run.mock.calls.find((call) => call[1] === "container-encoding")?.[3] ?? "";
+    expect(containerPacket).not.toContain("origin.example.test/private");
+    expect(containerPacket).not.toContain('"nalTypes":[777]');
+    expect(containerPacket).toContain('"sampleCount":3');
+    const timelinePacket = run.mock.calls.find((call) => call[1] === "timeline-playback")?.[3] ?? "";
+    expect(timelinePacket).not.toContain("origin.example.test/private");
+    expect(timelinePacket).not.toContain('"nalTypes":[777]');
   });
 
   it("gives only the manifest-delivery specialist the raw manifest content inline", async () => {
@@ -449,6 +452,123 @@ describe("Pi investigation progress reporting", () => {
     expect(containerPacket).not.toContain('"presentationGapMs":240');
     const manifestPacket = run.mock.calls.find((call) => call[1] === "manifest-delivery")?.[3] ?? "";
     expect(manifestPacket).not.toContain('"presentationGapMs":240');
+  });
+
+  it("builds exclusive lane packets instead of one shared blob", async () => {
+    const run = vi.fn<RunStructured>(successfulRun);
+    const laneEvidence: EvidenceBundleV2 = {
+      ...structuredClone(evidence),
+      hls: { variants: [
+        { index: 0, uri: "v0.m3u8", bandwidth: 500_000, codecs: "avc1.4D401E,mp4a.40.2" },
+        { index: 1, uri: "v1.m3u8", bandwidth: 900_000, codecs: "avc1.4D401F,mp4a.40.2" },
+      ], renditions: [] },
+      mediaSamples: [{
+        artifactId: "22222222-2222-4222-8222-222222222222",
+        logicalKey: "sample/variant/0/media/0",
+        kind: "media-segment",
+        sizeBytes: 2_048,
+        probe: { tracks: [{ kind: "video", codec: "h264", firstPts: 0, lastPts: 6.006 }] },
+      }],
+      timeline: [{
+        key: "manifest/variant/0",
+        kind: "video" as const,
+        segmentCount: 1,
+        gaps: [],
+        totalGapMs: 0,
+        maxGapMs: 0,
+        continuous: true,
+      }],
+    };
+
+    const result = await createAi(run).investigate({
+      investigationId: "c56a4180-65aa-42ec-a945-5fd21dec0538",
+      evidence: laneEvidence,
+    });
+
+    const systemPrompt = (agentId: string) => run.mock.calls.find((call) => call[1] === agentId)?.[2] ?? "";
+    const packetFor = (agentId: string) => run.mock.calls.find((call) => call[1] === agentId)?.[3] ?? "";
+
+    expect(systemPrompt("container-encoding")).toContain("exclusive lane");
+    expect(systemPrompt("manifest-delivery")).toContain("ANTI-ECHO");
+    expect(systemPrompt("timeline-playback")).toContain("exclusive lane");
+
+    const timelinePacket = packetFor("timeline-playback");
+    expect(timelinePacket).toContain('"timeline"');
+    expect(timelinePacket).not.toContain("mediaSampleIndex");
+    expect(timelinePacket).not.toContain('"boundary"');
+
+    const containerPacket = packetFor("container-encoding");
+    expect(containerPacket).toContain('"probe"');
+    expect(containerPacket).not.toContain('"variants"');
+
+    const manifestPacket = packetFor("manifest-delivery");
+    expect(manifestPacket).toContain("mediaSampleIndex");
+    expect(manifestPacket).not.toContain('"probe"');
+
+    expect(timelinePacket).toContain("timeline:manifest/variant/0");
+    expect(timelinePacket).not.toContain("manifest:manifest/root");
+    expect(containerPacket).toContain("sample:sample/variant/0/media/0");
+    expect(containerPacket).not.toContain("timeline:manifest/variant/0");
+    expect(manifestPacket).toContain("manifest:manifest/root");
+    expect(manifestPacket).not.toContain("sample:sample/variant/0/media/0");
+
+    const leadPacket = packetFor("lead-investigator");
+    expect(leadPacket).toContain('"abr"');
+    expect(leadPacket).not.toContain('"mediaSamples"');
+    expect(leadPacket).not.toContain('"probe"');
+
+    for (const agentId of ["timeline-playback", "container-encoding", "manifest-delivery"]) {
+      expect(packetFor(agentId)).toContain("deterministicAbrSummary");
+      expect(result.promptAudits.find((audit) => audit.agentId === agentId)?.packetMetrics)
+        .toEqual(expect.objectContaining({ packetBytes: expect.any(Number), evidenceIdCount: expect.any(Number) }));
+    }
+    expect(result.promptAudits.find((audit) => audit.agentId === "manifest-delivery")?.packetMetrics)
+      .toMatchObject({ sharedEvidenceIdCount: 0, sharedEvidenceRatio: 0 });
+  });
+
+  it("drops specialist findings that leave their evidence lane before the Lead synthesis", async () => {
+    const run = vi.fn<RunStructured>(async (investigationId, agentId) => {
+      if (agentId === "timeline-playback") {
+        return {
+          summary: "Timeline summary.",
+          findings: [
+            { title: "In-lane presentation gap", severity: "warning", explanation: "Gap between adjacent chunks.", evidenceIds: ["timeline:manifest/variant/0"], confidence: 0.9 },
+            { title: "Out-of-lane manifest echo", severity: "info", explanation: "The manifest declares an audio group.", evidenceIds: ["manifest:manifest/root"], confidence: 0.9 },
+            { title: "Cites unknown evidence", severity: "info", explanation: "Fabricated reference.", evidenceIds: ["does-not-exist"], confidence: 0.9 },
+          ],
+          limitations: [],
+        };
+      }
+      return successfulRun(investigationId, agentId);
+    });
+    const laneEvidence: EvidenceBundleV2 = {
+      ...structuredClone(evidence),
+      hls: { variants: [
+        { index: 0, uri: "v0.m3u8", bandwidth: 500_000 },
+        { index: 1, uri: "v1.m3u8", bandwidth: 900_000 },
+      ], renditions: [] },
+      timeline: [{
+        key: "manifest/variant/0",
+        kind: "video" as const,
+        segmentCount: 1,
+        gaps: [],
+        totalGapMs: 0,
+        maxGapMs: 0,
+        continuous: true,
+      }],
+    };
+
+    const result = await createAi(run).investigate({
+      investigationId: "c56a4180-65aa-42ec-a945-5fd21dec0538",
+      evidence: laneEvidence,
+    });
+
+    expect(result.available).toBe(true);
+    const leadPrompt = run.mock.calls.find((call) => call[1] === "lead-investigator")?.[3] ?? "";
+    expect(leadPrompt).toContain("In-lane presentation gap");
+    expect(leadPrompt).toContain("manifest:manifest/root");
+    expect(leadPrompt).not.toContain("Out-of-lane manifest echo");
+    expect(leadPrompt).not.toContain("Cites unknown evidence");
   });
 
   it("reports a failed specialist with its public limitation without hiding the other runs", async () => {

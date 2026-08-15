@@ -202,6 +202,9 @@ Record e um fluxo dedicado, nao uma opcao escondida no formulario de Investigate
   provider/modelo e estado, `Input · evidence packet`, `System prompt`, tools
   disponiveis, tool calls (input e resultado) e `Validated output`. A auditoria
   nunca inclui chain of thought e nao faz parte do report compartilhavel.
+- Cada tentativa tambem mostra o tamanho real do input, a quantidade de fatos
+  citaveis e a sobreposicao de IDs com as outras pistas, para tornar o custo e
+  a fronteira exclusiva dos especialistas auditaveis sem expor raciocinio.
 - Para o especialista `manifest-delivery`, o painel extrai do input packet uma
   secao `Manifest content sent inline` com o texto cru de cada manifest por
   logicalKey, provando o que o agente recebeu; runs historicos sem o campo

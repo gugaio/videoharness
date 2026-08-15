@@ -330,13 +330,13 @@ export class PostgresInvestigationJobRepository implements InvestigationJobRepos
         await client.query(
           `INSERT INTO agent_runs (
              id, investigation_id, evidence_snapshot_id, agent_id, attempt, state,
-             provider, model, system_prompt, prompt, tool_names, tool_calls, output
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13::jsonb)
+             provider, model, system_prompt, prompt, tool_names, tool_calls, packet_metrics, output
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13::jsonb,$14::jsonb)
            ON CONFLICT (investigation_id, evidence_snapshot_id, agent_id, attempt) DO NOTHING`,
           [
             randomUUID(), investigationId, snapshotId, run.agentId, run.attempt + (attemptOffset.get(run.agentId) ?? 0), run.state,
             run.provider, run.model, run.systemPrompt, run.prompt,
-            JSON.stringify(run.toolNames), JSON.stringify(run.toolCalls), JSON.stringify(run.output ?? null),
+            JSON.stringify(run.toolNames), JSON.stringify(run.toolCalls), JSON.stringify(run.packetMetrics ?? null), JSON.stringify(run.output ?? null),
           ],
         );
       }
