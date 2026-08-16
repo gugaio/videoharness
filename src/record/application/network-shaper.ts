@@ -8,18 +8,18 @@ export class SharedNetworkShaper {
   private readonly runs = new Map<string, RunState>();
   constructor(private readonly now: () => number = Date.now, private readonly sleep: (milliseconds: number) => Promise<void> = delay) {}
 
-  shape(input: { runId: string; profile: NetworkProfile; resourceKind: string; body: Uint8Array }): { stream: Readable; stage: NetworkStage; stageIndex: number } {
+  shape(input: { runId: string; profile: NetworkProfile; resourceKind: string; body: Uint8Array; additionalLatencyMs?: number }): { stream: Readable; stage: NetworkStage; stageIndex: number } {
     const state = this.runs.get(input.runId) ?? { videoRequests: 0, tokens: 0, lastRefillAt: this.now() };
     this.runs.set(input.runId, state);
     const stageIndex = stageIndexFor(input.profile, state.videoRequests);
     const stage = input.profile.stages[stageIndex]!;
     if (input.resourceKind === "video-segment") state.videoRequests += 1;
     const paced = input.resourceKind !== "master" && input.resourceKind !== "media-playlist";
-    return { stream: Readable.from(this.chunks(state, stage, input.body, paced)), stage, stageIndex };
+    return { stream: Readable.from(this.chunks(state, stage, input.body, paced, input.additionalLatencyMs ?? 0)), stage, stageIndex };
   }
 
-  private async *chunks(state: RunState, stage: NetworkStage, body: Uint8Array, paced: boolean): AsyncGenerator<Uint8Array> {
-    if (stage.latencyMs > 0) await this.sleep(stage.latencyMs);
+  private async *chunks(state: RunState, stage: NetworkStage, body: Uint8Array, paced: boolean, additionalLatencyMs: number): AsyncGenerator<Uint8Array> {
+    if (stage.latencyMs + additionalLatencyMs > 0) await this.sleep(stage.latencyMs + additionalLatencyMs);
     for (let offset = 0; offset < body.byteLength; offset += 16_384) {
       const chunk = body.subarray(offset, Math.min(offset + 16_384, body.byteLength));
       if (paced) await this.take(state, stage.bandwidthKbps, chunk.byteLength);

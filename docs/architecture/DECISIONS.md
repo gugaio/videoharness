@@ -790,3 +790,29 @@ Consequencias:
   grupo foi removido ou isolado;
 - reports antigos sem `validationPlan` usam apenas um fallback causalmente
   especifico quando a propria evidencia permite selecionar o grupo com seguranca.
+
+## 2026-08-15 - Fault plans de playback atuam somente sobre recursos publicados
+
+Decisao:
+
+- o `PlaybackRun` pode conter um `FaultPlan` versionado, separado do profile de
+  throughput e latencia;
+- regras selecionam somente metadados de `RecordedResource` (tipo, target e
+  media sequence), e a primeira correspondencia e aplicada;
+- v1 oferece atraso adicional, status HTTP e truncamento de body; a aplicacao
+  entra no journal junto de bytes e status efetivos;
+- DNS real do device, reset TCP e midia alternativa black/silent/lip-sync nao
+  entram neste corte.
+
+Motivo:
+
+- reproduzir falhas sem URLs arbitrarias preserva a regra de que o data plane
+  nunca faz fetch sob demanda e mantem cada teste auditavel;
+- throughput nao deve ganhar semantica de erro HTTP ou corrupcao de bytes.
+
+Consequencias:
+
+- o journal prova apenas que o servidor aplicou a falha e observou a request;
+  decode, render e falha DNS real exigem evidencia adicional do player/device;
+- fixtures de referencia A/V e alternates registrados podem ampliar o plano sem
+  mudar a fronteira de seguranca.

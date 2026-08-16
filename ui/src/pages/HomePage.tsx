@@ -19,6 +19,13 @@ const modules = [
     path: "/record",
   },
   {
+    title: "Samples",
+    description: "Run deterministic request-failure scenarios against a recorded VOD.",
+    icon: <SamplesIcon />,
+    available: true,
+    path: "/samples",
+  },
+  {
     title: "Watch",
     description: "Monitor a live stream 24/7 and detect problems.",
     icon: <WatchIcon />,
@@ -131,7 +138,7 @@ export function HomePage(): JSX.Element {
             {start.error && <p className="mt-3 text-sm text-rose-300">{start.error.message}</p>}
           </form>
 
-          <div className="mx-auto mt-10 grid w-full max-w-5xl gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mx-auto mt-10 grid w-full max-w-5xl gap-3 sm:grid-cols-2 lg:grid-cols-5">
             {modules.map((module) => (
               <ModuleCard key={module.title} onOpen={module.path ? () => navigate(module.path) : undefined} {...module} />
             ))}
@@ -199,6 +206,10 @@ function SearchIcon(): JSX.Element {
 
 function RecordIcon(): JSX.Element {
   return <Icon><rect height="13" rx="3" stroke="currentColor" strokeWidth="1.7" width="15" x="3" y="5.5" /><path d="m18 10 3-2v8l-3-2" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.7" /></Icon>;
+}
+
+function SamplesIcon(): JSX.Element {
+  return <Icon><path d="M4 17h3l2-7 3 10 2-6h6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" /></Icon>;
 }
 
 function WatchIcon(): JSX.Element {

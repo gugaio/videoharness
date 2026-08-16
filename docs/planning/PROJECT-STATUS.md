@@ -175,6 +175,159 @@ Ultima atualizacao: **2026-08-15**
 Persistir hipoteses no nivel da investigation e permitir que uma pergunta crie
 um pedido explicito de novo AgentRun sobre o snapshot, sem criar outro dashboard.
 
+### 2026-08-15 - FaultPlan v1 auditavel em PlaybackRun
+
+Fases impactadas: Record R1 e Investigation Workspace.
+
+Entrega:
+
+- `PlaybackRun` aceita `FaultPlan` versionado, separado do profile de rede;
+- regras deterministicas selecionam somente recursos publicados por tipo, target
+  e media sequence; paths e origem nao sao entradas da regra;
+- o data plane aplica atraso extra, status HTTP ou truncamento de body e o
+  journal persiste a regra/acao efetivamente aplicada;
+- o contrato deixa explicitas as limitacoes: delivery nao prova render/decode e
+  timeout HTTP nao e falha DNS real do device.
+
+Arquivos-chave:
+
+- `src/record/application/fault-plan.ts`;
+- `src/api/routes/streams.ts`;
+- `src/database/migrations/016_playback_fault_plans.sql`;
+- `docs/api.md`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 49 arquivos, 250 testes;
+- [x] `npm --prefix ui run check` (sem mudanca de UI);
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- gerar fixture A/V de referencia e alternates registrados para black screen,
+  silencio e offset de lip-sync;
+- correlacionar eventos reais do player com o journal.
+
+Proximo passo recomendado:
+
+- expor presets de FaultPlan na superficie Validate depois de definir os
+  cenarios de referencia A/V.
+
+### 2026-08-15 - Samples de resiliencia acessiveis pela home
+
+Fases impactadas: Record R1 e UX.
+
+Entrega:
+
+- card `Samples` ativo na home e rota `/samples` com quatro cenarios v1;
+- cada cenario leva ao intake Record e preserva a selecao na URL ate o dashboard;
+- quando a VOD fica pronta, `Run resilience sample` cria um playback run com o
+  `FaultPlan` correspondente e o journal continua como evidencia auditavel.
+
+Arquivos-chave:
+
+- `ui/src/pages/HomePage.tsx`;
+- `ui/src/pages/SamplesPage.tsx`;
+- `ui/src/pages/RecordPage.tsx`;
+- `ui/src/lib/api.ts`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] `npm test` - 49 arquivos, 250 testes;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- fonte A/V de referencia autocontida e cenarios perceptiveis de black/silent/
+  lip-sync;
+- teste de interface automatizado para a rota Samples.
+
+Proximo passo recomendado:
+
+- materializar a fixture de referencia e substituir os samples de request por
+  cenarios end-to-end de playback.
+
+### 2026-08-15 - Falha HTTP intermitente e metrica de recovery
+
+Fases impactadas: Record R1 e UX.
+
+Entrega:
+
+- `FaultRule.everyNthMatch` permite aplicar uma falha em cadencia limitada; os
+  samples 503 e 404 falham a cada quatro requests de video;
+- o contador considera tentativas de delivery correspondentes, inclusive retries;
+  falhas aplicadas continuam persistidas no journal;
+- dashboard conta `Injected faults` e identifica a regra/acao em cada request
+  afetada para comparar com o comportamento de recuperacao do player.
+
+Arquivos-chave:
+
+- `src/record/application/fault-plan.ts`;
+- `src/api/routes/streams.ts`;
+- `ui/src/pages/SamplesPage.tsx`;
+- `ui/src/pages/RecordPage.tsx`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 49 arquivos, 251 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- persistir o contador de cadencia para sobreviver a restart da API, como um
+  proximo endurecimento do data plane;
+- correlacionar a falha entregue com eventos de retry/buffering do player.
+
+Proximo passo recomendado:
+
+- adicionar telemetria de player ao run para mostrar se o player recuperou apos
+  cada falha intermitente, sem inferir render quando ela estiver ausente.
+
+### 2026-08-15 - Gestao de storage de Recordings
+
+Fases impactadas: Record R1 e UX.
+
+Entrega:
+
+- `GET /v1/recordings` lista recordings locais e bytes registrados;
+- `DELETE /v1/recordings/:id` remove primeiro a midia publicada e workspace e
+  depois a linha do banco, evitando media orfa apos uma exclusao confirmada;
+- `/recordings` mostra a ocupacao total dos registros, permite abrir ou apagar
+  com confirmacao e protege clones pertencentes a Experiments.
+
+Arquivos-chave:
+
+- `src/record/application/delete-recording.ts`;
+- `src/record/adapters/postgres-recording-deletion.ts`;
+- `ui/src/pages/RecordingsPage.tsx`;
+- `docs/api.md`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 50 arquivos, 253 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- politica opcional de retencao/limpeza por idade e limite total de disco;
+- telemetria de espaco livre do filesystem para alertar antes do limite do VPS.
+
+Proximo passo recomendado:
+
+- definir um budget de storage e avisar no intake antes de aceitar um recording
+  que pode ultrapassa-lo.
+
 ### 2026-08-15 - Pistas exclusivas e custo auditavel da equipe de agentes
 
 Fases impactadas: 3 e Investigation Workspace.

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ABR_PRESET_PROFILE,
   CONTROL_1080P_PROFILE,
@@ -13,6 +13,7 @@ import {
   getRecordingRequests,
   startRecording,
   type DeliveryRequest,
+  type FaultPlan,
   type NetworkProfileStage,
   type PlaybackRun,
   type RecordingEvent,
@@ -21,7 +22,14 @@ import { formatBytes, shortId } from "../lib/format";
 import { RecordingBrowserPlayer } from "../components/RecordingBrowserPlayer";
 
 type RecordingState = "queued" | "validating" | "collecting" | "ready" | "failed";
-type PlaybackMode = "normal" | "force-abr" | "control-1080p";
+type PlaybackMode = "normal" | "force-abr" | "control-1080p" | "sample-delay" | "sample-http-error" | "sample-http-404" | "sample-truncated";
+
+const SAMPLE_FAULTS: Record<"delay" | "http-error" | "http-404" | "truncated", FaultPlan> = {
+  delay: { schemaVersion: 1, name: "Sample · slow manifest", rules: [{ id: "slow-master", when: { resourceKind: "master" }, action: { type: "delay", delayMs: 3000 } }] },
+  "http-error": { schemaVersion: 1, name: "Sample · intermittent video 503", rules: [{ id: "video-503-every-4", when: { resourceKind: "video-segment" }, everyNthMatch: 4, action: { type: "status", statusCode: 503 } }] },
+  "http-404": { schemaVersion: 1, name: "Sample · intermittent video 404", rules: [{ id: "video-404-every-4", when: { resourceKind: "video-segment" }, everyNthMatch: 4, action: { type: "status", statusCode: 404 } }] },
+  truncated: { schemaVersion: 1, name: "Sample · truncated video chunks", rules: [{ id: "truncate-video", when: { resourceKind: "video-segment" }, action: { type: "truncate_body", keepBytes: 4096 } }] },
+};
 
 const STATE_META: Record<RecordingState, { label: string; chip: string; dot: string }> = {
   queued: { label: "Queued", chip: "border-white/15 bg-white/[0.06] text-white/70", dot: "bg-slate-300" },
@@ -33,12 +41,14 @@ const STATE_META: Record<RecordingState, { label: string; chip: string; dot: str
 
 export function RecordIntakePage(): JSX.Element {
   const navigate = useNavigate();
+  const [search] = useSearchParams();
+  const sample = search.get("sample");
   const [url, setUrl] = useState("");
   const [protocol, setProtocol] = useState<"hls" | "dash">("hls");
   const [durationSeconds, setDurationSeconds] = useState(120);
   const recording = useMutation({
     mutationFn: () => startRecording({ url, protocol, durationSeconds, startSeconds: 0 }),
-    onSuccess: ({ recording: created }) => navigate(`/recordings/${created.id}`),
+    onSuccess: ({ recording: created }) => navigate(`/recordings/${created.id}${sample && SAMPLE_FAULTS[sample as keyof typeof SAMPLE_FAULTS] ? `?sample=${sample}` : ""}`),
   });
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
@@ -48,9 +58,11 @@ export function RecordIntakePage(): JSX.Element {
   return (
     <Shell>
       <section className="mx-auto mt-16 w-full max-w-2xl">
+        <Link className="text-sm text-sky-200 hover:text-white" to="/recordings">Manage local recordings</Link>
         <p className="text-xs font-medium uppercase tracking-[.25em] text-sky-200/70">VOD ABR laboratory</p>
         <h1 className="mt-4 text-4xl font-semibold tracking-tight text-balance sm:text-5xl">Record a stream for an ABR test.</h1>
         <p className="mt-4 text-harness-muted">Clones a supported VOD ladder locally. HLS supports clear MPEG-TS; DASH supports static clear fMP4 with SegmentTemplate. Live, DRM and byte ranges are rejected before publishing.</p>
+        {sample && SAMPLE_FAULTS[sample as keyof typeof SAMPLE_FAULTS] && <p className="mt-5 rounded-xl border border-sky-300/20 bg-sky-300/[.07] px-4 py-3 text-sm text-sky-100">Resilience sample selected: <strong>{SAMPLE_FAULTS[sample as keyof typeof SAMPLE_FAULTS].name.replace("Sample · ", "")}</strong>. After the recording is ready, start the sample run from its dashboard.</p>}
         <form className="mt-9 space-y-5" onSubmit={submit}>
           <input
             className="h-14 w-full rounded-2xl border border-white/15 bg-black/25 px-5 font-mono text-sm outline-none transition focus:border-sky-300/50 focus:ring-1 focus:ring-sky-300/20"
@@ -93,6 +105,8 @@ export function RecordIntakePage(): JSX.Element {
 
 export function RecordingPage(): JSX.Element {
   const { recordingId = "" } = useParams();
+  const [search] = useSearchParams();
+  const sample = search.get("sample") as keyof typeof SAMPLE_FAULTS | null;
   const client = useQueryClient();
   const [events, setEvents] = useState<RecordingEvent[]>([]);
   const [playback, setPlayback] = useState<PlaybackRun>();
@@ -105,7 +119,11 @@ export function RecordingPage(): JSX.Element {
     refetchInterval: (query) => (["ready", "failed"].includes(query.state.data?.state ?? "") ? false : 2_000),
   });
   const run = useMutation({
-    mutationFn: (mode: PlaybackMode) => createRecordingPlaybackRun(recordingId, mode === "normal" ? NORMAL_PLAYBACK_PROFILE : mode === "control-1080p" ? CONTROL_1080P_PROFILE : ABR_PRESET_PROFILE),
+    mutationFn: (mode: PlaybackMode) => createRecordingPlaybackRun(
+      recordingId,
+      mode === "normal" ? NORMAL_PLAYBACK_PROFILE : mode === "control-1080p" ? CONTROL_1080P_PROFILE : ABR_PRESET_PROFILE,
+      mode === "sample-delay" ? SAMPLE_FAULTS.delay : mode === "sample-http-error" ? SAMPLE_FAULTS["http-error"] : mode === "sample-http-404" ? SAMPLE_FAULTS["http-404"] : mode === "sample-truncated" ? SAMPLE_FAULTS.truncated : undefined,
+    ),
     onSuccess: ({ run: created }) => {
       setPlayback(created);
     },
@@ -199,6 +217,7 @@ export function RecordingPage(): JSX.Element {
               copied={copied}
               creating={run.isPending}
               protocol={value.protocol}
+              selectedSample={sample && SAMPLE_FAULTS[sample] ? sample : undefined}
               error={run.error?.message}
               onStart={(mode) => run.mutate(mode)}
               stopping={finish.isPending}
@@ -235,6 +254,7 @@ function ShapingPanel(props: {
   copied: boolean;
   creating: boolean;
   protocol: "hls" | "dash";
+  selectedSample?: keyof typeof SAMPLE_FAULTS;
   error?: string;
   onStart: (mode: PlaybackMode) => void;
   stopping: boolean;
@@ -262,6 +282,7 @@ function ShapingPanel(props: {
               <button className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-3 text-sm font-semibold text-white transition hover:border-white/30 disabled:opacity-45" disabled={props.creating} onClick={() => props.onStart("normal")}>{props.creating ? "Creating test…" : "Start normal"}</button>
               {props.protocol === "dash" && <button className="rounded-xl border border-emerald-300/30 bg-emerald-300/[0.08] px-4 py-3 text-sm font-semibold text-emerald-100 transition hover:border-emerald-300/60 disabled:opacity-45" disabled={props.creating} onClick={() => props.onStart("control-1080p")}>1080p control</button>}
               <button className="rounded-xl bg-gradient-to-r from-sky-200 to-violet-200 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:brightness-105 disabled:opacity-45" disabled={props.creating} onClick={() => props.onStart("force-abr")}>Force ABR</button>
+              {props.selectedSample && <button className="rounded-xl border border-fuchsia-300/35 bg-fuchsia-300/[.1] px-4 py-3 text-sm font-semibold text-fuchsia-100 transition hover:border-fuchsia-300/60 disabled:opacity-45" disabled={props.creating} onClick={() => props.onStart(`sample-${props.selectedSample}` as PlaybackMode)}>Run resilience sample</button>}
             </div>
           )}
           {props.run && !isTerminal(props.run) && (
@@ -330,7 +351,7 @@ function AbrDashboard({ run, items }: { run: PlaybackRun; items: DeliveryRequest
         <Metric label="Requests" value={String(stats.total)} hint="all resources" />
         <Metric label="Video picks" value={String(stats.video)} hint="segment requests" />
         <Metric label="Avg latency" value={stats.avgLatency === null ? "—" : `${stats.avgLatency} ms`} hint="served" />
-        <Metric label="Avg bandwidth" value={stats.avgBandwidth === null ? "—" : `${stats.avgBandwidth} kbps`} hint="network pacing" />
+        <Metric label="Injected faults" value={String(stats.faults)} hint="journaled delivery rules" />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-5">
@@ -469,6 +490,7 @@ function RequestTimeline({ items }: { items: DeliveryRequest[] }): JSX.Element {
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                   <span className="font-mono text-[11px] text-white/40">t+{relS}s</span>
                   <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-white/45">{KIND_LABEL[item.resourceKind] ?? item.resourceKind}</span>
+                  {item.faultRuleId && <span className="rounded-full border border-rose-300/25 bg-rose-300/[.08] px-2 py-0.5 text-[10px] font-semibold text-rose-100">Fault · {item.faultAction}</span>}
                   {item.variantResolution ? (
                     <>
                       <span className="inline-flex items-center gap-1">
@@ -629,7 +651,7 @@ function stageBands(items: DeliveryRequest[]): Array<{ start: number; end: numbe
   return bands;
 }
 
-function summarize(items: DeliveryRequest[]): { total: number; video: number; variantChanges: number; avgLatency: number | null; avgBandwidth: number | null } {
+function summarize(items: DeliveryRequest[]): { total: number; video: number; faults: number; variantChanges: number; avgLatency: number | null; avgBandwidth: number | null } {
   const lats = items.map((it) => it.latencyMs ?? 0);
   const bws = items.map((it) => it.bandwidthKbps ?? 0);
   const videos = items.filter((it) => it.resourceKind === "video-segment");
@@ -642,7 +664,7 @@ function summarize(items: DeliveryRequest[]): { total: number; video: number; va
   }
   const avgLatency = lats.length ? Math.round(lats.reduce((a, b) => a + b, 0) / lats.length) : null;
   const avgBandwidth = bws.length ? Math.round(bws.reduce((a, b) => a + b, 0) / bws.length) : null;
-  return { total: items.length, video: videos.length, variantChanges, avgLatency, avgBandwidth };
+  return { total: items.length, video: videos.length, faults: items.filter((item) => item.faultRuleId !== undefined).length, variantChanges, avgLatency, avgBandwidth };
 }
 
 function fmtShortKbps(kbps: number): string {

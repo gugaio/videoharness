@@ -8,10 +8,11 @@ import { ApiError } from "../errors.js";
 import { CreatePlaybackRunRequestSchema } from "../../contracts/recording.js";
 import type { CreatePlaybackRun } from "../../record/application/playback-runs.js";
 import type { PlaybackRunRepository } from "../../record/ports/playback-run.js";
+import type { DeleteRecording } from "../../record/application/delete-recording.js";
 import { buildPlaybackRunAbrSwitchEvidence } from "../../record/application/build-abr-switch-evidence.js";
 
 /** Registered by the production composition root after an HLS materializer is configured. */
-export function registerRecordingRoutes(server: FastifyInstance, dependencies: { startRecording: StartRecording; queries: RecordingQueries; createPlaybackRun?: CreatePlaybackRun; playbackRuns?: PlaybackRunRepository }): void {
+export function registerRecordingRoutes(server: FastifyInstance, dependencies: { startRecording: StartRecording; queries: RecordingQueries; createPlaybackRun?: CreatePlaybackRun; playbackRuns?: PlaybackRunRepository; deleteRecording?: DeleteRecording }): void {
   server.post<{ Body: unknown }>("/v1/recordings", async (request, reply) => {
     const parsed = CreateRecordingRequestSchema.safeParse(request.body);
     if (!parsed.success) throw new ApiError(400, "INVALID_REQUEST", "A valid HLS or DASH URL and bounded recording window are required");
@@ -43,6 +44,19 @@ export function registerRecordingRoutes(server: FastifyInstance, dependencies: {
     const recording = await dependencies.queries.getRecording(id);
     if (!recording) throw new ApiError(404, "RECORDING_NOT_FOUND", "Recording not found");
     return { recording };
+  });
+
+  server.get("/v1/recordings", async () => {
+    if (!dependencies.queries.listRecordings) throw new ApiError(503, "RECORDING_LIST_UNAVAILABLE", "Recording listing is not configured");
+    return { recordings: await dependencies.queries.listRecordings() };
+  });
+
+  server.delete<{ Params: { id: string } }>("/v1/recordings/:id", async (request) => {
+    if (!dependencies.deleteRecording) throw new ApiError(503, "RECORDING_DELETION_UNAVAILABLE", "Recording deletion is not configured");
+    const result = await dependencies.deleteRecording(parseRecordingId(request.params.id));
+    if (result === "not_found") throw new ApiError(404, "RECORDING_NOT_FOUND", "Recording not found");
+    if (result === "linked_to_experiment") throw new ApiError(409, "RECORDING_LINKED_TO_EXPERIMENT", "Delete the owning investigation or experiment before deleting this recording");
+    return { deleted: true };
   });
 
   server.get<{ Params: { id: string } }>("/v1/recordings/:id/events", async (request, reply) => {
@@ -93,7 +107,7 @@ export function registerRecordingRoutes(server: FastifyInstance, dependencies: {
     const recordingId = parseRecordingId(request.params.id);
     const parsed = CreatePlaybackRunRequestSchema.safeParse(request.body ?? {});
     if (!parsed.success) throw new ApiError(400, "INVALID_PLAYBACK_RUN", "Playback duration must be between 30 and 900 seconds");
-    const created = await dependencies.createPlaybackRun({ recordingId, maxDurationSeconds: parsed.data.maxDurationSeconds, profile: parsed.data.profile });
+    const created = await dependencies.createPlaybackRun({ recordingId, maxDurationSeconds: parsed.data.maxDurationSeconds, profile: parsed.data.profile, ...(parsed.data.faultPlan ? { faultPlan: parsed.data.faultPlan } : {}) });
     if (created === "recording_not_ready") throw new ApiError(409, "RECORDING_NOT_READY", "Playback is available when the recording is ready");
     return reply.status(201).send({ run: created.run, playbackUrl: fixedPlaybackUrl(recordingId, created.manifestPath) });
   });

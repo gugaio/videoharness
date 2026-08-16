@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { HealthResponseSchema } from "../contracts/health.js";
 import { StartInvestigationResponseSchema } from "../contracts/investigation.js";
 import { buildApiServer } from "./server.js";
+import { describeResource } from "./routes/streams.js";
 import { formatInvestigationSseEvent } from "./routes/investigations.js";
 import { formatRecordingSseEvent } from "./routes/recordings.js";
 import { FilesystemRecordingStore } from "../record/adapters/filesystem-recording-store.js";
@@ -532,6 +533,55 @@ describe("recording routes", () => {
     const response = await server.inject({ method: "GET", url: `/streams/recordings/${recordingId}/index.m3u8` });
     expect(response.statusCode).toBe(200);
     expect(response.body).toBe("#EXTM3U\n");
+    await server.close();
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+
+  it("injects registered playback faults and journals the applied rule", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "video-harness-fault-stream-"));
+    const store = new FilesystemRecordingStore(directory);
+    const recordingId = "c56a4180-65aa-42ec-a945-5fd21dec0538";
+    const runId = "8dc67e09-4b25-4fe5-a69a-58f896fb5197";
+    const workspace = await store.prepareWorkspace(recordingId);
+    await fs.mkdir(path.join(workspace.path, "video-1", "segments"), { recursive: true });
+    await fs.writeFile(path.join(workspace.path, "video-1", "segments", "12.ts"), "abcdefgh");
+    await store.publish(workspace);
+    const deliveries: Array<Record<string, unknown>> = [];
+    const run = { id: runId, recordingId, state: "created" as const, maxDurationSeconds: 300, profile: { schemaVersion: 1 as const, name: "baseline", stages: [{ afterVideoRequests: 0, bandwidthKbps: 100000, latencyMs: 0 }] }, faultPlan: { schemaVersion: 1 as const, name: "faults", rules: [
+      { id: "truncate-12", when: { resourceKind: "video-segment" as const, targetId: "video-1", mediaSequence: 12 }, action: { type: "truncate_body" as const, keepBytes: 3 } },
+    ] }, createdAt: "2026-08-06T12:00:00.000Z", expiresAt: "2026-08-07T12:00:00.000Z" };
+    expect(describeResource("video-1/segments/12.ts")).toEqual({ kind: "video-segment", contentType: "video/mp2t", metadata: { targetId: "video-1", mediaSequence: 12 } });
+    const server = buildApiServer({
+      database: { check: async () => undefined }, startInvestigation, investigationQueries,
+      playbackRuns: { create: async () => "recording_not_ready", findById: async () => run, findLatestOpen: async () => run, finish: async () => null, recordDelivery: async (delivery) => { deliveries.push(delivery); }, listDeliveries: async () => [] },
+      recordingStore: store,
+    });
+
+    const response = await server.inject({ method: "GET", url: `/streams/recordings/${recordingId}/video-1/segments/12.ts` });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe("abc");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(deliveries).toContainEqual(expect.objectContaining({ faultRuleId: "truncate-12", faultAction: "truncate_body", bytesSent: 3 }));
+    await server.close();
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+
+  it("returns an injected HTTP status without reading a different resource", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "video-harness-status-fault-stream-"));
+    const store = new FilesystemRecordingStore(directory);
+    const recordingId = "c56a4180-65aa-42ec-a945-5fd21dec0538";
+    const workspace = await store.prepareWorkspace(recordingId);
+    await fs.writeFile(path.join(workspace.path, "index.m3u8"), "#EXTM3U\n");
+    await store.publish(workspace);
+    const run = { id: "8dc67e09-4b25-4fe5-a69a-58f896fb5197", recordingId, state: "created" as const, maxDurationSeconds: 300, profile: { schemaVersion: 1 as const, name: "baseline", stages: [{ afterVideoRequests: 0, bandwidthKbps: 100000, latencyMs: 0 }] }, faultPlan: { schemaVersion: 1 as const, name: "faults", rules: [
+      { id: "manifest-unavailable", when: { resourceKind: "master" as const }, action: { type: "status" as const, statusCode: 503 } },
+    ] }, createdAt: "2026-08-06T12:00:00.000Z", expiresAt: "2026-08-07T12:00:00.000Z" };
+    const server = buildApiServer({
+      database: { check: async () => undefined }, startInvestigation, investigationQueries,
+      playbackRuns: { create: async () => "recording_not_ready", findById: async () => run, findLatestOpen: async () => run, finish: async () => null, recordDelivery: async () => undefined, listDeliveries: async () => [] },
+      recordingStore: store,
+    });
+    expect((await server.inject({ method: "GET", url: `/streams/recordings/${recordingId}/index.m3u8` })).statusCode).toBe(503);
     await server.close();
     await fs.rm(directory, { recursive: true, force: true });
   });

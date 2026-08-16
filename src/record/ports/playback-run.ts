@@ -1,5 +1,5 @@
 import type { PlaybackRun } from "../domain/playback-run.js";
-import type { NetworkProfile } from "../domain/playback-run.js";
+import type { FaultPlan, NetworkProfile } from "../domain/playback-run.js";
 
 export type CreatedPlaybackRun = { run: PlaybackRun; manifestPath: "index.m3u8" | "index.mpd" };
 export type ResolvedPlaybackResource = {
@@ -12,11 +12,11 @@ export type ResolvedPlaybackResource = {
   profile: NetworkProfile;
   metadata: Record<string, unknown>;
 };
-export type DeliveryRequest = { id: string; logicalPath: string; resourceKind: string; targetId?: string; mediaSequence?: number; variantBandwidth?: number; variantResolution?: string; stageIndex: number; bandwidthKbps: number; latencyMs: number; bytesSent: number; statusCode: number; startedAt: string; completedAt: string };
+export type DeliveryRequest = { id: string; logicalPath: string; resourceKind: string; targetId?: string; mediaSequence?: number; variantBandwidth?: number; variantResolution?: string; stageIndex: number; bandwidthKbps: number; latencyMs: number; bytesSent: number; statusCode: number; startedAt: string; completedAt: string; faultRuleId?: string; faultAction?: string };
 export type RecordedDiagnosticResource = { logicalPath: string; resourceKind: string; sizeBytes: number; sha256: string; metadata: Record<string, unknown> };
 
 export interface PlaybackRunRepository {
-  create(recordingId: string, maxDurationSeconds: number, profile: NetworkProfile): Promise<CreatedPlaybackRun | "recording_not_ready">;
+  create(recordingId: string, maxDurationSeconds: number, profile: NetworkProfile, faultPlan?: FaultPlan): Promise<CreatedPlaybackRun | "recording_not_ready">;
   findById(recordingId: string, runId: string): Promise<PlaybackRun | null>;
   findLatestOpen(recordingId: string): Promise<PlaybackRun | null>;
   finish(recordingId: string, runId: string): Promise<PlaybackRun | null>;

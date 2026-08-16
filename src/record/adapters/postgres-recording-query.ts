@@ -42,6 +42,15 @@ export class PostgresRecordingQuery implements RecordingQueryRepository {
     return result.rows[0] ? toRecording(result.rows[0]) : null;
   }
 
+  async list(limit: number): Promise<Recording[]> {
+    const result = await this.pool.query<RecordingRow>(
+      `SELECT id, source_url, protocol, state, requested_duration_seconds, requested_start_seconds,
+              coverage_seconds, total_bytes, error_code, error_message, created_at, updated_at, completed_at
+         FROM recordings ORDER BY created_at DESC LIMIT $1`, [limit],
+    );
+    return result.rows.map(toRecording);
+  }
+
   async listEventsAfter(recordingId: string, afterEventId: string, limit: number): Promise<RecordingEvent[]> {
     const result = await this.pool.query<EventRow>(
       `SELECT id, recording_id, type, actor, message, payload, created_at

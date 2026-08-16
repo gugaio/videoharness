@@ -5,6 +5,7 @@ import { ApiError } from "../errors.js";
 import { SharedNetworkShaper } from "../../record/application/network-shaper.js";
 import { baselineNetworkProfile, type NetworkProfile, type PlaybackRun } from "../../record/domain/playback-run.js";
 import type { ExperimentStreamResolver } from "../../experiment/ports/experiment-repository.js";
+import { PlaybackFaultInjector } from "../../record/application/fault-plan.js";
 
 const RECORDING_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const STREAM_ROUTE = "/streams/recordings/:recordingId/*";
@@ -23,8 +24,9 @@ type ByteRange = { start: number; end: number };
  * run to pick the network profile and journal attribution; HEAD and OPTIONS are
  * observational and never advance shaping. Only published resources are read.
  */
-export function registerStreamRoutes(server: FastifyInstance, dependencies: { runs: PlaybackRunRepository; store: FilesystemRecordingStore; experiments?: ExperimentStreamResolver; shaper?: SharedNetworkShaper }): void {
+export function registerStreamRoutes(server: FastifyInstance, dependencies: { runs: PlaybackRunRepository; store: FilesystemRecordingStore; experiments?: ExperimentStreamResolver; shaper?: SharedNetworkShaper; faults?: PlaybackFaultInjector }): void {
   const shaper = dependencies.shaper ?? new SharedNetworkShaper();
+  const faults = dependencies.faults ?? new PlaybackFaultInjector();
   const serve = async (request: FastifyRequest<StreamRoute>, reply: FastifyReply): Promise<unknown> => {
     setCorsHeaders(reply);
     const recordingId = parseRecordingId(request.params.recordingId);
@@ -50,6 +52,7 @@ export function registerStreamRoutes(server: FastifyInstance, dependencies: { ru
       body,
       runs: dependencies.runs,
       shaper,
+      faults,
       reply,
     });
   };
@@ -90,6 +93,7 @@ export function registerStreamRoutes(server: FastifyInstance, dependencies: { ru
         body,
         runs: dependencies.runs,
         shaper,
+        faults,
         reply,
       });
     };
@@ -105,28 +109,49 @@ export function registerStreamRoutes(server: FastifyInstance, dependencies: { ru
   }
 }
 
-function serveGet(input: { logicalPath: string; rangeHeader: string | undefined; run: PlaybackRun | null; runId: string; profile: NetworkProfile; body: Uint8Array; runs: PlaybackRunRepository; shaper: SharedNetworkShaper; reply: FastifyReply }): unknown {
-  const { bytes, statusCode } = prepareResponse(input.rangeHeader, input.body, input.reply);
+function serveGet(input: { logicalPath: string; rangeHeader: string | undefined; run: PlaybackRun | null; runId: string; profile: NetworkProfile; body: Uint8Array; runs: PlaybackRunRepository; shaper: SharedNetworkShaper; faults: PlaybackFaultInjector; reply: FastifyReply }): unknown {
   const resource = describeResource(input.logicalPath);
-  const shaped = input.shaper.shape({ runId: input.runId, profile: input.profile, resourceKind: resource.kind, body: bytes });
+  const appliedFault = input.run ? input.faults.select(input.run.id, input.run.faultPlan, { kind: resource.kind, ...resource.metadata }) : undefined;
+  const fault = appliedFault?.rule;
+  const startedAt = new Date().toISOString();
+  if (fault?.action.type === "status") {
+    const shaped = input.shaper.shape({ runId: input.runId, profile: input.profile, resourceKind: resource.kind, body: new Uint8Array(), additionalLatencyMs: 0 });
+    recordOnFinish(input, resource, shaped.stageIndex, shaped.stage.bandwidthKbps, shaped.stage.latencyMs, 0, fault.action.statusCode, startedAt, fault.id, fault.action.type);
+    return input.reply.status(fault.action.statusCode).type(resource.contentType).send(shaped.stream);
+  }
+  const response = prepareResponse(input.rangeHeader, input.body, input.reply);
+  const bytes = fault?.action.type === "truncate_body" ? response.bytes.subarray(0, Math.min(fault.action.keepBytes, response.bytes.byteLength)) : response.bytes;
+  if (fault?.action.type === "truncate_body") input.reply.header("Content-Length", String(bytes.byteLength));
+  const shaped = input.shaper.shape({
+    runId: input.runId,
+    profile: input.profile,
+    resourceKind: resource.kind,
+    body: bytes,
+    additionalLatencyMs: fault?.action.type === "delay" ? fault.action.delayMs : 0,
+  });
 
   // The journal is observational only: it never sits on the delivery critical path.
   // Without an active run there is no playback run to attribute deliveries to.
-  if (input.run) {
-    input.reply.raw.once("finish", () => void input.runs.recordDelivery({
-      runId: input.run!.id,
-      logicalPath: input.logicalPath,
-      resourceKind: resource.kind,
-      ...resource.metadata,
-      stageIndex: shaped.stageIndex,
-      bandwidthKbps: shaped.stage.bandwidthKbps,
-      latencyMs: shaped.stage.latencyMs,
-      bytesSent: bytes.byteLength,
-      statusCode,
-      startedAt: new Date().toISOString(),
-    }).catch(() => undefined));
-  }
-  return input.reply.status(statusCode).type(resource.contentType).send(shaped.stream);
+  recordOnFinish(input, resource, shaped.stageIndex, shaped.stage.bandwidthKbps, shaped.stage.latencyMs, bytes.byteLength, response.statusCode, startedAt, fault?.id, fault?.action.type);
+  return input.reply.status(response.statusCode).type(resource.contentType).send(shaped.stream);
+}
+
+function recordOnFinish(input: { logicalPath: string; run: PlaybackRun | null; runs: PlaybackRunRepository; reply: FastifyReply }, resource: ReturnType<typeof describeResource>, stageIndex: number, bandwidthKbps: number, latencyMs: number, bytesSent: number, statusCode: number, startedAt: string, faultRuleId?: string, faultAction?: string): void {
+  if (!input.run) return;
+  input.reply.raw.once("finish", () => void input.runs.recordDelivery({
+    runId: input.run!.id,
+    logicalPath: input.logicalPath,
+    resourceKind: resource.kind,
+    ...resource.metadata,
+    stageIndex,
+    bandwidthKbps,
+    latencyMs,
+    bytesSent,
+    statusCode,
+    startedAt,
+    ...(faultRuleId ? { faultRuleId } : {}),
+    ...(faultAction ? { faultAction } : {}),
+  }).catch(() => undefined));
 }
 
 function serveHead(logicalPath: string, rangeHeader: string | undefined, body: Uint8Array, reply: FastifyReply): unknown {
@@ -184,7 +209,7 @@ function setCorsHeaders(reply: FastifyReply): void {
   reply.header("Cross-Origin-Resource-Policy", "cross-origin");
 }
 
-function describeResource(logicalPath: string): { kind: string; contentType: string; metadata: { targetId?: string; mediaSequence?: number } } {
+export function describeResource(logicalPath: string): { kind: string; contentType: string; metadata: { targetId?: string; mediaSequence?: number } } {
   if (logicalPath === "index.m3u8" || logicalPath === "index.mpd") return { kind: "master", contentType: logicalPath.endsWith(".mpd") ? "application/dash+xml" : "application/vnd.apple.mpegurl", metadata: {} };
   if (logicalPath.endsWith("/index.m3u8")) {
     const targetId = logicalPath.split("/")[1];

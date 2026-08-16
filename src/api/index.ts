@@ -17,6 +17,8 @@ import { PostgresRecordingIntake } from "../record/adapters/postgres-recording-i
 import { createStartRecording } from "../record/application/start-recording.js";
 import { PostgresRecordingQuery } from "../record/adapters/postgres-recording-query.js";
 import { createRecordingQueries } from "../record/application/recording-queries.js";
+import { PostgresRecordingDeletion } from "../record/adapters/postgres-recording-deletion.js";
+import { createDeleteRecording } from "../record/application/delete-recording.js";
 import { PostgresPlaybackRuns } from "../record/adapters/postgres-playback-run.js";
 import { createPlaybackRun } from "../record/application/playback-runs.js";
 import { FilesystemRecordingStore } from "../record/adapters/filesystem-recording-store.js";
@@ -33,6 +35,7 @@ const investigationAnalysis = new PostgresInvestigationAnalysis(pool);
 const experimentRepository = new PostgresExperimentRepository(pool);
 const experimentEvaluationJobs = new PostgresExperimentEvaluationJobs(pool);
 const playbackRuns = new PostgresPlaybackRuns(pool);
+const recordingStore = new FilesystemRecordingStore(config.dataDir);
 const experimentService = createExperimentService({
   repository: experimentRepository,
   evaluationJobs: experimentEvaluationJobs,
@@ -63,9 +66,10 @@ const server = buildApiServer({
   artifactStore: new FilesystemArtifactStore(config.dataDir),
   startRecording: createStartRecording(new PostgresRecordingIntake(pool)),
   recordingQueries: createRecordingQueries(new PostgresRecordingQuery(pool)),
+  deleteRecording: createDeleteRecording(new PostgresRecordingDeletion(pool), recordingStore),
   createPlaybackRun: createPlaybackRun(playbackRuns),
   playbackRuns,
-  recordingStore: new FilesystemRecordingStore(config.dataDir),
+  recordingStore,
   experimentService,
   experimentStreams: experimentRepository,
   version: process.env.npm_package_version ?? "0.1.0",

@@ -58,4 +58,28 @@ export const CreatePlaybackRunRequestSchema = z.object({
       }
     }
   }).default(baselineNetworkProfile),
+  faultPlan: z.object({
+    schemaVersion: z.literal(1),
+    name: z.string().trim().min(1).max(80),
+    rules: z.array(z.object({
+      id: z.string().trim().min(1).max(80).regex(/^[a-z0-9][a-z0-9_-]*$/),
+      when: z.object({
+        resourceKind: z.enum(["master", "media-playlist", "init-segment", "video-segment", "audio-segment"]),
+        targetId: z.string().trim().min(1).max(160).optional(),
+        mediaSequence: z.number().int().min(0).max(1_000_000).optional(),
+      }),
+      everyNthMatch: z.number().int().min(1).max(100).optional(),
+      action: z.discriminatedUnion("type", [
+        z.object({ type: z.literal("delay"), delayMs: z.number().int().min(1).max(10_000) }),
+        z.object({ type: z.literal("status"), statusCode: z.number().int().min(400).max(599) }),
+        z.object({ type: z.literal("truncate_body"), keepBytes: z.number().int().min(0).max(64 * 1024 * 1024) }),
+      ]),
+    })).min(1).max(32).superRefine((rules, context) => {
+      const ids = new Set<string>();
+      for (const [index, rule] of rules.entries()) {
+        if (ids.has(rule.id)) context.addIssue({ code: z.ZodIssueCode.custom, message: "fault rule ids must be unique", path: [index, "id"] });
+        ids.add(rule.id);
+      }
+    }),
+  }).optional(),
 });

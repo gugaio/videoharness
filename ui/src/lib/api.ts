@@ -402,6 +402,12 @@ const RecordingSchema = z.object({
 });
 export const RecordingEventSchema = z.object({ id: z.string().regex(/^\d+$/), recordingId: z.string().uuid(), type: z.string(), actor: z.string(), message: z.string(), payload: z.record(z.string(), z.unknown()), createdAt: z.string() });
 const NetworkProfileSchema = z.object({ schemaVersion: z.literal(1), name: z.string(), stages: z.array(z.object({ afterVideoRequests: z.number(), bandwidthKbps: z.number(), latencyMs: z.number() })) });
+const FaultPlanSchema = z.object({
+  schemaVersion: z.literal(1), name: z.string(), rules: z.array(z.object({
+    id: z.string(), when: z.object({ resourceKind: z.enum(["master", "media-playlist", "init-segment", "video-segment", "audio-segment"]), targetId: z.string().optional(), mediaSequence: z.number().optional() }), everyNthMatch: z.number().optional(),
+    action: z.discriminatedUnion("type", [z.object({ type: z.literal("delay"), delayMs: z.number() }), z.object({ type: z.literal("status"), statusCode: z.number() }), z.object({ type: z.literal("truncate_body"), keepBytes: z.number() })]),
+  })),
+});
 export const ABR_PRESET_PROFILE: z.infer<typeof NetworkProfileSchema> = {
   schemaVersion: 1,
   name: "Good → constrained → recovery",
@@ -421,13 +427,14 @@ export const CONTROL_1080P_PROFILE: z.infer<typeof NetworkProfileSchema> = {
   name: "1080p control (no ABR)",
   stages: [{ afterVideoRequests: 0, bandwidthKbps: 100000, latencyMs: 0 }],
 };
-const PlaybackRunSchema = z.object({ id: z.string().uuid(), recordingId: z.string().uuid(), state: z.enum(["created", "active", "completed", "expired", "failed"]), maxDurationSeconds: z.number(), profile: NetworkProfileSchema, createdAt: z.string(), expiresAt: z.string() });
+const PlaybackRunSchema = z.object({ id: z.string().uuid(), recordingId: z.string().uuid(), state: z.enum(["created", "active", "completed", "expired", "failed"]), maxDurationSeconds: z.number(), profile: NetworkProfileSchema, faultPlan: FaultPlanSchema.optional(), createdAt: z.string(), expiresAt: z.string() });
 export type NetworkProfile = z.infer<typeof NetworkProfileSchema>;
 export type NetworkProfileStage = NetworkProfile["stages"][number];
+export type FaultPlan = z.infer<typeof FaultPlanSchema>;
 export type PlaybackRun = z.infer<typeof PlaybackRunSchema>;
 export type Recording = z.infer<typeof RecordingSchema>;
 export type RecordingEvent = z.infer<typeof RecordingEventSchema>;
-const DeliveryRequestSchema = z.object({ id: z.string(), logicalPath: z.string(), resourceKind: z.string(), targetId: z.string().optional(), mediaSequence: z.number().optional(), variantBandwidth: z.number().optional(), variantResolution: z.string().optional(), stageIndex: z.number(), bandwidthKbps: z.number(), latencyMs: z.number(), bytesSent: z.number(), statusCode: z.number(), startedAt: z.string(), completedAt: z.string() });
+const DeliveryRequestSchema = z.object({ id: z.string(), logicalPath: z.string(), resourceKind: z.string(), targetId: z.string().optional(), mediaSequence: z.number().optional(), variantBandwidth: z.number().optional(), variantResolution: z.string().optional(), stageIndex: z.number(), bandwidthKbps: z.number(), latencyMs: z.number(), bytesSent: z.number(), statusCode: z.number(), faultRuleId: z.string().optional(), faultAction: z.string().optional(), startedAt: z.string(), completedAt: z.string() });
 export type DeliveryRequest = z.infer<typeof DeliveryRequestSchema>;
 export type InvestigationReport = z.infer<typeof InvestigationReportSchema>;
 export type InvestigationEvidence = z.infer<typeof InvestigationEvidenceSchema>;
@@ -470,8 +477,16 @@ export async function getRecording(id: string): Promise<Recording> {
   const response = await fetch(`/v1/recordings/${encodeURIComponent(id)}`);
   return (await parseResponse(response, z.object({ recording: RecordingSchema }))).recording;
 }
-export async function createRecordingPlaybackRun(id: string, profile: NetworkProfile = ABR_PRESET_PROFILE): Promise<{ run: PlaybackRun; playbackUrl: string }> {
-  const response = await fetch(`/v1/recordings/${encodeURIComponent(id)}/playback-runs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profile }) });
+export async function listRecordings(): Promise<Recording[]> {
+  const response = await fetch("/v1/recordings");
+  return (await parseResponse(response, z.object({ recordings: z.array(RecordingSchema) }))).recordings;
+}
+export async function deleteRecording(id: string): Promise<void> {
+  const response = await fetch(`/v1/recordings/${encodeURIComponent(id)}`, { method: "DELETE" });
+  await parseResponse(response, z.object({ deleted: z.literal(true) }));
+}
+export async function createRecordingPlaybackRun(id: string, profile: NetworkProfile = ABR_PRESET_PROFILE, faultPlan?: FaultPlan): Promise<{ run: PlaybackRun; playbackUrl: string }> {
+  const response = await fetch(`/v1/recordings/${encodeURIComponent(id)}/playback-runs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profile, ...(faultPlan ? { faultPlan } : {}) }) });
   return parseResponse(response, z.object({ run: PlaybackRunSchema, playbackUrl: z.string() }));
 }
 export async function getLatestRecordingPlaybackRun(id: string): Promise<{ run: PlaybackRun; playbackUrl: string } | null> {

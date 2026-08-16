@@ -38,12 +38,28 @@ Uma dobra principal, sem navegacao competitiva:
 4. URL input dominante.
 5. Problem description opcional.
 6. CTA `Investigate`.
-7. Cards Investigate, Record, Watch e Replay.
+7. Cards Investigate, Record, Samples, Watch e Replay.
 
 Investigate permanece o fluxo default. O card Investigate agora navega para a
 lista de cases (`/investigations`), onde a pessoa abre ou apaga investigations;
-o formulario da home continua criando um caso novo. Record esta interativo e
-navega para `/record`; Watch e Replay continuam inativos.
+o formulario da home continua criando um caso novo. Record e Samples estao
+interativos e navegam para `/record` e `/samples`; Watch e Replay continuam
+inativos.
+
+### Samples
+
+- Rota `/samples`, acessivel pelo card `Samples` na home.
+- Apresenta cenarios de resiliencia que atuam sobre uma VOD gravada localmente:
+  manifest lento, `503` ou `404` intermitente em video e chunks de video
+  truncados. Os cenarios intermitentes falham no quarto, oitavo e demais
+  multiplos de quatro requests de video.
+- Escolher um cenario abre o intake Record; depois de `ready`, o dashboard
+  apresenta `Run resilience sample` para criar o playback run com o `FaultPlan`.
+- A tela declara que v1 nao contem asset A/V proprio, black screen, silence,
+  lip-sync ou DNS real e que o journal e evidencia de delivery, nao de render.
+- O dashboard de playback conta `Injected faults` e marca cada request afetada
+  pela regra, permitindo comparar a cadencia entregue com retries e recuperacao
+  observados no player.
 
 ### Pagina de investigations
 
@@ -112,6 +128,14 @@ Record e um fluxo dedicado, nao uma opcao escondida no formulario de Investigate
   ladder descoberta, variant sendo gravada, janela alinhada e origin publicado.
 - Estado `ready` prioriza ladder, cobertura efetiva, bytes e limitacoes.
 - Falha parcial nunca oferece uma URL possivelmente inconsistente.
+
+### Gestao de recordings locais
+
+- `/recordings` lista recordings por data, protocolo, estado, URL e bytes
+  registrados, incluindo o total ocupado pelos items listados.
+- `Delete files` exige confirmacao e remove a midia publicada e workspace antes
+  de remover o registro. Recordings pertencentes a Experiment sao protegidos;
+  a pessoa deve apagar o owner antes de apagar seus arquivos.
 
 ### Playback run
 

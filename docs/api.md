@@ -40,6 +40,8 @@ flowchart TD
     Review --> Report
     Client --> Share[GET /v1/reports/shared/:token]
     Client --> CreateRecording[POST /v1/recordings]
+    Client --> ListRecordings[GET /v1/recordings]
+    Client --> DeleteRecording[DELETE /v1/recordings/:id]
     CreateRecording --> RecordingWorker[worker recording job]
     RecordingWorker --> RecordingStore[(recording storage)]
     Client --> Recording[GET /v1/recordings/:id]
@@ -94,6 +96,8 @@ flowchart TD
 | Implementado | POST | `/v1/investigations/:id/playback-sessions/:sessionId/fail` | Encerrar tentativa sem mudar o report |
 | Planejado | GET | `/v1/reports/shared/:token` | Report compartilhado por token |
 | Implementado R1/R2 | POST | `/v1/recordings` | Criar recording HLS ou DASH VOD e enfileirar coleta |
+| Implementado R1/R2 | GET | `/v1/recordings` | Listar recordings locais e seus bytes registrados |
+| Implementado R1/R2 | DELETE | `/v1/recordings/:id` | Apagar recording independente, seus arquivos publicados e workspace temporario |
 | Implementado R1 | GET | `/v1/recordings/:id` | Estado, cobertura e falha publica |
 | Implementado R1 | GET | `/v1/recordings/:id/events` | Historico e SSE do recording |
 | Implementado R1 | POST | `/v1/recordings/:id/playback-runs` | Criar experimento; devolve a URL fixa do recording |
@@ -635,7 +639,9 @@ Sem `profile`, a API usa `baseline` (100.000 Kbps, 0 ms): o modo normal. A UI
 envia esse profile explicitamente para `Start normal`; `Force ABR` envia o preset
 com os tres stages Good, constrained e recovery.
 
-O profile do playback run controla somente throughput/latencia. Se o teste
+O profile do playback run controla somente throughput/latencia. O `faultPlan`
+opcional aplica falhas deterministicas a recursos ja publicados, sem buscar a
+origem e sem aceitar paths arbitrarios. Se o teste
 precisa remover ABR ou fixar uma representation, use um Experiment/CloneSpec;
 trocar apenas o nome do profile nao altera o manifest publicado.
 
@@ -658,6 +664,39 @@ Content-Type: application/json
   "maxDurationSeconds": 300
 }
 ```
+
+`faultPlan` v1 e opcional e pode ser combinado ao profile. Cada regra seleciona
+somente `resourceKind`, `targetId` e/ou `mediaSequence` do recurso registrado;
+a primeira regra correspondente vence. `everyNthMatch` opcional (1 a 100)
+aplica uma regra somente a cada N requests que correspondem ao seletor — por
+exemplo, `4` falha no quarto, oitavo e assim por diante. Os tipos iniciais sao `delay` (1 a
+10.000 ms extras), `status` (HTTP 400 a 599) e `truncate_body` (0 a 64 MiB).
+
+```json
+{
+  "faultPlan": {
+    "schemaVersion": 1,
+    "name": "corrupt-video-12",
+    "rules": [{
+      "id": "truncate-12",
+      "when": { "resourceKind": "video-segment" },
+      "everyNthMatch": 4,
+      "action": { "type": "status", "statusCode": 503 }
+    }]
+  }
+}
+```
+
+Uma falha de status, atraso ou truncamento no VHS e evidencia de delivery,
+nao uma falha real de resolucao DNS do device. Falha DNS real exige DNS
+controlado no ambiente do device e pode nao chegar ao journal. Da mesma forma,
+o journal nao prova decode, render, black screen, silencio ou lip-sync sem
+telemetria do player/device.
+
+Contadores de `everyNthMatch` sao mantidos durante o playback run pelo data
+plane, como os stages de shaping; as falhas efetivamente entregues persistem no
+journal e podem ser contadas depois do teste, inclusive para verificar retries
+e recuperacao do player.
 
 Validacao de profile v1:
 
@@ -774,6 +813,7 @@ inferencia ABR. Cada item inclui:
 - latency/throughput configurados;
 - inicio, fim, bytes, status e cancelamento;
 - method e range limitado.
+- `faultRuleId` e `faultAction`, quando uma regra do `faultPlan` foi aplicada.
 
 Tokens, query strings, headers sensiveis, IP completo e storage paths nunca sao
 retornados.

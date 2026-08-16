@@ -37,6 +37,8 @@ do player, nao afirma que essa representation foi decodificada ou renderizada.
 - Janela configuravel e limitada; default inicial de 120 segundos.
 - Uma origem gravada pode gerar varios playback runs.
 - Profiles deterministas de throughput e latencia.
+- Fault plans deterministas por playback run para validar recuperacao de
+  requests sem transformar o data plane em um proxy para a origem.
 - Evidencia baseada em requests reais do device.
 
 ### Fora de R1
@@ -439,6 +441,16 @@ Smokes adicionais de R1:
 - downshift observado em requests sob profile constrained;
 - recovery registrado como observado ou `not_observed`, nunca presumido;
 - restart da API preserva recording, run e consulta de evidencia.
+
+### Slice 7A - Reference Playback Faults v1
+
+- `FaultPlan` versionado e persistido no playback run;
+- seletores somente por metadados do recurso publicado (`resourceKind`, target e
+  media sequence), sem path livre ou fetch na origem;
+- acoes iniciais: atraso extra, status HTTP e truncamento de body;
+- journal registra regra e acao aplicada, alem dos bytes/status reais;
+- DNS real, reset de conexao, alternates black/silent/lip-sync e telemetria de
+  render ficam para slices posteriores.
 
 ## Definition of Done de Record R1
 

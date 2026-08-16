@@ -26,4 +26,11 @@ describe("SharedNetworkShaper", () => {
     expect(chunks).toHaveLength(2);
     expect(Buffer.concat(chunks).byteLength).toBe(20_000);
   });
+
+  it("adds a deterministic fault delay to the configured network latency", async () => {
+    const waits: number[] = [];
+    const shaper = new SharedNetworkShaper(() => 0, async (milliseconds) => { waits.push(milliseconds); });
+    for await (const _chunk of shaper.shape({ runId: "run-delay", profile, resourceKind: "master", body: new Uint8Array([1]), additionalLatencyMs: 250 }).stream) { /* consume */ }
+    expect(waits).toContain(250);
+  });
 });
