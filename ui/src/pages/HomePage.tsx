@@ -6,24 +6,17 @@ import { getHealth, startInvestigation } from "../lib/api";
 const modules = [
   {
     title: "Investigate",
-    description: "Open or delete existing investigations and inspect their evidence.",
+    description: "Turn a stream URL and reported symptom into a clear, evidence-backed diagnosis.",
     icon: <SearchIcon />,
     available: true,
     path: "/investigations",
   },
   {
-    title: "Record",
-    description: "Clone HLS VOD locally and test device ABR behavior.",
+    title: "Record & Test",
+    description: "Record a bounded VOD locally, then replay it under controlled network, failure, and recovery scenarios.",
     icon: <RecordIcon />,
     available: true,
     path: "/record",
-  },
-  {
-    title: "Samples",
-    description: "Run deterministic request-failure scenarios against a recorded VOD.",
-    icon: <SamplesIcon />,
-    available: true,
-    path: "/samples",
   },
   {
     title: "Watch",
@@ -105,31 +98,31 @@ export function HomePage(): JSX.Element {
 
           <form className="mx-auto mt-10 w-full max-w-3xl" onSubmit={submit}>
             <label className="sr-only" htmlFor="stream-url">Stream URL</label>
-            <div className="rounded-2xl border border-white/20 bg-black/30 p-1.5 shadow-glow backdrop-blur-xl focus-within:border-white/45">
+            <div className="rounded-2xl border border-sky-200/35 bg-white/[0.085] p-1.5 shadow-[0_12px_38px_rgba(56,189,248,0.12)] backdrop-blur-xl transition focus-within:border-sky-200/75 focus-within:shadow-[0_12px_42px_rgba(56,189,248,0.2)]">
               <input
                 id="stream-url"
                 value={url}
                 onChange={(event) => setUrl(event.target.value)}
-                className="h-14 w-full rounded-xl bg-white/[0.055] px-5 font-mono text-sm text-white outline-none placeholder:text-white/30 sm:text-base"
+                className="h-14 w-full rounded-xl bg-white/[0.09] px-5 font-mono text-sm text-white outline-none placeholder:text-white/50 focus:bg-white/[0.12] sm:text-base"
                 placeholder="https://example.com/live/master.m3u8"
                 type="url"
               />
             </div>
 
-            <label className="mt-5 block text-left text-sm text-white/65" htmlFor="problem-description">
-              Problem description <span className="text-white/30">(optional)</span>
+            <label className="mt-5 block text-left text-sm font-medium text-white/80" htmlFor="problem-description">
+              Problem description <span className="font-normal text-white/45">(optional)</span>
             </label>
             <textarea
               id="problem-description"
               value={problemDescription}
               onChange={(event) => setProblemDescription(event.target.value)}
               maxLength={20_000}
-              className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-white/10 bg-black/25 px-5 py-4 text-sm text-white outline-none backdrop-blur-xl placeholder:text-white/25 focus:border-white/30"
+              className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-white/20 bg-white/[0.07] px-5 py-4 text-sm text-white outline-none backdrop-blur-xl placeholder:text-white/45 transition focus:border-sky-200/65 focus:bg-white/[0.1] focus:ring-2 focus:ring-sky-200/15"
               placeholder="Example: quality oscillates on a stable connection, or video freezes during a quality change. Add player or device logs if available."
             />
-            <p className="mt-2 text-left text-xs leading-5 text-white/35">Only the stream URL is required. Device details and logs guide the diagnosis when supplied, but remain user-reported context rather than measured telemetry.</p>
+            <p className="mt-2 text-left text-xs leading-5 text-white/50">Only the stream URL is required. Device details and logs guide the diagnosis when supplied, but remain user-reported context rather than measured telemetry.</p>
             <button
-              className="mt-5 h-14 w-full rounded-2xl bg-gradient-to-r from-sky-300 via-violet-300 to-fuchsia-300 text-base font-semibold text-[#0a0c12] shadow-lg shadow-violet-500/20 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
+              className="mt-5 h-16 w-full rounded-2xl border border-white/35 bg-gradient-to-r from-cyan-200 via-sky-300 to-violet-300 text-base font-bold tracking-tight text-slate-950 shadow-[0_14px_38px_rgba(56,189,248,0.28)] transition hover:-translate-y-0.5 hover:brightness-105 hover:shadow-[0_18px_44px_rgba(129,140,248,0.34)] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-200/30 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-65"
               disabled={!url.trim() || health.data?.ok !== true || start.isPending}
               type="submit"
             >
@@ -138,7 +131,11 @@ export function HomePage(): JSX.Element {
             {start.error && <p className="mt-3 text-sm text-rose-300">{start.error.message}</p>}
           </form>
 
-          <div className="mx-auto mt-10 grid w-full max-w-5xl gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="mx-auto mt-14 w-full max-w-5xl text-left">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-200/65">Explore all workflows</p>
+            <p className="mt-2 text-sm text-white/50">Investigate streams, run controlled playback tests, or see what is coming next.</p>
+          </div>
+          <div className="mx-auto mt-5 grid w-full max-w-5xl gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {modules.map((module) => (
               <ModuleCard key={module.title} onOpen={module.path ? () => navigate(module.path) : undefined} {...module} />
             ))}
@@ -206,10 +203,6 @@ function SearchIcon(): JSX.Element {
 
 function RecordIcon(): JSX.Element {
   return <Icon><rect height="13" rx="3" stroke="currentColor" strokeWidth="1.7" width="15" x="3" y="5.5" /><path d="m18 10 3-2v8l-3-2" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.7" /></Icon>;
-}
-
-function SamplesIcon(): JSX.Element {
-  return <Icon><path d="M4 17h3l2-7 3 10 2-6h6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" /></Icon>;
 }
 
 function WatchIcon(): JSX.Element {

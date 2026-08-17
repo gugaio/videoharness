@@ -1,6 +1,6 @@
 # Project Status - Video Harness Space
 
-Ultima atualizacao: **2026-08-15**
+Ultima atualizacao: **2026-08-16**
 
 ## Resumo
 
@@ -174,6 +174,44 @@ Ultima atualizacao: **2026-08-15**
 
 Persistir hipoteses no nivel da investigation e permitir que uma pergunta crie
 um pedido explicito de novo AgentRun sobre o snapshot, sem criar outro dashboard.
+
+### 2026-08-16 - Record e cenarios de resiliencia unificados
+
+Fases impactadas: Record R1/R2 e UX.
+
+Entrega:
+
+- removidos o card, a rota e a pagina independentes de Samples;
+- os quatro cenarios de resiliencia agora sao selecionaveis no intake e no
+  dashboard de Record, usando o mesmo `PlaybackRun` e `FaultPlan`;
+- removido o preset de rede `1080p control` da UI; controle de representation
+  continua pertencendo a Experiment/CloneSpec.
+
+Arquivos-chave:
+
+- `ui/src/pages/RecordPage.tsx`;
+- `ui/src/pages/HomePage.tsx`;
+- `ui/src/App.tsx`;
+- `ui/src/lib/api.ts`;
+- `docs/ui/UI-GUIDE.md`;
+- `docs/api.md`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 50 arquivos, 253 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] `git diff --check`.
+
+Pendencias:
+
+- smoke com player/device externo continua pendente;
+- cenarios de resiliencia ainda cobrem delivery, nao decode/render ou DNS real.
+
+Proximo passo recomendado:
+
+- validar o fluxo Record unificado em mobile e com um player externo.
 
 ### 2026-08-15 - FaultPlan v1 auditavel em PlaybackRun
 

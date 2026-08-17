@@ -38,28 +38,12 @@ Uma dobra principal, sem navegacao competitiva:
 4. URL input dominante.
 5. Problem description opcional.
 6. CTA `Investigate`.
-7. Cards Investigate, Record, Samples, Watch e Replay.
+7. Cards Investigate, Record & Test, Watch e Replay.
 
 Investigate permanece o fluxo default. O card Investigate agora navega para a
 lista de cases (`/investigations`), onde a pessoa abre ou apaga investigations;
-o formulario da home continua criando um caso novo. Record e Samples estao
-interativos e navegam para `/record` e `/samples`; Watch e Replay continuam
-inativos.
-
-### Samples
-
-- Rota `/samples`, acessivel pelo card `Samples` na home.
-- Apresenta cenarios de resiliencia que atuam sobre uma VOD gravada localmente:
-  manifest lento, `503` ou `404` intermitente em video e chunks de video
-  truncados. Os cenarios intermitentes falham no quarto, oitavo e demais
-  multiplos de quatro requests de video.
-- Escolher um cenario abre o intake Record; depois de `ready`, o dashboard
-  apresenta `Run resilience sample` para criar o playback run com o `FaultPlan`.
-- A tela declara que v1 nao contem asset A/V proprio, black screen, silence,
-  lip-sync ou DNS real e que o journal e evidencia de delivery, nao de render.
-- O dashboard de playback conta `Injected faults` e marca cada request afetada
-  pela regra, permitindo comparar a cadencia entregue com retries e recuperacao
-  observados no player.
+o formulario da home continua criando um caso novo. Record navega para `/record`;
+Watch e Replay continuam inativos.
 
 ### Pagina de investigations
 
@@ -77,6 +61,10 @@ Rota `/investigations`, com o mesmo shell dark-first:
 
 - Shell dark-first e responsivo em React/Vite.
 - Hero, URL, problem description e quatro cards de modulos.
+- Abaixo do CTA principal, a home apresenta `Explore all workflows` como entrada
+  para investigacao, playback controlado e funcionalidades futuras.
+- Formulario principal usa campos elevados e legiveis sobre o shell escuro, com
+  CTA `Investigate` luminoso e claramente dominante.
 - Health discreto conectado a `/v1/health`.
 - CTA envia URL e problem description para a API e navega imediatamente para o
   caso criado.
@@ -93,9 +81,10 @@ Record e um fluxo dedicado, nao uma opcao escondida no formulario de Investigate
 
 ### Estado implementado
 
-- Card Record na homepage com estado `Available now` e navegacao para `/record`.
+- Card Record & Test na homepage com estado `Available now` e navegacao para `/record`.
 - Intake HLS ou DASH VOD com seletor explicito, URL, janela de 30--600 segundos
-  e CTA `Record stream`.
+  e CTA `Record stream`. O mesmo intake permite selecionar opcionalmente um
+  cenario de resiliencia para o playback run.
 - Tela `/recordings/:recordingId` consulta o estado, recebe eventos persistidos
   por SSE, mostra cobertura/bytes e nunca oferece run durante falha ou coleta.
 - Quando `ready`, o preset `Good -> constrained -> recovery` cria o playback run
@@ -141,10 +130,11 @@ Record e um fluxo dedicado, nao uma opcao escondida no formulario de Investigate
 
 - O recording pronto oferece duas acoes: `Start normal` (controle, 100 Mbps e
   zero latencia artificial) e `Force ABR`.
-- Para DASH, ha tambem `1080p control`: cria um run normal cuja mesma URL fixa
-  entrega somente a 1080p de maior bitrate e o audio, removendo ABR de video.
 - `Force ABR` usa `Good -> constrained -> recovery`, com valores reais de kbps
   e latencia visiveis antes da criacao (stepper com os 3 stages do plano).
+- O dashboard tambem permite selecionar cenarios de resiliencia de delivery:
+  manifest lento, `503` ou `404` intermitente em video e chunks truncados. Eles
+  usam o mesmo `PlaybackRun` e deixam a regra aplicada no journal.
 - Depois da criacao, mostrar a URL completa com acao `Copy playback URL` e uma
   instrucao curta para abri-la no device.
 - A URL copiada preserva a origem pela qual a tela foi aberta. Para um device na

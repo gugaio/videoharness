@@ -5,12 +5,14 @@ Instrucoes obrigatorias para qualquer agente que atuar neste repositorio.
 ## Missao
 
 Construir o Video Harness Space (VHS) como um workspace de investigacao e
-experimentacao reproduzivel de video streaming. A validacao atual cobre dois
+experimentacao reproduzivel de video streaming. A validacao atual cobre tres
 fluxos focados:
 
 ```text
 URL + problema relatado -> investigacao visivel -> relatorio excelente
 URL HLS VOD -> recording limitado -> URL controlada -> evidencia de troca ABR
+URL -> evidencia deterministica -> hipoteses -> clones controlados
+    -> mesma URL no device -> resultados atribuidos -> conclusao ou follow-up
 ```
 
 Quando houver conflito entre adicionar funcionalidade e preservar simplicidade,
@@ -61,6 +63,9 @@ Construir somente:
 10. Origem HTTP local com URL unica por playback run.
 11. Simulacao deterministica de throughput/latencia para induzir ABR.
 12. Journal de requests e comprovacao de troca no nivel de request.
+13. Experiments de replay controlado: CloneSpec sobre Record, URL unica por
+    experiment no device, CONTROL/tratamento e avaliacao pos-experimento com
+    agentes.
 
 Nao construir agora:
 
@@ -91,6 +96,34 @@ Nao construir agora:
 
 Nao trocar a stack sem registrar a decisao em
 `docs/architecture/DECISIONS.md` e atualizar a fase ativa.
+
+## Desenvolvimento local
+
+```bash
+npm install
+npm install --prefix ui
+docker compose up -d postgres
+npm run db:migrate
+npm run dev:api          # API em http://127.0.0.1:3210
+npm run dev:worker
+npm run ui:dev           # UI em http://127.0.0.1:5173
+```
+
+Backend e UI sao dois package.json independentes (raiz e `ui/`); os scripts de
+validacao usam `npm --prefix ui`. O `Makefile` espelha os mesmos alvos
+(`make check`, `make test`, `make db`, `make dc-up`).
+
+## Peculiaridades do toolchain
+
+- TypeScript em `module: NodeNext`: imports relativos usam extensao `.js` mesmo
+  em arquivos `.ts` (ex.: `import "./server.js"`).
+- `strict` com `exactOptionalPropertyTypes` e `noUncheckedIndexedAccess`: campos
+  opcionais usam o idioma `...(condicao ? { campo: valor } : {})` e acessos por
+  indice exigem guard antes do uso.
+- `npm run build` copia `src/database/migrations` para `dist/`; migrations rodam
+  do `dist` no runtime, entao mudanca de SQL exige rebuild antes de `start:*`.
+- Evals geram fixtures HLS temporarios com FFmpeg local: `npm run eval:check` e
+  `npm run eval:fixtures`; nenhum binario de video e versionado no Git.
 
 ## Principios arquiteturais
 

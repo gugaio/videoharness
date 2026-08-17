@@ -422,11 +422,6 @@ export const NORMAL_PLAYBACK_PROFILE: z.infer<typeof NetworkProfileSchema> = {
   name: "Normal playback",
   stages: [{ afterVideoRequests: 0, bandwidthKbps: 100000, latencyMs: 0 }],
 };
-export const CONTROL_1080P_PROFILE: z.infer<typeof NetworkProfileSchema> = {
-  schemaVersion: 1,
-  name: "1080p control (no ABR)",
-  stages: [{ afterVideoRequests: 0, bandwidthKbps: 100000, latencyMs: 0 }],
-};
 const PlaybackRunSchema = z.object({ id: z.string().uuid(), recordingId: z.string().uuid(), state: z.enum(["created", "active", "completed", "expired", "failed"]), maxDurationSeconds: z.number(), profile: NetworkProfileSchema, faultPlan: FaultPlanSchema.optional(), createdAt: z.string(), expiresAt: z.string() });
 export type NetworkProfile = z.infer<typeof NetworkProfileSchema>;
 export type NetworkProfileStage = NetworkProfile["stages"][number];

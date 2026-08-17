@@ -637,7 +637,8 @@ Disponivel somente quando o recording esta `ready`.
 
 Sem `profile`, a API usa `baseline` (100.000 Kbps, 0 ms): o modo normal. A UI
 envia esse profile explicitamente para `Start normal`; `Force ABR` envia o preset
-com os tres stages Good, constrained e recovery.
+com os tres stages Good, constrained e recovery. A UI tambem oferece cenarios de
+resiliencia que combinam esse playback run com um `faultPlan` deterministico.
 
 O profile do playback run controla somente throughput/latencia. O `faultPlan`
 opcional aplica falhas deterministicas a recursos ja publicados, sem buscar a

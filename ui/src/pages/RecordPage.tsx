@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "re
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ABR_PRESET_PROFILE,
-  CONTROL_1080P_PROFILE,
   NORMAL_PLAYBACK_PROFILE,
   RecordingEventSchema,
   createRecordingPlaybackRun,
@@ -22,14 +21,24 @@ import { formatBytes, shortId } from "../lib/format";
 import { RecordingBrowserPlayer } from "../components/RecordingBrowserPlayer";
 
 type RecordingState = "queued" | "validating" | "collecting" | "ready" | "failed";
-type PlaybackMode = "normal" | "force-abr" | "control-1080p" | "sample-delay" | "sample-http-error" | "sample-http-404" | "sample-truncated";
+type ResilienceScenarioId = "delay" | "http-error" | "http-404" | "truncated";
+type PlaybackMode = "normal" | "force-abr" | `resilience-${ResilienceScenarioId}`;
 
-const SAMPLE_FAULTS: Record<"delay" | "http-error" | "http-404" | "truncated", FaultPlan> = {
-  delay: { schemaVersion: 1, name: "Sample · slow manifest", rules: [{ id: "slow-master", when: { resourceKind: "master" }, action: { type: "delay", delayMs: 3000 } }] },
-  "http-error": { schemaVersion: 1, name: "Sample · intermittent video 503", rules: [{ id: "video-503-every-4", when: { resourceKind: "video-segment" }, everyNthMatch: 4, action: { type: "status", statusCode: 503 } }] },
-  "http-404": { schemaVersion: 1, name: "Sample · intermittent video 404", rules: [{ id: "video-404-every-4", when: { resourceKind: "video-segment" }, everyNthMatch: 4, action: { type: "status", statusCode: 404 } }] },
-  truncated: { schemaVersion: 1, name: "Sample · truncated video chunks", rules: [{ id: "truncate-video", when: { resourceKind: "video-segment" }, action: { type: "truncate_body", keepBytes: 4096 } }] },
+const RESILIENCE_SCENARIO_IDS: readonly ResilienceScenarioId[] = ["delay", "http-error", "http-404", "truncated"];
+const RESILIENCE_SCENARIOS: Record<ResilienceScenarioId, { title: string; description: string; faultPlan: FaultPlan }> = {
+  delay: { title: "Slow manifest", description: "Delay manifest requests by 3 seconds to inspect startup and retry behavior.", faultPlan: { schemaVersion: 1, name: "Resilience · slow manifest", rules: [{ id: "slow-master", when: { resourceKind: "master" }, action: { type: "delay", delayMs: 3000 } }] } },
+  "http-error": { title: "Intermittent segment 503", description: "Return 503 on every fourth video segment request.", faultPlan: { schemaVersion: 1, name: "Resilience · intermittent video 503", rules: [{ id: "video-503-every-4", when: { resourceKind: "video-segment" }, everyNthMatch: 4, action: { type: "status", statusCode: 503 } }] } },
+  "http-404": { title: "Intermittent segment 404", description: "Return 404 on every fourth video segment request.", faultPlan: { schemaVersion: 1, name: "Resilience · intermittent video 404", rules: [{ id: "video-404-every-4", when: { resourceKind: "video-segment" }, everyNthMatch: 4, action: { type: "status", statusCode: 404 } }] } },
+  truncated: { title: "Truncated video chunks", description: "Shorten video segment bodies to inspect parser and decode recovery.", faultPlan: { schemaVersion: 1, name: "Resilience · truncated video chunks", rules: [{ id: "truncate-video", when: { resourceKind: "video-segment" }, action: { type: "truncate_body", keepBytes: 4096 } }] } },
 };
+
+function scenarioFromParam(value: string | null): ResilienceScenarioId | undefined {
+  return value && RESILIENCE_SCENARIO_IDS.includes(value as ResilienceScenarioId) ? value as ResilienceScenarioId : undefined;
+}
+
+function faultPlanForMode(mode: PlaybackMode): FaultPlan | undefined {
+  return mode.startsWith("resilience-") ? RESILIENCE_SCENARIOS[mode.slice("resilience-".length) as ResilienceScenarioId].faultPlan : undefined;
+}
 
 const STATE_META: Record<RecordingState, { label: string; chip: string; dot: string }> = {
   queued: { label: "Queued", chip: "border-white/15 bg-white/[0.06] text-white/70", dot: "bg-slate-300" },
@@ -42,13 +51,13 @@ const STATE_META: Record<RecordingState, { label: string; chip: string; dot: str
 export function RecordIntakePage(): JSX.Element {
   const navigate = useNavigate();
   const [search] = useSearchParams();
-  const sample = search.get("sample");
+  const [scenario, setScenario] = useState<ResilienceScenarioId | undefined>(() => scenarioFromParam(search.get("scenario")));
   const [url, setUrl] = useState("");
   const [protocol, setProtocol] = useState<"hls" | "dash">("hls");
   const [durationSeconds, setDurationSeconds] = useState(120);
   const recording = useMutation({
     mutationFn: () => startRecording({ url, protocol, durationSeconds, startSeconds: 0 }),
-    onSuccess: ({ recording: created }) => navigate(`/recordings/${created.id}${sample && SAMPLE_FAULTS[sample as keyof typeof SAMPLE_FAULTS] ? `?sample=${sample}` : ""}`),
+    onSuccess: ({ recording: created }) => navigate(`/recordings/${created.id}${scenario ? `?scenario=${scenario}` : ""}`),
   });
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
@@ -62,7 +71,6 @@ export function RecordIntakePage(): JSX.Element {
         <p className="text-xs font-medium uppercase tracking-[.25em] text-sky-200/70">VOD ABR laboratory</p>
         <h1 className="mt-4 text-4xl font-semibold tracking-tight text-balance sm:text-5xl">Record a stream for an ABR test.</h1>
         <p className="mt-4 text-harness-muted">Clones a supported VOD ladder locally. HLS supports clear MPEG-TS; DASH supports static clear fMP4 with SegmentTemplate. Live, DRM and byte ranges are rejected before publishing.</p>
-        {sample && SAMPLE_FAULTS[sample as keyof typeof SAMPLE_FAULTS] && <p className="mt-5 rounded-xl border border-sky-300/20 bg-sky-300/[.07] px-4 py-3 text-sm text-sky-100">Resilience sample selected: <strong>{SAMPLE_FAULTS[sample as keyof typeof SAMPLE_FAULTS].name.replace("Sample · ", "")}</strong>. After the recording is ready, start the sample run from its dashboard.</p>}
         <form className="mt-9 space-y-5" onSubmit={submit}>
           <input
             className="h-14 w-full rounded-2xl border border-white/15 bg-black/25 px-5 font-mono text-sm outline-none transition focus:border-sky-300/50 focus:ring-1 focus:ring-sky-300/20"
@@ -78,6 +86,19 @@ export function RecordIntakePage(): JSX.Element {
               <option value="dash">DASH VOD · static fMP4</option>
             </select>
           </label>
+          <fieldset>
+            <legend className="text-sm text-white/70">Resilience scenario <span className="text-white/35">optional</span></legend>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <button className={`rounded-xl border p-3 text-left text-sm transition ${scenario === undefined ? "border-sky-300/45 bg-sky-300/[.08] text-sky-100" : "border-white/10 bg-white/[.03] text-white/70 hover:border-white/25"}`} onClick={() => setScenario(undefined)} type="button">
+                <span className="font-semibold">No injected faults</span><span className="mt-1 block text-xs text-white/40">Choose Normal or Force ABR after recording.</span>
+              </button>
+              {RESILIENCE_SCENARIO_IDS.map((id) => {
+                const item = RESILIENCE_SCENARIOS[id];
+                return <button className={`rounded-xl border p-3 text-left text-sm transition ${scenario === id ? "border-fuchsia-300/45 bg-fuchsia-300/[.08] text-fuchsia-100" : "border-white/10 bg-white/[.03] text-white/70 hover:border-white/25"}`} key={id} onClick={() => setScenario(id)} type="button"><span className="font-semibold">{item.title}</span><span className="mt-1 block text-xs text-white/40">{item.description}</span></button>;
+              })}
+            </div>
+            <p className="mt-2 text-xs leading-5 text-white/35">The selected scenario is applied only during the playback run and remains visible in the request journal.</p>
+          </fieldset>
           <label className="block text-sm text-white/70">
             Window duration <span className="text-white/35">30–600 seconds</span>
             <input
@@ -106,7 +127,8 @@ export function RecordIntakePage(): JSX.Element {
 export function RecordingPage(): JSX.Element {
   const { recordingId = "" } = useParams();
   const [search] = useSearchParams();
-  const sample = search.get("sample") as keyof typeof SAMPLE_FAULTS | null;
+  const navigate = useNavigate();
+  const [scenario, setScenario] = useState<ResilienceScenarioId | undefined>(() => scenarioFromParam(search.get("scenario")));
   const client = useQueryClient();
   const [events, setEvents] = useState<RecordingEvent[]>([]);
   const [playback, setPlayback] = useState<PlaybackRun>();
@@ -121,8 +143,8 @@ export function RecordingPage(): JSX.Element {
   const run = useMutation({
     mutationFn: (mode: PlaybackMode) => createRecordingPlaybackRun(
       recordingId,
-      mode === "normal" ? NORMAL_PLAYBACK_PROFILE : mode === "control-1080p" ? CONTROL_1080P_PROFILE : ABR_PRESET_PROFILE,
-      mode === "sample-delay" ? SAMPLE_FAULTS.delay : mode === "sample-http-error" ? SAMPLE_FAULTS["http-error"] : mode === "sample-http-404" ? SAMPLE_FAULTS["http-404"] : mode === "sample-truncated" ? SAMPLE_FAULTS.truncated : undefined,
+      mode === "normal" ? NORMAL_PLAYBACK_PROFILE : ABR_PRESET_PROFILE,
+      faultPlanForMode(mode),
     ),
     onSuccess: ({ run: created }) => {
       setPlayback(created);
@@ -167,6 +189,11 @@ export function RecordingPage(): JSX.Element {
     if (!latestPlayback.data) return;
     setPlayback(latestPlayback.data.run);
   }, [latestPlayback.data]);
+
+  function updateScenario(next: ResilienceScenarioId | undefined): void {
+    setScenario(next);
+    navigate(`/recordings/${recordingId}${next ? `?scenario=${next}` : ""}`, { replace: true });
+  }
 
   if (recording.isLoading) return <Shell><p className="mt-24 text-center text-sm text-harness-muted">Opening recording…</p></Shell>;
   if (recording.error) return <Shell><p className="mt-24 text-center text-rose-300">{recording.error.message}</p></Shell>;
@@ -216,8 +243,8 @@ export function RecordingPage(): JSX.Element {
               url={fixedPlaybackUrl}
               copied={copied}
               creating={run.isPending}
-              protocol={value.protocol}
-              selectedSample={sample && SAMPLE_FAULTS[sample] ? sample : undefined}
+              selectedScenario={scenario}
+              onScenarioChange={updateScenario}
               error={run.error?.message}
               onStart={(mode) => run.mutate(mode)}
               stopping={finish.isPending}
@@ -253,8 +280,8 @@ function ShapingPanel(props: {
   url?: string;
   copied: boolean;
   creating: boolean;
-  protocol: "hls" | "dash";
-  selectedSample?: keyof typeof SAMPLE_FAULTS;
+  selectedScenario?: ResilienceScenarioId;
+  onScenarioChange: (scenario: ResilienceScenarioId | undefined) => void;
   error?: string;
   onStart: (mode: PlaybackMode) => void;
   stopping: boolean;
@@ -265,24 +292,25 @@ function ShapingPanel(props: {
   const profile = props.run?.profile;
   const stages = profile?.stages ?? ABR_PRESET_PROFILE.stages;
   const isNormal = profile?.name === NORMAL_PLAYBACK_PROFILE.name;
-  const is1080pControl = profile?.name === CONTROL_1080P_PROFILE.name;
+  const canStart = !props.run || isTerminal(props.run);
+  const selectedScenarioId = props.selectedScenario;
+  const selectedScenario = selectedScenarioId ? RESILIENCE_SCENARIOS[selectedScenarioId] : undefined;
   return (
     <section className="gradient-ring mt-8 overflow-hidden rounded-3xl shadow-card">
       <div className="p-6 sm:p-7">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-200/70">Playback mode</p>
-            <h2 className="mt-1.5 text-xl font-semibold tracking-tight">{profile ? (is1080pControl ? "1080p control" : isNormal ? "Normal playback" : "Forced ABR") : "Choose how to start"}</h2>
+            <h2 className="mt-1.5 text-xl font-semibold tracking-tight">{profile ? (selectedScenario ? selectedScenario.title : isNormal ? "Normal playback" : "Forced ABR") : "Choose how to start"}</h2>
             <p className="mt-2 max-w-xl text-sm leading-6 text-harness-muted">
-              {profile ? (is1080pControl ? "This DASH control exposes only the highest-bitrate 1920×1080 representation and the original audio." : isNormal ? "The device receives a generous, stable local network profile with no intentional ABR pressure." : "The device sees a constrained interval followed by recovery, so its representation requests can reveal ABR behavior.") : "Use Normal for a control playback, Force ABR to introduce a constrained interval, or 1080p control to remove video adaptation entirely."}
+              {profile ? (selectedScenario ? `${selectedScenario.description} The journal records every applied rule.` : isNormal ? "The device receives a generous, stable local network profile with no intentional ABR pressure." : "The device sees a constrained interval followed by recovery, so its representation requests can reveal ABR behavior.") : "Use Normal for a control playback, Force ABR to introduce a constrained interval, or choose a resilience scenario to inject a deterministic delivery fault."}
             </p>
           </div>
-          {(!props.run || isTerminal(props.run)) && (
+          {canStart && (
             <div className="flex flex-wrap gap-2">
-              <button className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-3 text-sm font-semibold text-white transition hover:border-white/30 disabled:opacity-45" disabled={props.creating} onClick={() => props.onStart("normal")}>{props.creating ? "Creating test…" : "Start normal"}</button>
-              {props.protocol === "dash" && <button className="rounded-xl border border-emerald-300/30 bg-emerald-300/[0.08] px-4 py-3 text-sm font-semibold text-emerald-100 transition hover:border-emerald-300/60 disabled:opacity-45" disabled={props.creating} onClick={() => props.onStart("control-1080p")}>1080p control</button>}
-              <button className="rounded-xl bg-gradient-to-r from-sky-200 to-violet-200 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:brightness-105 disabled:opacity-45" disabled={props.creating} onClick={() => props.onStart("force-abr")}>Force ABR</button>
-              {props.selectedSample && <button className="rounded-xl border border-fuchsia-300/35 bg-fuchsia-300/[.1] px-4 py-3 text-sm font-semibold text-fuchsia-100 transition hover:border-fuchsia-300/60 disabled:opacity-45" disabled={props.creating} onClick={() => props.onStart(`sample-${props.selectedSample}` as PlaybackMode)}>Run resilience sample</button>}
+              <button className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-3 text-sm font-semibold text-white transition hover:border-white/30 disabled:opacity-45" disabled={props.creating} onClick={() => { props.onScenarioChange(undefined); props.onStart("normal"); }}>{props.creating ? "Creating test…" : "Start normal"}</button>
+              <button className="rounded-xl bg-gradient-to-r from-sky-200 to-violet-200 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:brightness-105 disabled:opacity-45" disabled={props.creating} onClick={() => { props.onScenarioChange(undefined); props.onStart("force-abr"); }}>Force ABR</button>
+              {selectedScenarioId && <button className="rounded-xl border border-fuchsia-300/35 bg-fuchsia-300/[.1] px-4 py-3 text-sm font-semibold text-fuchsia-100 transition hover:border-fuchsia-300/60 disabled:opacity-45" disabled={props.creating} onClick={() => props.onStart(`resilience-${selectedScenarioId}`)}>Run resilience scenario</button>}
             </div>
           )}
           {props.run && !isTerminal(props.run) && (
@@ -290,6 +318,17 @@ function ShapingPanel(props: {
               {props.stopping ? "Stopping…" : "Stop test run"}
             </button>
           )}
+        </div>
+
+        <div className="mt-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-fuchsia-200/70">Resilience scenarios</p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <button className={`rounded-xl border p-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${props.selectedScenario === undefined ? "border-fuchsia-300/45 bg-fuchsia-300/[.08] text-fuchsia-100" : "border-white/10 bg-white/[.03] text-white/65 hover:border-white/25"}`} disabled={!canStart || props.creating} onClick={() => props.onScenarioChange(undefined)} type="button"><span className="font-semibold">No injected faults</span><span className="mt-1 block text-xs text-white/40">Use the normal or ABR network profile.</span></button>
+            {RESILIENCE_SCENARIO_IDS.map((id) => {
+              const item = RESILIENCE_SCENARIOS[id];
+              return <button className={`rounded-xl border p-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${props.selectedScenario === id ? "border-fuchsia-300/45 bg-fuchsia-300/[.08] text-fuchsia-100" : "border-white/10 bg-white/[.03] text-white/65 hover:border-white/25"}`} disabled={!canStart || props.creating} key={id} onClick={() => props.onScenarioChange(id)} type="button"><span className="font-semibold">{item.title}</span><span className="mt-1 block text-xs text-white/40">{item.description}</span></button>;
+            })}
+          </div>
         </div>
 
         <ShapingStepper stages={stages} activeIndex={props.run ? undefined : 0} />
