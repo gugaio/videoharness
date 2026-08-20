@@ -43,8 +43,6 @@ o MVP.
 ```bash
 npm install
 npm install --prefix ui
-docker compose up -d postgres
-npm run db:migrate
 npm run dev:api
 ```
 

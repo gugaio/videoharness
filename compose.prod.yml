@@ -6,37 +6,17 @@
 # - `pull_policy: always` forces a fresh image pull on every deploy, so a
 #   redeploy always runs the latest `:latest` published by CI.
 # - No host port bindings: only the `web` service is public (assigned a domain
-#   in the deploy platform). postgres, api and worker stay on the private
-#   compose network.
+#   in the deploy platform). api and worker stay on the private compose network.
 # - Secrets are required via `${VAR:?}` so deploy platforms validate them.
 services:
-  postgres:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_DB: video_harness
-      POSTGRES_USER: video_harness
-      POSTGRES_PASSWORD: ${VIDEO_HARNESS_POSTGRES_PASSWORD:?set in deploy platform}
-    volumes:
-      - video-harness-postgres:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U video_harness -d video_harness"]
-      interval: 3s
-      timeout: 3s
-      retries: 15
-    restart: unless-stopped
-
   api:
     image: ghcr.io/gugaio/videoharness/backend:latest
     pull_policy: always
     environment:
       VIDEO_HARNESS_HOST: 0.0.0.0
       VIDEO_HARNESS_PORT: 3210
-      VIDEO_HARNESS_DATABASE_URL: postgresql://video_harness:${VIDEO_HARNESS_POSTGRES_PASSWORD:?set in deploy platform}@postgres:5432/video_harness
       VIDEO_HARNESS_DATA_DIR: /data
-    command: ["sh", "-c", "node dist/database/migrate.js && node dist/api/index.js"]
-    depends_on:
-      postgres:
-        condition: service_healthy
+    command: ["node", "dist/api/index.js"]
     volumes:
       - video-harness-data:/data
     healthcheck:
@@ -50,7 +30,6 @@ services:
     image: ghcr.io/gugaio/videoharness/backend:latest
     pull_policy: always
     environment:
-      VIDEO_HARNESS_DATABASE_URL: postgresql://video_harness:${VIDEO_HARNESS_POSTGRES_PASSWORD:?set in deploy platform}@postgres:5432/video_harness
       VIDEO_HARNESS_WORKER_ID: worker-compose
       VIDEO_HARNESS_WORKER_LEASE_MS: 30000
       VIDEO_HARNESS_STREAM_TIMEOUT_MS: 25000
@@ -74,9 +53,6 @@ services:
       VIDEO_HARNESS_AI_TIMEOUT_MS: ${VIDEO_HARNESS_AI_TIMEOUT_MS:-45000}
       VIDEO_HARNESS_DATA_DIR: /data
     command: ["node", "dist/worker/index.js"]
-    depends_on:
-      api:
-        condition: service_healthy
     volumes:
       - video-harness-data:/data
       - video-harness-lab-sockets:/run/video-harness-lab
@@ -116,6 +92,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  video-harness-postgres:
   video-harness-data:
   video-harness-lab-sockets:

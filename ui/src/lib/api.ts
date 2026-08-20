@@ -23,7 +23,7 @@ const HealthSchema = z.object({
   service: z.literal("video-harness-api"),
   version: z.string(),
   now: z.string(),
-  database: z.object({ status: z.enum(["up", "down"]) }),
+  storage: z.object({ status: z.enum(["up", "down"]) }),
 });
 
 const InvestigationSchema = z.object({

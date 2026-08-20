@@ -21,7 +21,7 @@ describe("stable experiment playback URL", () => {
     await publish(store, treatmentRecordingId, "#EXTM3U\n# LOW-BR\n");
     let selected = controlRecordingId;
     const server = buildApiServer({
-      database: { check: async () => undefined },
+      storage: { check: async () => undefined },
       startInvestigation: async () => ({ created: true, investigation: { id: experimentId, sourceUrl: "https://example.test/master.m3u8", state: "queued", createdAt: "2026-08-11T00:00:00.000Z", updatedAt: "2026-08-11T00:00:00.000Z" } }),
       investigationQueries: { getInvestigation: async () => null, getReport: async () => null, listEventsAfter: async () => [], listInvestigations: async () => [] },
       playbackRuns: { create: async () => "recording_not_ready", findById: async () => null, findLatestOpen: async () => null, finish: async () => null, recordDelivery: async () => undefined, listDeliveries: async () => [] },

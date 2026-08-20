@@ -94,7 +94,7 @@ describe("experiment REST routes", () => {
 
 function build(experimentService: ExperimentService) {
   return buildApiServer({
-    database: { check: async () => undefined },
+    storage: { check: async () => undefined },
     startInvestigation: async () => ({ created: true, investigation: { id: investigationId, sourceUrl: "https://example.test/master.m3u8", state: "completed", createdAt: "2026-08-11T00:00:00.000Z", updatedAt: "2026-08-11T00:00:00.000Z" } }),
     investigationQueries: { getInvestigation: async () => null, getReport: async () => null, listEventsAfter: async () => [], listInvestigations: async () => [] },
     experimentService,

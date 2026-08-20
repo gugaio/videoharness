@@ -53,6 +53,14 @@ uma hipotese em um replay controlado.
   persiste bytes de input, fatos citaveis e sobreposicao de IDs entre pistas;
   findings fora da pista sao descartados antes da sintese do Lead.
 
+## Ajuste: persistencia em arquivos JSON/JSONL
+
+- O PostgreSQL foi eliminado. Toda persistencia usa arquivos locais JSON/JSONL
+  atras de `src/store/` (`JsonStore`), compartilhados por API, worker e UI.
+- Jobs continuam recuperaveis (claim, lease e heartbeat) via locks de diretorio e
+  arquivos JSON; eventos de SSE seguem monotonicos via contador de sequencia.
+- O health endpoint reporta `storage` em vez de `database`.
+
 ## Proximos cortes
 
 1. Persistir Hypothesis no nivel da investigation.

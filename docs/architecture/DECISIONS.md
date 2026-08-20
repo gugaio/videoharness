@@ -816,3 +816,31 @@ Consequencias:
   decode, render e falha DNS real exigem evidencia adicional do player/device;
 - fixtures de referencia A/V e alternates registrados podem ampliar o plano sem
   mudar a fronteira de seguranca.
+
+## 2026-08-19 - Eliminacao do PostgreSQL: persistencia local em arquivos JSON/JSONL
+
+Decisao:
+
+- o PostgreSQL deixa de existir no projeto; toda persistencia passa a usar
+  arquivos locais JSON/JSONL atras de um contrato de storage (`src/store/`).
+- o worker continua recuperavel (claim, lease e heartbeat) usando locks de
+  diretorio (`mkdir`) e arquivos de job JSON no lugar de `FOR UPDATE SKIP LOCKED`.
+- a UI, a API e o worker compartilham o mesmo `VIDEO_HARNESS_DATA_DIR`; o health
+  endpoint passa a reportar `storage` em vez de `database`.
+- `src/database/`, `src/**/postgres-*.ts` e a dependencia `pg` sao removidos.
+
+Motivo:
+
+- o harness e local e single-user; quase todos os recursos do Postgres (lock de
+  worker, transacoes multi-processo, idempotencia com advisory lock) resolviam
+  problemas multi-processo/multi-usuario que o harness nao tem.
+- arquivos JSON sao o contrato agente-legivel do harness: evidencia, eventos,
+  journal e estado ficam diretamente inspecionaveis no disco.
+
+Consequencias:
+
+- atomicidade por agregado via `temp + rename`; delecoes em cascata viram
+  remocao best-effort do diretorio do agregado.
+- eventos de SSE continuam monotonicos via contador de sequencia por agregado.
+- se um dia consultas cross-aggregate ou concorrencia real ficarem necessarias,
+  o seam de storage permite trocar por SQLite sem tocar o core.

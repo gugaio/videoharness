@@ -6,7 +6,7 @@ export const HealthResponseSchema = z.object({
   version: z.string(),
   now: z.string().datetime(),
   uptimeSeconds: z.number().int().nonnegative(),
-  database: z.object({
+  storage: z.object({
     status: z.enum(["up", "down"]),
   }),
 });

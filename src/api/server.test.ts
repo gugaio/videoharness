@@ -66,9 +66,9 @@ describe("GET /v1/health", () => {
     await Promise.all(servers.splice(0).map((server) => server.close()));
   });
 
-  it("reports a healthy database", async () => {
+  it("reports healthy storage", async () => {
     const server = buildApiServer({
-      database: { check: async () => undefined },
+      storage: { check: async () => undefined },
       startInvestigation,
       investigationQueries,
       version: "test",
@@ -80,12 +80,12 @@ describe("GET /v1/health", () => {
 
     expect(response.statusCode).toBe(200);
     expect(body.ok).toBe(true);
-    expect(body.database.status).toBe("up");
+    expect(body.storage.status).toBe("up");
   });
 
   it("returns service unavailable when PostgreSQL is down", async () => {
     const server = buildApiServer({
-      database: { check: async () => Promise.reject(new Error("offline")) },
+      storage: { check: async () => Promise.reject(new Error("offline")) },
       startInvestigation,
       investigationQueries,
     });
@@ -96,14 +96,14 @@ describe("GET /v1/health", () => {
 
     expect(response.statusCode).toBe(503);
     expect(body.ok).toBe(false);
-    expect(body.database.status).toBe("down");
+    expect(body.storage.status).toBe("down");
   });
 });
 
 describe("POST /v1/investigations", () => {
   it("accepts a valid request", async () => {
     const server = buildApiServer({
-      database: { check: async () => undefined },
+      storage: { check: async () => undefined },
       startInvestigation,
       investigationQueries,
     });
@@ -127,7 +127,7 @@ describe("POST /v1/investigations", () => {
 
   it("rejects missing idempotency", async () => {
     const server = buildApiServer({
-      database: { check: async () => undefined },
+      storage: { check: async () => undefined },
       startInvestigation,
       investigationQueries,
     });
@@ -147,7 +147,7 @@ describe("POST /v1/investigations", () => {
 describe("investigation queries", () => {
   it("returns one persisted investigation", async () => {
     const server = buildApiServer({
-      database: { check: async () => undefined },
+      storage: { check: async () => undefined },
       startInvestigation,
       investigationQueries,
     });
@@ -164,7 +164,7 @@ describe("investigation queries", () => {
 
   it("returns not found for an unknown investigation", async () => {
     const server = buildApiServer({
-      database: { check: async () => undefined },
+      storage: { check: async () => undefined },
       startInvestigation,
       investigationQueries,
     });
@@ -192,7 +192,7 @@ describe("investigation queries", () => {
 
   it("returns the persisted report", async () => {
     const server = buildApiServer({
-      database: { check: async () => undefined },
+      storage: { check: async () => undefined },
       startInvestigation,
       investigationQueries,
     });
@@ -209,7 +209,7 @@ describe("investigation queries", () => {
 
   it("returns deterministic evidence before a report is required", async () => {
     const server = buildApiServer({
-      database: { check: async () => undefined },
+      storage: { check: async () => undefined },
       startInvestigation,
       investigationQueries: {
         ...investigationQueries,
@@ -232,7 +232,7 @@ describe("investigation queries", () => {
 
   it("queues agent analysis only through the explicit analysis endpoint", async () => {
     const server = buildApiServer({
-      database: { check: async () => undefined },
+      storage: { check: async () => undefined },
       startInvestigation,
       investigationQueries,
       startInvestigationAnalysis: async (id) => id === "c56a4180-65aa-42ec-a945-5fd21dec0538" ? "started" : "not_found",
@@ -251,7 +251,7 @@ describe("investigation queries", () => {
   it("allows an explicit rerun of a completed agent analysis", async () => {
     const startAnalysis = vi.fn(async () => "started" as const);
     const server = buildApiServer({
-      database: { check: async () => undefined },
+      storage: { check: async () => undefined },
       startInvestigation,
       investigationQueries,
       startInvestigationAnalysis: startAnalysis,
@@ -270,7 +270,7 @@ describe("investigation queries", () => {
 
   it("rejects agent analysis before deterministic evidence is ready", async () => {
     const server = buildApiServer({
-      database: { check: async () => undefined },
+      storage: { check: async () => undefined },
       startInvestigation,
       investigationQueries,
       startInvestigationAnalysis: async () => "not_ready",
@@ -288,7 +288,7 @@ describe("investigation queries", () => {
 
   it("lists investigations for the workspace", async () => {
     const server = buildApiServer({
-      database: { check: async () => undefined },
+      storage: { check: async () => undefined },
       startInvestigation,
       investigationQueries,
     });
@@ -307,7 +307,7 @@ describe("investigation queries", () => {
   it("deletes an investigation and its files when the deletion service is configured", async () => {
     const deleteInvestigation = vi.fn(async () => ({ deleted: true }));
     const server = buildApiServer({
-      database: { check: async () => undefined },
+      storage: { check: async () => undefined },
       startInvestigation,
       investigationQueries,
       deleteInvestigation,
@@ -327,7 +327,7 @@ describe("investigation queries", () => {
   it("returns 404 when deleting an investigation that does not exist", async () => {
     const deleteInvestigation = vi.fn(async () => ({ deleted: false }));
     const server = buildApiServer({
-      database: { check: async () => undefined },
+      storage: { check: async () => undefined },
       startInvestigation,
       investigationQueries,
       deleteInvestigation,
@@ -345,7 +345,7 @@ describe("investigation queries", () => {
 
   it("returns an empty AI prompt audit for a report without AI analysis", async () => {
     const server = buildApiServer({
-      database: { check: async () => undefined },
+      storage: { check: async () => undefined },
       startInvestigation,
       investigationQueries,
     });
@@ -363,7 +363,7 @@ describe("investigation queries", () => {
   it("stores a user question as a case activity", async () => {
     let received: { investigationId: string; question: string } | undefined;
     const server = buildApiServer({
-      database: { check: async () => undefined },
+      storage: { check: async () => undefined },
       startInvestigation,
       investigationQueries,
       askInvestigationQuestion: async (input) => {
@@ -395,7 +395,7 @@ describe("recording routes", () => {
       createdAt: "2026-08-06T12:00:00.000Z", updatedAt: "2026-08-06T12:00:00.000Z",
     };
     const server = buildApiServer({
-      database: { check: async () => undefined }, startInvestigation, investigationQueries,
+      storage: { check: async () => undefined }, startInvestigation, investigationQueries,
       startRecording: async () => ({ created: true, recording }),
       recordingQueries: { getRecording: async () => recording, listEventsAfter: async () => [] },
     });
@@ -417,7 +417,7 @@ describe("recording routes", () => {
   it("creates a fixed playback URL for a ready recording", async () => {
     const recording = { id: "c56a4180-65aa-42ec-a945-5fd21dec0538", sourceUrl: "https://example.test/vod/master.m3u8", protocol: "hls" as const, state: "ready" as const, requestedDurationSeconds: 120, requestedStartSeconds: 0, createdAt: "2026-08-06T12:00:00.000Z", updatedAt: "2026-08-06T12:00:00.000Z" };
     const server = buildApiServer({
-      database: { check: async () => undefined }, startInvestigation, investigationQueries,
+      storage: { check: async () => undefined }, startInvestigation, investigationQueries,
       startRecording: async () => ({ created: true, recording }), recordingQueries: { getRecording: async () => recording, listEventsAfter: async () => [] },
       createPlaybackRun: async () => ({ run: { id: "8dc67e09-4b25-4fe5-a69a-58f896fb5197", recordingId: recording.id, state: "created", maxDurationSeconds: 300, profile: { schemaVersion: 1, name: "baseline", stages: [{ afterVideoRequests: 0, bandwidthKbps: 100000, latencyMs: 0 }] }, createdAt: "2026-08-06T12:00:00.000Z", expiresAt: "2026-08-07T12:00:00.000Z" }, manifestPath: "index.m3u8" }),
     });
@@ -433,7 +433,7 @@ describe("recording routes", () => {
     const run = { id: runId, recordingId, state: "active" as const, maxDurationSeconds: 300, profile: { schemaVersion: 1 as const, name: "baseline", stages: [{ afterVideoRequests: 0, bandwidthKbps: 100_000, latencyMs: 0 }] }, createdAt: "2026-08-06T12:00:00.000Z", expiresAt: "2026-08-07T12:00:00.000Z" };
     const recording = { id: recordingId, sourceUrl: "https://example.test/vod/index.mpd", protocol: "dash" as const, state: "ready" as const, requestedDurationSeconds: 120, requestedStartSeconds: 0, createdAt: "2026-08-06T12:00:00.000Z", updatedAt: "2026-08-06T12:00:00.000Z" };
     const server = buildApiServer({
-      database: { check: async () => undefined }, startInvestigation, investigationQueries,
+      storage: { check: async () => undefined }, startInvestigation, investigationQueries,
       startRecording: async () => ({ created: true, recording }), recordingQueries: { getRecording: async () => recording, listEventsAfter: async () => [] },
       playbackRuns: { create: async () => "recording_not_ready", findById: async () => run, findLatestOpen: async () => run, finish: async () => null, recordDelivery: async () => undefined, listDeliveries: async () => [], listDiagnosticResources: async () => [] },
     });
@@ -456,7 +456,7 @@ describe("recording routes", () => {
     const run = { id: runId, recordingId, state: "created" as const, maxDurationSeconds: 300, profile: { schemaVersion: 1 as const, name: "baseline", stages: [{ afterVideoRequests: 0, bandwidthKbps: 100000, latencyMs: 0 }] }, createdAt: "2026-08-06T12:00:00.000Z", expiresAt: "2026-08-07T12:00:00.000Z" };
     let openRunLookups = 0;
     const server = buildApiServer({
-      database: { check: async () => undefined }, startInvestigation, investigationQueries,
+      storage: { check: async () => undefined }, startInvestigation, investigationQueries,
       playbackRuns: { create: async () => "recording_not_ready", findById: async () => run, findLatestOpen: async () => { openRunLookups += 1; return run; }, finish: async () => null, recordDelivery: async () => undefined, listDeliveries: async () => [] },
       recordingStore: store,
     });
@@ -525,7 +525,7 @@ describe("recording routes", () => {
     await fs.writeFile(path.join(workspace.path, "index.m3u8"), "#EXTM3U\n");
     await store.publish(workspace);
     const server = buildApiServer({
-      database: { check: async () => undefined }, startInvestigation, investigationQueries,
+      storage: { check: async () => undefined }, startInvestigation, investigationQueries,
       playbackRuns: { create: async () => "recording_not_ready", findById: async () => null, findLatestOpen: async () => null, finish: async () => null, recordDelivery: async () => undefined, listDeliveries: async () => [] },
       recordingStore: store,
     });
@@ -552,7 +552,7 @@ describe("recording routes", () => {
     ] }, createdAt: "2026-08-06T12:00:00.000Z", expiresAt: "2026-08-07T12:00:00.000Z" };
     expect(describeResource("video-1/segments/12.ts")).toEqual({ kind: "video-segment", contentType: "video/mp2t", metadata: { targetId: "video-1", mediaSequence: 12 } });
     const server = buildApiServer({
-      database: { check: async () => undefined }, startInvestigation, investigationQueries,
+      storage: { check: async () => undefined }, startInvestigation, investigationQueries,
       playbackRuns: { create: async () => "recording_not_ready", findById: async () => run, findLatestOpen: async () => run, finish: async () => null, recordDelivery: async (delivery) => { deliveries.push(delivery); }, listDeliveries: async () => [] },
       recordingStore: store,
     });
@@ -577,7 +577,7 @@ describe("recording routes", () => {
       { id: "manifest-unavailable", when: { resourceKind: "master" as const }, action: { type: "status" as const, statusCode: 503 } },
     ] }, createdAt: "2026-08-06T12:00:00.000Z", expiresAt: "2026-08-07T12:00:00.000Z" };
     const server = buildApiServer({
-      database: { check: async () => undefined }, startInvestigation, investigationQueries,
+      storage: { check: async () => undefined }, startInvestigation, investigationQueries,
       playbackRuns: { create: async () => "recording_not_ready", findById: async () => run, findLatestOpen: async () => run, finish: async () => null, recordDelivery: async () => undefined, listDeliveries: async () => [] },
       recordingStore: store,
     });

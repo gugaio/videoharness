@@ -1,12 +1,12 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import type { HealthResponse } from "../contracts/health.js";
-import type { DatabaseHealth } from "../database/client.js";
+import type { StorageHealth } from "../store/filesystem-health.js";
 import type { StartInvestigation } from "../investigation/application/start-investigation.js";
 import type { InvestigationQueries } from "../investigation/application/investigation-queries.js";
 import type { DeleteInvestigation } from "../investigation/application/delete-investigation.js";
 import type { AskInvestigationQuestion } from "../investigation/ports/investigation-questions.js";
 import type { StartInvestigationAnalysis } from "../investigation/ports/investigation-analysis.js";
-import type { PostgresPlaybackSessions } from "../investigation/adapters/postgres-playback-session.js";
+import type { FilesystemPlaybackSessions } from "../investigation/adapters/filesystem-playback-session.js";
 import { ApiError } from "./errors.js";
 import { registerInvestigationRoutes } from "./routes/investigations.js";
 import type { ArtifactStore } from "../investigation/ports/artifact-store.js";
@@ -24,13 +24,13 @@ import type { DeleteRecording } from "../record/application/delete-recording.js"
 import { registerExperimentRoutes } from "./routes/experiments.js";
 
 export type ApiServerDependencies = {
-  database: DatabaseHealth;
+  storage: StorageHealth;
   startInvestigation: StartInvestigation;
   investigationQueries: InvestigationQueries;
   deleteInvestigation?: DeleteInvestigation;
   startInvestigationAnalysis?: StartInvestigationAnalysis;
   askInvestigationQuestion?: AskInvestigationQuestion;
-  playbackSessions?: PostgresPlaybackSessions;
+  playbackSessions?: FilesystemPlaybackSessions;
   artifactStore?: ArtifactStore;
   startRecording?: StartRecording;
   recordingQueries?: RecordingQueries;
@@ -78,21 +78,21 @@ export function buildApiServer(dependencies: ApiServerDependencies): FastifyInst
   });
 
   server.get("/v1/health", async (_request, reply): Promise<HealthResponse> => {
-    let databaseStatus: "up" | "down" = "up";
+    let storageStatus: "up" | "down" = "up";
     try {
-      await dependencies.database.check();
+      await dependencies.storage.check();
     } catch {
-      databaseStatus = "down";
+      storageStatus = "down";
       void reply.status(503);
     }
 
     return {
-      ok: databaseStatus === "up",
+      ok: storageStatus === "up",
       service: "video-harness-api",
       version: dependencies.version ?? "0.1.0",
       now: new Date().toISOString(),
       uptimeSeconds: Math.floor(process.uptime()),
-      database: { status: databaseStatus },
+      storage: { status: storageStatus },
     };
   });
 

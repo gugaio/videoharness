@@ -1,13 +1,14 @@
 # Project Status - Video Harness Space
 
-Ultima atualizacao: **2026-08-16**
+Ultima atualizacao: **2026-08-19**
 
 ## Resumo
 
 - Fase ativa: **Investigation Workspace**.
 - Estado: **em andamento**.
 - Repositorio: novo e independente.
-- Runtime: API, worker, UI e PostgreSQL executaveis.
+- Runtime: API, worker e UI executaveis; persistencia local em arquivos
+  JSON/JSONL (PostgreSQL eliminado).
 - Objetivo imediato: persistir hipoteses no nivel da investigation para fechar o
   loop controlado, sem ampliar o produto para uma plataforma.
 - Investigate produz e apresenta um baseline de qualidade ABR para HLS e DASH.
@@ -20,7 +21,7 @@ Ultima atualizacao: **2026-08-16**
 | Fase | Status | Objetivo |
 |---|---|---|
 | 0 | Concluida | Fundacao documental, decisoes e plano executavel |
-| 1 | Concluida | Thin slice completo com API, worker, Postgres, SSE e UI |
+| 1 | Concluida | Thin slice completo com API, worker, storage local, SSE e UI |
 | 2 | Em andamento | Evidencia deterministica real de streaming |
 | 3 | Em andamento | Investigacao assistida por IA e report estruturado |
 | 4 | Planejada | UX premium e experiencia end-to-end |
@@ -174,6 +175,60 @@ Ultima atualizacao: **2026-08-16**
 
 Persistir hipoteses no nivel da investigation e permitir que uma pergunta crie
 um pedido explicito de novo AgentRun sobre o snapshot, sem criar outro dashboard.
+
+### 2026-08-19 - Persistencia local em arquivos JSON/JSONL sem PostgreSQL
+
+Fases impactadas: todas (persistencia, worker, API, dados e UX).
+
+Entrega:
+
+- o PostgreSQL foi eliminado; toda persistencia usa arquivos locais JSON/JSONL
+  atras de `src/store/` (`JsonStore`) com locks de diretorio, atomicidade por
+  `temp + rename` e eventos append-only com sequencia monotonic a por agregado;
+- `src/database/`, os adapters `postgres-*.ts` e a dependencia `pg` foram
+  removidos; `db:migrate` e os servicos postgres do Compose deixaram de existir;
+- jobs continuam recuperaveis (claim, lease e heartbeat) via locks de diretorio e
+  arquivos de job JSON, replicando a semantica anterior sem banco;
+- o health endpoint reporta `storage` em vez de `database` na API e na UI;
+- API, worker e UI compartilham o mesmo `VIDEO_HARNESS_DATA_DIR`.
+
+Arquivos-chave:
+
+- `src/store/json-file.ts` (JsonStore, locks e append de eventos);
+- `src/store/filesystem-health.ts`;
+- `src/investigation/adapters/filesystem-*.ts`, `src/record/adapters/filesystem-*.ts`,
+  `src/experiment/adapters/filesystem-*.ts`;
+- `src/api/server.ts`, `src/api/index.ts`, `src/worker/index.ts`, `src/config.ts`;
+- `compose.yml`, `compose.prod.yml`, `Makefile`, `package.json`, `README.md`;
+- `docs/architecture/DECISIONS.md`,
+  `docs/architecture/phases/phase-investigation-workspace.md`.
+
+Validacoes:
+
+- [x] `npm run check`;
+- [x] `npm test` - 50 arquivos, 253 testes;
+- [x] `npm --prefix ui run check`;
+- [x] `npm --prefix ui run build` - avisos conhecidos do dash.js e chunks;
+- [x] `git diff --check`;
+- [x] smoke real end-to-end em filesystem: health `storage up`, criacao de
+  investigation com idempotencia (replayed=false e depois replayed=true), worker
+  claimou o job, transicionou `queued -> validating -> collecting`, persistiu
+  eventos com sequencia monotonic a, fez 3 tentativas e terminou em `failed`
+  com `STREAM_DNS_FAILED` (falha ambiental do sandbox, sem rede externa);
+  os artefatos `investigation.json`, `events.jsonl`, `seq.json` e o job JSON
+  foram conferidos no disco.
+
+Pendencias:
+
+- smoke com um caso real completo com rede habilitada (intake, coleta, analise e
+  playback) para confirmar a paridade com o fluxo PostgreSQL;
+- revisar `docs/api.md` para remover mencoes residuais a `database` e ao
+  PostgreSQL no fluxo de setup.
+
+Proximo passo recomendado:
+
+- executar um smoke end-to-end no ambiente local com o storage em arquivos e,
+  em seguida, retomar a persistencia de Hypothesis no nivel da investigation.
 
 ### 2026-08-16 - Record e cenarios de resiliencia unificados
 

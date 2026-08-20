@@ -88,7 +88,7 @@ Nao construir agora:
 - React + Vite.
 - React Router, TanStack Query e Zod.
 - Tailwind e shadcn/ui quando trouxer valor real.
-- PostgreSQL com SQL e migrations explicitas.
+- Persistencia local em arquivos JSON/JSONL atras de um contrato de storage.
 - Vitest.
 - Server-Sent Events (SSE).
 - Filesystem local atras de um contrato de storage.
@@ -102,8 +102,6 @@ Nao trocar a stack sem registrar a decisao em
 ```bash
 npm install
 npm install --prefix ui
-docker compose up -d postgres
-npm run db:migrate
 npm run dev:api          # API em http://127.0.0.1:3210
 npm run dev:worker
 npm run ui:dev           # UI em http://127.0.0.1:5173
@@ -111,7 +109,7 @@ npm run ui:dev           # UI em http://127.0.0.1:5173
 
 Backend e UI sao dois package.json independentes (raiz e `ui/`); os scripts de
 validacao usam `npm --prefix ui`. O `Makefile` espelha os mesmos alvos
-(`make check`, `make test`, `make db`, `make dc-up`).
+(`make check`, `make test`, `make dc-up`).
 
 ## Peculiaridades do toolchain
 
@@ -120,15 +118,13 @@ validacao usam `npm --prefix ui`. O `Makefile` espelha os mesmos alvos
 - `strict` com `exactOptionalPropertyTypes` e `noUncheckedIndexedAccess`: campos
   opcionais usam o idioma `...(condicao ? { campo: valor } : {})` e acessos por
   indice exigem guard antes do uso.
-- `npm run build` copia `src/database/migrations` para `dist/`; migrations rodam
-  do `dist` no runtime, entao mudanca de SQL exige rebuild antes de `start:*`.
 - Evals geram fixtures HLS temporarios com FFmpeg local: `npm run eval:check` e
   `npm run eval:fixtures`; nenhum binario de video e versionado no Git.
 
 ## Principios arquiteturais
 
 1. Usar arquitetura hexagonal leve, nao cerimonial.
-2. O fluxo de investigacao nao deve importar Fastify, PostgreSQL, React ou SDKs
+2. O fluxo de investigacao nao deve importar Fastify, React ou SDKs
    concretos de IA.
 3. Criar ports apenas para fronteiras externas relevantes.
 4. Preferir composicao manual de dependencias a frameworks de DI.

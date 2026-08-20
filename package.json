@@ -10,7 +10,7 @@
   "scripts": {
     "dev:api": "tsx watch src/api/index.ts",
     "dev:worker": "tsx watch src/worker/index.ts",
-    "build": "tsc -p tsconfig.json && cp -R src/database/migrations dist/database/migrations",
+    "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -18,7 +18,6 @@
     "eval:fixtures": "tsx evals/run-fixtures.ts",
     "start:api": "node dist/api/index.js",
     "start:worker": "node dist/worker/index.js",
-    "db:migrate": "tsx src/database/migrate.ts",
     "ui:dev": "npm --prefix ui run dev",
     "ui:check": "npm --prefix ui run check",
     "ui:build": "npm --prefix ui run build"
@@ -28,12 +27,10 @@
     "@earendil-works/pi-ai": "0.81.1",
     "dotenv": "^17.3.1",
     "fastify": "^5.10.0",
-    "pg": "^8.16.3",
     "zod": "^3.24.2"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "@types/pg": "^8.15.5",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^4.0.18"

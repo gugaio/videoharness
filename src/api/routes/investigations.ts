@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { AskInvestigationQuestionRequestSchema, CompletePlaybackSessionRequestSchema, CreatePlaybackSessionRequestSchema, StartInvestigationRequestSchema } from "../../contracts/investigation.js";
-import type { PostgresPlaybackSessions } from "../../investigation/adapters/postgres-playback-session.js";
+import type { FilesystemPlaybackSessions } from "../../investigation/adapters/filesystem-playback-session.js";
 import type { StartInvestigation } from "../../investigation/application/start-investigation.js";
 import type { InvestigationQueries } from "../../investigation/application/investigation-queries.js";
 import type { DeleteInvestigation } from "../../investigation/application/delete-investigation.js";
@@ -14,7 +14,7 @@ import type { StartInvestigationAnalysis } from "../../investigation/ports/inves
 
 export function registerInvestigationRoutes(
   server: FastifyInstance,
-  dependencies: { startInvestigation: StartInvestigation; queries: InvestigationQueries; deleteInvestigation?: DeleteInvestigation; startAnalysis?: StartInvestigationAnalysis; askQuestion?: AskInvestigationQuestion; playbackSessions?: PostgresPlaybackSessions; artifactStore?: ArtifactStore },
+  dependencies: { startInvestigation: StartInvestigation; queries: InvestigationQueries; deleteInvestigation?: DeleteInvestigation; startAnalysis?: StartInvestigationAnalysis; askQuestion?: AskInvestigationQuestion; playbackSessions?: FilesystemPlaybackSessions; artifactStore?: ArtifactStore },
 ): void {
   server.post<{ Body: unknown }>("/v1/investigations", async (request, reply) => {
     const parsed = StartInvestigationRequestSchema.safeParse(request.body);

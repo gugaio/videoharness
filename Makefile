@@ -20,15 +20,6 @@ build:
 	npm run build
 	npm --prefix ui run build
 
-db:
-	docker compose exec postgres psql -U video_harness -d video_harness
-
-sql:
-	docker compose exec -T postgres psql -U video_harness -d video_harness -c "$(SQL)"
-
-db-migrate:
-	docker compose exec api node dist/database/migrate.js
-
 dc-up:
 	docker compose up -d --build
 
@@ -47,4 +38,4 @@ dc-logs-worker:
 artifacts:
 	docker compose exec worker ls -la /data/artifacts
 
-.PHONY: dev dev-api dev-worker dev-ui check test build db sql db-migrate dc-up dc-down dc-logs dc-logs-api dc-logs-worker artifacts
+.PHONY: dev dev-api dev-worker dev-ui check test build dc-up dc-down dc-logs dc-logs-api dc-logs-worker artifacts

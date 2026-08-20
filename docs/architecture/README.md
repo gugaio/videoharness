@@ -10,20 +10,19 @@ prematura.
 ```mermaid
 flowchart LR
     Browser[React + Vite] -->|HTTP + SSE| API[Fastify API]
-    API --> DB[(PostgreSQL)]
-    Worker[Node Worker] --> DB
+    API --> FS[(Local JSON/JSONL store)]
+    Worker[Node Worker] --> FS
     Worker --> Tools[Stream tools + FFmpeg]
     Worker --> AI[AI provider]
-    Worker --> FS[(Local artifacts)]
-    API --> FS
+    Worker --> FS
     Device[Device/player] -->|fixed recording or experiment URL| Delivery[Record data plane]
     Delivery --> FS
-    Delivery --> DB
 ```
 
-No deploy inicial, web, API, worker, PostgreSQL e Caddy executam no mesmo VPS por
-Docker Compose. Em Record R1, control plane e data plane compartilham o runtime
-Fastify; nenhuma porta ou processo e criado por recording.
+No deploy inicial, web, API, worker e lab executam no mesmo VPS por Docker
+Compose, compartilhando um diretorio de dados local. Em Record R1, control plane
+e data plane compartilham o runtime Fastify; nenhuma porta ou processo e criado
+por recording.
 
 ## Arquitetura hexagonal leve
 
@@ -154,7 +153,7 @@ sequenceDiagram
     participant U as User
     participant W as Web
     participant A as API
-    participant D as PostgreSQL
+    participant D as Local JSON/JSONL store
     participant K as Worker
     participant T as Stream Tools
     participant I as AI
@@ -185,7 +184,7 @@ sequenceDiagram
 sequenceDiagram
     participant U as User
     participant A as Fastify control plane
-    participant D as PostgreSQL
+    participant D as Local JSON/JSONL store
     participant K as Worker
     participant O as HLS origin
     participant F as Recording storage
@@ -217,7 +216,7 @@ com profile e evidencia proprios. Um run nunca altera os bytes gravados.
 sequenceDiagram
     participant U as User/REST client
     participant A as Shared application services
-    participant D as PostgreSQL
+    participant D as Local JSON/JSONL store
     participant K as Existing Record worker
     participant F as Recording storage
     participant P as Device/player
@@ -359,7 +358,7 @@ src/
     application/
     ports/
     adapters/
-  database/
+  store/
   ai/
   infra/
 ui/

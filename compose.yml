@@ -1,21 +1,4 @@
 services:
-  postgres:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_DB: video_harness
-      POSTGRES_USER: video_harness
-      POSTGRES_PASSWORD: ${VIDEO_HARNESS_POSTGRES_PASSWORD:-video_harness_local}
-    ports:
-      - "127.0.0.1:${VIDEO_HARNESS_POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - video-harness-postgres:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U video_harness -d video_harness"]
-      interval: 3s
-      timeout: 3s
-      retries: 15
-    restart: unless-stopped
-
   api:
     image: video-harness-backend:local
     build:
@@ -24,12 +7,8 @@ services:
     environment:
       VIDEO_HARNESS_HOST: 0.0.0.0
       VIDEO_HARNESS_PORT: 3210
-      VIDEO_HARNESS_DATABASE_URL: postgresql://video_harness:${VIDEO_HARNESS_POSTGRES_PASSWORD:-video_harness_local}@postgres:5432/video_harness
       VIDEO_HARNESS_DATA_DIR: /data
-    command: ["sh", "-c", "node dist/database/migrate.js && node dist/api/index.js"]
-    depends_on:
-      postgres:
-        condition: service_healthy
+    command: ["node", "dist/api/index.js"]
     ports:
       - "127.0.0.1:${VIDEO_HARNESS_PORT:-3210}:3210"
     volumes:
@@ -47,7 +26,6 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
-      VIDEO_HARNESS_DATABASE_URL: postgresql://video_harness:${VIDEO_HARNESS_POSTGRES_PASSWORD:-video_harness_local}@postgres:5432/video_harness
       VIDEO_HARNESS_WORKER_ID: worker-compose
       VIDEO_HARNESS_WORKER_LEASE_MS: 30000
       VIDEO_HARNESS_STREAM_TIMEOUT_MS: 25000
@@ -72,9 +50,6 @@ services:
       VIDEO_HARNESS_AI_TIMEOUT_MS: ${VIDEO_HARNESS_AI_TIMEOUT_MS:-45000}
       VIDEO_HARNESS_DATA_DIR: /data
     command: ["node", "dist/worker/index.js"]
-    depends_on:
-      api:
-        condition: service_healthy
     volumes:
       - video-harness-data:/data
       - video-harness-lab-sockets:/run/video-harness-lab
@@ -116,11 +91,9 @@ services:
         condition: service_healthy
     ports:
       # The player/device consumes /streams through this public web origin.
-      # API and PostgreSQL remain loopback-only; set a LAN IP here to narrow it.
       - "${VIDEO_HARNESS_WEB_BIND_ADDRESS:-0.0.0.0}:${VIDEO_HARNESS_WEB_PORT:-5173}:80"
     restart: unless-stopped
 
 volumes:
-  video-harness-postgres:
   video-harness-data:
   video-harness-lab-sockets:

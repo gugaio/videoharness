@@ -1,40 +1,41 @@
 import { buildApiServer } from "./server.js";
 import { loadConfig } from "../config.js";
-import { createDatabaseHealth, createDatabasePool } from "../database/client.js";
+import { createFilesystemHealth } from "../store/filesystem-health.js";
+import { JsonStore } from "../store/json-file.js";
 import { logger } from "../infra/logger.js";
-import { PostgresInvestigationIntake } from "../investigation/adapters/postgres-investigation-intake.js";
-import { PostgresInvestigationQuestions } from "../investigation/adapters/postgres-investigation-questions.js";
-import { PostgresInvestigationAnalysis } from "../investigation/adapters/postgres-investigation-analysis.js";
-import { PostgresInvestigationDeletion } from "../investigation/adapters/postgres-investigation-deletion.js";
+import { FilesystemInvestigationIntake } from "../investigation/adapters/filesystem-investigation-intake.js";
+import { FilesystemInvestigationQuestions } from "../investigation/adapters/filesystem-investigation-questions.js";
+import { FilesystemInvestigationAnalysis } from "../investigation/adapters/filesystem-investigation-analysis.js";
+import { FilesystemInvestigationDeletion } from "../investigation/adapters/filesystem-investigation-deletion.js";
 import { FilesystemInvestigationCleanup } from "../investigation/adapters/filesystem-investigation-cleanup.js";
 import { createDeleteInvestigation } from "../investigation/application/delete-investigation.js";
 import { createStartInvestigation } from "../investigation/application/start-investigation.js";
-import { PostgresInvestigationQuery } from "../investigation/adapters/postgres-investigation-query.js";
+import { FilesystemInvestigationQuery } from "../investigation/adapters/filesystem-investigation-query.js";
 import { createInvestigationQueries } from "../investigation/application/investigation-queries.js";
-import { PostgresPlaybackSessions } from "../investigation/adapters/postgres-playback-session.js";
+import { FilesystemPlaybackSessions } from "../investigation/adapters/filesystem-playback-session.js";
 import { FilesystemArtifactStore } from "../investigation/adapters/filesystem-artifact-store.js";
-import { PostgresRecordingIntake } from "../record/adapters/postgres-recording-intake.js";
+import { FilesystemRecordingIntake } from "../record/adapters/filesystem-recording-intake.js";
 import { createStartRecording } from "../record/application/start-recording.js";
-import { PostgresRecordingQuery } from "../record/adapters/postgres-recording-query.js";
+import { FilesystemRecordingQuery } from "../record/adapters/filesystem-recording-query.js";
 import { createRecordingQueries } from "../record/application/recording-queries.js";
-import { PostgresRecordingDeletion } from "../record/adapters/postgres-recording-deletion.js";
+import { FilesystemRecordingDeletion } from "../record/adapters/filesystem-recording-deletion.js";
 import { createDeleteRecording } from "../record/application/delete-recording.js";
-import { PostgresPlaybackRuns } from "../record/adapters/postgres-playback-run.js";
+import { FilesystemPlaybackRuns } from "../record/adapters/filesystem-playback-run.js";
 import { createPlaybackRun } from "../record/application/playback-runs.js";
 import { FilesystemRecordingStore } from "../record/adapters/filesystem-recording-store.js";
-import { PostgresExperimentRepository } from "../experiment/adapters/postgres-experiment-repository.js";
-import { PostgresExperimentEvaluationJobs } from "../experiment/adapters/postgres-experiment-evaluation-job.js";
+import { FilesystemExperimentRepository } from "../experiment/adapters/filesystem-experiment-repository.js";
+import { FilesystemExperimentEvaluationJobs } from "../experiment/adapters/filesystem-experiment-evaluation-job.js";
 import { createExperimentService } from "../experiment/application/experiments.js";
 
 const config = loadConfig();
-const pool = createDatabasePool(config.databaseUrl);
-const investigationQuery = new PostgresInvestigationQuery(pool);
+const store = new JsonStore(config.dataDir);
+const investigationQuery = new FilesystemInvestigationQuery(store);
 const investigationQueries = createInvestigationQueries(investigationQuery);
-const investigationQuestions = new PostgresInvestigationQuestions(pool);
-const investigationAnalysis = new PostgresInvestigationAnalysis(pool);
-const experimentRepository = new PostgresExperimentRepository(pool);
-const experimentEvaluationJobs = new PostgresExperimentEvaluationJobs(pool);
-const playbackRuns = new PostgresPlaybackRuns(pool);
+const investigationQuestions = new FilesystemInvestigationQuestions(store);
+const investigationAnalysis = new FilesystemInvestigationAnalysis(store);
+const experimentRepository = new FilesystemExperimentRepository(store);
+const experimentEvaluationJobs = new FilesystemExperimentEvaluationJobs(store);
+const playbackRuns = new FilesystemPlaybackRuns(store);
 const recordingStore = new FilesystemRecordingStore(config.dataDir);
 const experimentService = createExperimentService({
   repository: experimentRepository,
@@ -49,12 +50,12 @@ const experimentService = createExperimentService({
   logger,
 });
 const server = buildApiServer({
-  database: createDatabaseHealth(pool),
-  startInvestigation: createStartInvestigation(new PostgresInvestigationIntake(pool)),
+  storage: createFilesystemHealth(config.dataDir),
+  startInvestigation: createStartInvestigation(new FilesystemInvestigationIntake(store)),
   investigationQueries,
   deleteInvestigation: createDeleteInvestigation({
     queries: investigationQueries,
-    repository: new PostgresInvestigationDeletion(pool),
+    repository: new FilesystemInvestigationDeletion(store),
     artifactStore: new FilesystemArtifactStore(config.dataDir),
     removeInvestigationFiles: (id) => new FilesystemInvestigationCleanup(config.dataDir).removeInvestigationFiles(id),
     removeRecordingFiles: (id) => new FilesystemInvestigationCleanup(config.dataDir).removeRecordingFiles(id),
@@ -62,21 +63,17 @@ const server = buildApiServer({
   }),
   startInvestigationAnalysis: investigationAnalysis.start,
   askInvestigationQuestion: investigationQuestions.ask.bind(investigationQuestions),
-  playbackSessions: new PostgresPlaybackSessions(pool),
+  playbackSessions: new FilesystemPlaybackSessions(store),
   artifactStore: new FilesystemArtifactStore(config.dataDir),
-  startRecording: createStartRecording(new PostgresRecordingIntake(pool)),
-  recordingQueries: createRecordingQueries(new PostgresRecordingQuery(pool)),
-  deleteRecording: createDeleteRecording(new PostgresRecordingDeletion(pool), recordingStore),
+  startRecording: createStartRecording(new FilesystemRecordingIntake(store)),
+  recordingQueries: createRecordingQueries(new FilesystemRecordingQuery(store)),
+  deleteRecording: createDeleteRecording(new FilesystemRecordingDeletion(store), recordingStore),
   createPlaybackRun: createPlaybackRun(playbackRuns),
   playbackRuns,
   recordingStore,
   experimentService,
   experimentStreams: experimentRepository,
   version: process.env.npm_package_version ?? "0.1.0",
-});
-
-server.addHook("onClose", async () => {
-  await pool.end();
 });
 
 async function shutdown(signal: string): Promise<void> {
@@ -94,6 +91,5 @@ try {
   logger.error("api.start_failed", {
     message: error instanceof Error ? error.message : String(error),
   });
-  await pool.end();
   process.exitCode = 1;
 }

@@ -1,39 +1,39 @@
 import { loadConfig } from "../config.js";
-import { createDatabasePool } from "../database/client.js";
+import { JsonStore } from "../store/json-file.js";
 import { logger } from "../infra/logger.js";
 import { FilesystemArtifactStore } from "../investigation/adapters/filesystem-artifact-store.js";
 import { FfprobeMediaProbe } from "../investigation/adapters/ffprobe-media-probe.js";
 import { FilesystemLabWorkspace } from "../investigation/adapters/filesystem-lab-workspace.js";
 import { HttpMediaSampleCollector } from "../investigation/adapters/http-media-sample-collector.js";
 import { PiInvestigationAI } from "../investigation/adapters/pi-investigation-ai.js";
-import { PostgresShellRunRecorder } from "../investigation/adapters/postgres-shell-run-recorder.js";
+import { FilesystemShellRunRecorder } from "../investigation/adapters/filesystem-shell-run-recorder.js";
 import { UnixSocketInvestigationLab } from "../investigation/adapters/unix-socket-investigation-lab.js";
 import { HttpManifestCollector } from "../investigation/adapters/http-manifest-collector.js";
-import { PostgresInvestigationJobRepository } from "../investigation/adapters/postgres-investigation-job.js";
-import { PostgresPlaybackCorrelation } from "../investigation/adapters/postgres-playback-correlation.js";
+import { FilesystemInvestigationJobRepository } from "../investigation/adapters/filesystem-investigation-job.js";
+import { FilesystemPlaybackCorrelation } from "../investigation/adapters/filesystem-playback-correlation.js";
 import { createInvestigationWorker } from "../investigation/application/run-investigation.js";
 import { createInvestigationAnalysisWorker } from "../investigation/application/run-investigation-analysis.js";
 import { runNextPlaybackReview } from "../investigation/application/run-playback-review.js";
 import { SafeHttpClient } from "../stream-tools/safe-http-client.js";
-import { PostgresRecordingJobRepository } from "../record/adapters/postgres-recording-job.js";
-import { PostgresPlaybackRuns } from "../record/adapters/postgres-playback-run.js";
+import { FilesystemRecordingJobRepository } from "../record/adapters/filesystem-recording-job.js";
+import { FilesystemPlaybackRuns } from "../record/adapters/filesystem-playback-run.js";
 import { FilesystemRecordingStore } from "../record/adapters/filesystem-recording-store.js";
 import { HlsVodMaterializer } from "../record/adapters/hls-vod-materializer.js";
 import { DashVodMaterializer } from "../record/adapters/dash-vod-materializer.js";
 import { ProtocolRecordingMaterializer } from "../record/adapters/recording-materializer.js";
 import { createRecordingWorker } from "../record/application/run-recording.js";
 import { FfmpegAbrDecodeTester } from "../abr/adapters/ffmpeg-abr-decode-tester.js";
-import { PostgresExperimentRepository } from "../experiment/adapters/postgres-experiment-repository.js";
+import { FilesystemExperimentRepository } from "../experiment/adapters/filesystem-experiment-repository.js";
 import { ExperimentRecordingObserver } from "../experiment/adapters/experiment-recording-observer.js";
-import { PostgresExperimentEvaluationJobs } from "../experiment/adapters/postgres-experiment-evaluation-job.js";
+import { FilesystemExperimentEvaluationJobs } from "../experiment/adapters/filesystem-experiment-evaluation-job.js";
 import { PiExperimentAnalysisTeam } from "../experiment/adapters/pi-experiment-analysis.js";
 import { createExperimentEvaluationWorker } from "../experiment/application/run-experiment-evaluation.js";
-import { PostgresInvestigationQuery } from "../investigation/adapters/postgres-investigation-query.js";
+import { FilesystemInvestigationQuery } from "../investigation/adapters/filesystem-investigation-query.js";
 import { createInvestigationQueries } from "../investigation/application/investigation-queries.js";
 
 const config = loadConfig();
-const pool = createDatabasePool(config.databaseUrl);
-const repository = new PostgresInvestigationJobRepository(pool);
+const store = new JsonStore(config.dataDir);
+const repository = new FilesystemInvestigationJobRepository(store);
 const artifactStore = new FilesystemArtifactStore(config.dataDir);
 const localDevelopmentAlias = config.streamLocalhostAlias
   ? { allowedPrivateHostnameAliases: { localhost: config.streamLocalhostAlias } }
@@ -54,7 +54,7 @@ const labWorkspace = new FilesystemLabWorkspace(config.dataDir);
 const lab = config.labSocketPath && config.labToken
   ? new UnixSocketInvestigationLab({ socketPath: config.labSocketPath, token: config.labToken, timeoutMs: config.labCommandTimeoutMs })
   : undefined;
-const shellRunRecorder = new PostgresShellRunRecorder(pool);
+const shellRunRecorder = new FilesystemShellRunRecorder(store);
 const ai = new PiInvestigationAI({
   ...(config.aiApiKey ? { apiKey: config.aiApiKey } : {}),
   provider: config.aiProvider,
@@ -76,21 +76,21 @@ const worker = createInvestigationWorker({
   leaseMs: config.workerLeaseMs,
   logger,
 });
-const playbackRuns = new PostgresPlaybackRuns(pool);
+const playbackRuns = new FilesystemPlaybackRuns(store);
 const analysisWorker = createInvestigationAnalysisWorker({
   repository,
   ai,
   workerId: config.workerId,
   leaseMs: config.workerLeaseMs,
-  playbackCorrelation: new PostgresPlaybackCorrelation(pool, playbackRuns),
+  playbackCorrelation: new FilesystemPlaybackCorrelation(store, playbackRuns),
   logger,
 });
 const recordingStore = new FilesystemRecordingStore(config.dataDir);
-const experimentRepository = new PostgresExperimentRepository(pool);
+const experimentRepository = new FilesystemExperimentRepository(store);
 const experimentEvaluationWorker = createExperimentEvaluationWorker({
-  jobs: new PostgresExperimentEvaluationJobs(pool),
+  jobs: new FilesystemExperimentEvaluationJobs(store),
   experiments: experimentRepository,
-  investigations: createInvestigationQueries(new PostgresInvestigationQuery(pool)),
+  investigations: createInvestigationQueries(new FilesystemInvestigationQuery(store)),
   analysisTeam: new PiExperimentAnalysisTeam({
     ...(config.aiApiKey ? { apiKey: config.aiApiKey } : {}),
     provider: config.aiProvider,
@@ -103,7 +103,7 @@ const experimentEvaluationWorker = createExperimentEvaluationWorker({
   logger,
 });
 const recordingWorker = createRecordingWorker({
-  repository: new PostgresRecordingJobRepository(pool),
+  repository: new FilesystemRecordingJobRepository(store),
   store: recordingStore,
   materializer: new ProtocolRecordingMaterializer(new HlsVodMaterializer(new SafeHttpClient({
     timeoutMs: config.recordRequestTimeoutMs,
@@ -161,7 +161,7 @@ while (!shutdownRequested) {
       || await analysisWorker.runNext()
       || await recordingWorker.runNext()
       || await experimentEvaluationWorker.runNext()
-      || await runNextPlaybackReview({ pool, workerId: config.workerId, leaseMs: config.workerLeaseMs, ai, logger });
+      || await runNextPlaybackReview({ store, workerId: config.workerId, leaseMs: config.workerLeaseMs, ai, logger });
     if (!processed) await delay(config.workerPollMs);
   } catch (error) {
     logger.warn("worker.poll_failed", {
@@ -172,7 +172,6 @@ while (!shutdownRequested) {
   }
 }
 
-await pool.end();
 logger.info("worker.stopped", { workerId: config.workerId });
 
 function delay(milliseconds: number): Promise<void> {

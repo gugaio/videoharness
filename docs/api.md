@@ -1165,8 +1165,8 @@ rede.
 GET /v1/health
 ```
 
-Retorna `200` quando PostgreSQL esta acessivel e `503` quando o banco esta
-indisponivel.
+Retorna `200` quando o storage local em arquivos esta acessivel e `503` quando o
+diretorio de dados esta indisponivel.
 
 ```json
 {
@@ -1175,7 +1175,7 @@ indisponivel.
   "version": "0.1.0",
   "now": "2026-07-21T12:00:00.000Z",
   "uptimeSeconds": 12,
-  "database": {
+  "storage": {
     "status": "up"
   }
 }

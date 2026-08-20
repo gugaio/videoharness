@@ -8,8 +8,6 @@ observavel antes de aprofundar o dominio.
 ## Comandos locais
 
 ```bash
-docker compose up -d postgres
-npm run db:migrate
 npm run dev:api
 npm run dev:worker
 npm run ui:dev
@@ -108,13 +106,15 @@ export function createStartInvestigation(deps: {
 Nao usar decorators ou framework de DI. A composicao acontece nos entrypoints da
 API e do worker.
 
-## Banco
+## Storage
 
-- Migrations SQL versionadas.
-- Transacoes explicitas quando invariantes cruzam tabelas.
-- Datas armazenadas em UTC.
+- Persistencia local em arquivos JSON/JSONL atras de `src/store/` (`JsonStore`).
+- Atomicidade por agregado via `temp + rename`; eventos append-only com sequencia
+  monotonic a por agregado.
+- Locks cross-process via `mkdir` atomico (`locks/`), replicando claim/lease/
+  heartbeat do worker sem banco.
 - IDs UUID para entidades; ID monotono para eventos.
-- Nao esconder queries importantes atras de repository generico.
+- Nao esconder operacoes importantes atras de repository generico.
 
 ## Processos de midia
 
@@ -151,11 +151,10 @@ e `/web`). Ele difere de `compose.yml` por:
 
 1. Criar recurso do tipo **Docker Compose** com source no repo git
    `gugaio/videoharness`, apontando o compose path para `compose.prod.yml`.
-2. Atribuir um dominio ao servico `web` (escuta na porta 80). postgres, api e
+2. Atribuir um dominio ao servico `web` (escuta na porta 80). api e
    worker permanecem privados na rede interna do stack.
 3. Preencher as variaveis obrigatorias detectadas na UI
-   (`VIDEO_HARNESS_POSTGRES_PASSWORD`, `VIDEO_HARNESS_LAB_TOKEN`,
-   `VIDEO_HARNESS_AI_API_KEY`).
+   (`VIDEO_HARNESS_LAB_TOKEN`, `VIDEO_HARNESS_AI_API_KEY`).
 4. Copiar a URL do webhook *Git Deploy* (Resource -> Webhooks) e salvar como o
    secret `COOLIFY_WEBHOOK_URL` no GitHub.
 
