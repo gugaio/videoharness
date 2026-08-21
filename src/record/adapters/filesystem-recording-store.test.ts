@@ -23,6 +23,24 @@ describe("FilesystemRecordingStore", () => {
     await expect(fs.stat(workspace.path)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("publishes media into a directory that already holds recording metadata", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "video-harness-recording-"));
+    directories.push(directory);
+    const store = new FilesystemRecordingStore(directory);
+    const metadataDir = path.join(directory, "recordings", recordingId);
+    await fs.mkdir(metadataDir, { recursive: true });
+    await fs.writeFile(path.join(metadataDir, "recording.json"), JSON.stringify({ id: recordingId }));
+
+    const workspace = await store.prepareWorkspace(recordingId);
+    await fs.writeFile(path.join(workspace.path, "index.m3u8"), "#EXTM3U");
+
+    await store.publish(workspace);
+
+    await expect(fs.readFile(path.join(metadataDir, "index.m3u8"), "utf8")).resolves.toBe("#EXTM3U");
+    await expect(fs.readFile(path.join(metadataDir, "recording.json"), "utf8")).resolves.toContain(recordingId);
+    await expect(fs.stat(workspace.path)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("rejects unsafe recording identifiers", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "video-harness-recording-"));
     directories.push(directory);

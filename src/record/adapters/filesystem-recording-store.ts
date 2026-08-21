@@ -19,10 +19,18 @@ export class FilesystemRecordingStore implements RecordingStore {
     const source = this.workspacePath(workspace.recordingId);
     if (path.resolve(workspace.path) !== source) throw new Error("Recording workspace is invalid");
     const destination = this.publishedPath(workspace.recordingId);
-    const exists = await fs.access(destination).then(() => true).catch(() => false);
-    if (exists) throw new Error("Published recording already exists");
-    await fs.mkdir(path.dirname(destination), { recursive: true });
-    await fs.rename(source, destination);
+    await fs.mkdir(destination, { recursive: true });
+    await this.moveContents(source, destination);
+  }
+
+  private async moveContents(source: string, destination: string): Promise<void> {
+    const entries = await fs.readdir(source, { withFileTypes: true });
+    for (const entry of entries) {
+      const from = path.join(source, entry.name);
+      const to = path.join(destination, entry.name);
+      await fs.rename(from, to);
+    }
+    await fs.rm(source, { recursive: true, force: true });
   }
 
   async discardWorkspace(recordingId: string): Promise<void> {

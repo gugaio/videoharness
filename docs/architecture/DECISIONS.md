@@ -844,3 +844,35 @@ Consequencias:
 - eventos de SSE continuam monotonicos via contador de sequencia por agregado.
 - se um dia consultas cross-aggregate ou concorrencia real ficarem necessarias,
   o seam de storage permite trocar por SQLite sem tocar o core.
+
+## 2026-08-21 - Record: filesystem por enquanto, SQLite como escape hatch futuro
+
+Decisao:
+
+- o Record continua com persistencia em arquivos JSON/JSONL (metadata) + arquivos
+  de midia no data plane, sem banco, enquanto for single-user e local.
+- o metadata do Record (recording, runs, resources, journal) fica em arquivos;
+  quando o Record virar SaaS multi-usuario com queries/relacoes reais, o metadata
+  migra para SQLite atras do mesmo contrato de storage (escopo planejado, nao
+  implementado agora).
+- os bytes de midia continuam em arquivos no disco de qualquer forma; banco nunca
+  substitui o filesystem de midia.
+- o layout do data plane de Record publica a midia mesclada dentro de
+  `recordings/<id>/`, coexistindo com o metadata de controle (recording.json,
+  resources.json, events.jsonl, seq.json), em vez de renomear o workspace inteiro
+  para um diretorio que ja contem metadata.
+
+Motivo:
+
+- o Record tende a virar SaaS, mas hoje e single-user e local; queries/relacoes
+  sao triviais e o filesystem atende sem custo de infra.
+- o bug "Published recording already exists" era um conflito de namespace entre o
+  control plane (metadata em `recordings/<id>/`) e o data plane (publish que
+  exigia destino vazio no mesmo caminho).
+
+Consequencias:
+
+- publicar midia agora mescla o workspace no diretorio de metadata existente.
+- quando houver volume/usuarios, troca-se o contrato de storage de Record por
+  SQLite sem refatorar o core; Investigate/evidencia continua em JSON/JSONL por
+  ser legivel por agente.
