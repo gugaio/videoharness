@@ -41,11 +41,11 @@ function faultPlanForMode(mode: PlaybackMode): FaultPlan | undefined {
 }
 
 const STATE_META: Record<RecordingState, { label: string; chip: string; dot: string }> = {
-  queued: { label: "Queued", chip: "border-white/15 bg-white/[0.06] text-white/70", dot: "bg-slate-300" },
-  validating: { label: "Validating", chip: "border-sky-300/25 bg-sky-300/10 text-sky-200", dot: "bg-sky-400" },
-  collecting: { label: "Collecting", chip: "border-amber-300/25 bg-amber-300/10 text-amber-200", dot: "bg-amber-400" },
-  ready: { label: "Ready", chip: "border-emerald-300/25 bg-emerald-300/10 text-emerald-200", dot: "bg-emerald-400" },
-  failed: { label: "Failed", chip: "border-rose-300/25 bg-rose-300/10 text-rose-200", dot: "bg-rose-400" },
+  queued: { label: "Queued", chip: "border-slate-200 text-slate-500", dot: "bg-slate-400" },
+  validating: { label: "Validating", chip: "border-sky-200 text-sky-700", dot: "bg-sky-500" },
+  collecting: { label: "Collecting", chip: "border-amber-200 text-amber-700", dot: "bg-amber-500" },
+  ready: { label: "Ready", chip: "border-emerald-200 text-emerald-700", dot: "bg-emerald-500" },
+  failed: { label: "Failed", chip: "border-rose-200 text-rose-700", dot: "bg-rose-500" },
 };
 
 export function RecordIntakePage(): JSX.Element {
@@ -69,43 +69,43 @@ export function RecordIntakePage(): JSX.Element {
 
   return (
     <Shell>
-      <section className="mx-auto mt-16 w-full max-w-2xl">
-        <Link className="text-sm text-sky-200 hover:text-white" to="/recordings">Manage local recordings</Link>
-        <p className="text-xs font-medium uppercase tracking-[.25em] text-sky-200/70">VOD ABR laboratory</p>
-        <h1 className="mt-4 text-4xl font-semibold tracking-tight text-balance sm:text-5xl">Record a stream for an ABR test.</h1>
-        <p className="mt-4 text-harness-muted">Clones a supported VOD ladder locally. HLS supports clear MPEG-TS; DASH supports static clear fMP4 with SegmentTemplate. Live, DRM and byte ranges are rejected before publishing.</p>
+      <section className="mx-auto w-full max-w-2xl p-6 sm:p-8">
+        <Link className="text-sm text-sky-600 hover:text-sky-700" to="/recordings">Manage local recordings</Link>
+        <p className="text-xs font-medium uppercase tracking-[.25em] text-slate-400">VOD ABR laboratory</p>
+        <h1 className="mt-4 text-4xl font-semibold tracking-tight text-slate-900 text-balance sm:text-5xl">Record a stream for an ABR test.</h1>
+        <p className="mt-4 text-slate-500">Clones a supported VOD ladder locally. HLS supports clear MPEG-TS; DASH supports static clear fMP4 with SegmentTemplate. Live, DRM and byte ranges are rejected before publishing.</p>
         <form className="mt-9 space-y-5" onSubmit={submit}>
           <input
-            className="h-14 w-full rounded-2xl border border-white/15 bg-black/25 px-5 font-mono text-sm outline-none transition focus:border-sky-300/50 focus:ring-1 focus:ring-sky-300/20"
+            className="h-14 w-full rounded-2xl border border-slate-200 bg-white px-5 font-mono text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
             onChange={(event) => setUrl(event.target.value)}
             placeholder={protocol === "hls" ? "https://example.com/vod/master.m3u8" : "https://example.com/vod/manifest.mpd"}
             type="url"
             value={url}
           />
-          <label className="block text-sm text-white/70">
+          <label className="block text-sm font-medium text-slate-700">
             Protocol
-            <select className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-[#11131b] px-4 outline-none transition focus:border-sky-300/50 focus:ring-1 focus:ring-sky-300/20" onChange={(event) => setProtocol(event.target.value as "hls" | "dash")} value={protocol}>
+            <select className="mt-2 h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-slate-900 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100" onChange={(event) => setProtocol(event.target.value as "hls" | "dash")} value={protocol}>
               <option value="hls">HLS VOD · clear MPEG-TS</option>
               <option value="dash">DASH VOD · static fMP4</option>
             </select>
           </label>
           <fieldset>
-            <legend className="text-sm text-white/70">Resilience scenario <span className="text-white/35">optional</span></legend>
+            <legend className="text-sm font-medium text-slate-700">Resilience scenario <span className="text-slate-400">optional</span></legend>
             <div className="mt-2 grid gap-2 sm:grid-cols-2">
-              <button className={`rounded-xl border p-3 text-left text-sm transition ${scenario === undefined ? "border-sky-300/45 bg-sky-300/[.08] text-sky-100" : "border-white/10 bg-white/[.03] text-white/70 hover:border-white/25"}`} onClick={() => setScenario(undefined)} type="button">
-                <span className="font-semibold">No injected faults</span><span className="mt-1 block text-xs text-white/40">Choose Normal or Force ABR after recording.</span>
+              <button className={`rounded-xl border p-3 text-left text-sm transition ${scenario === undefined ? "border-violet-300 bg-violet-50 text-violet-800" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"}`} onClick={() => setScenario(undefined)} type="button">
+                <span className="font-semibold">No injected faults</span><span className="mt-1 block text-xs text-slate-400">Choose Normal or Force ABR after recording.</span>
               </button>
               {RESILIENCE_SCENARIO_IDS.map((id) => {
                 const item = RESILIENCE_SCENARIOS[id];
-                return <button className={`rounded-xl border p-3 text-left text-sm transition ${scenario === id ? "border-fuchsia-300/45 bg-fuchsia-300/[.08] text-fuchsia-100" : "border-white/10 bg-white/[.03] text-white/70 hover:border-white/25"}`} key={id} onClick={() => setScenario(id)} type="button"><span className="font-semibold">{item.title}</span><span className="mt-1 block text-xs text-white/40">{item.description}</span></button>;
+                return <button className={`rounded-xl border p-3 text-left text-sm transition ${scenario === id ? "border-fuchsia-300 bg-fuchsia-50 text-fuchsia-800" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"}`} key={id} onClick={() => setScenario(id)} type="button"><span className="font-semibold">{item.title}</span><span className="mt-1 block text-xs text-slate-400">{item.description}</span></button>;
               })}
             </div>
-            <p className="mt-2 text-xs leading-5 text-white/35">The selected scenario is applied only during the playback run and remains visible in the request journal.</p>
+            <p className="mt-2 text-xs leading-5 text-slate-400">The selected scenario is applied only during the playback run and remains visible in the request journal.</p>
           </fieldset>
-          <label className="block text-sm text-white/70">
-            Window duration <span className="text-white/35">30–600 seconds</span>
+          <label className="block text-sm font-medium text-slate-700">
+            Window duration <span className="text-slate-400">30–600 seconds</span>
             <input
-              className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/25 px-4 outline-none transition focus:border-sky-300/50 focus:ring-1 focus:ring-sky-300/20"
+              className="mt-2 h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-slate-900 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
               max={600}
               min={30}
               onChange={(event) => setDurationSeconds(Number(event.target.value))}
@@ -114,13 +114,13 @@ export function RecordIntakePage(): JSX.Element {
             />
           </label>
           <button
-            className="h-14 w-full rounded-2xl bg-gradient-to-r from-sky-300 via-violet-300 to-fuchsia-300 font-semibold text-[#0a0c12] transition hover:brightness-105 disabled:opacity-40"
+            className="h-14 w-full rounded-2xl bg-violet-600 font-semibold text-white transition hover:bg-violet-700 disabled:opacity-40"
             disabled={!url.trim() || recording.isPending}
             type="submit"
           >
             {recording.isPending ? "Queueing recording…" : "Record stream"}
           </button>
-          {recording.error && <p className="text-sm text-rose-300">{recording.error.message}</p>}
+          {recording.error && <p className="text-sm text-rose-600">{recording.error.message}</p>}
         </form>
       </section>
     </Shell>
@@ -135,6 +135,7 @@ export function RecordingPage(): JSX.Element {
   const client = useQueryClient();
   const [events, setEvents] = useState<RecordingEvent[]>([]);
   const [playback, setPlayback] = useState<PlaybackRun>();
+  const [lastRun, setLastRun] = useState<PlaybackRun>();
   const [copied, setCopied] = useState(false);
 
   const recording = useQuery({
@@ -161,7 +162,8 @@ export function RecordingPage(): JSX.Element {
   const finish = useMutation({
     mutationFn: () => finishRecordingPlaybackRun(recordingId, playback!.id),
     onSuccess: (completed) => {
-      setPlayback(completed);
+      setLastRun(completed);
+      setPlayback(undefined);
       void client.invalidateQueries({ queryKey: ["recording-latest-playback", recordingId] });
     },
   });
@@ -169,7 +171,7 @@ export function RecordingPage(): JSX.Element {
     queryKey: ["recording-requests", recordingId, playback?.id],
     queryFn: () => getRecordingRequests(recordingId, playback!.id),
     enabled: Boolean(playback?.id),
-    refetchInterval: 2_000,
+    refetchInterval: (query) => (query.state.data && playback ? isTerminal(playback) ? false : 2_000 : 2_000),
   });
 
   useEffect(() => {
@@ -208,14 +210,14 @@ export function RecordingPage(): JSX.Element {
 
   return (
     <Shell>
-      <section className="mt-8">
+      <section className="p-6 sm:p-8">
         <header className="animate-fade-up flex flex-wrap items-center gap-3">
-          <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium ${meta.chip}`}>
+          <span className={`inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 text-xs font-semibold shadow-sm ${meta.chip}`}>
             <span className={`h-1.5 w-1.5 rounded-full ${meta.dot} ${value.state === "collecting" || value.state === "validating" ? "animate-pulse-dot" : ""}`} />
             {meta.label}
           </span>
-          <span className="font-mono text-[11px] text-white/30">record {shortId(value.id)}</span>
-          <span className="ml-auto hidden text-xs text-white/35 sm:inline">
+          <span className="font-mono text-[11px] text-slate-400">record {shortId(value.id)}</span>
+          <span className="ml-auto hidden text-xs text-slate-400 sm:inline">
             {value.completedAt
               ? `Finished ${new Date(value.completedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
               : `Opened ${new Date(value.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
@@ -227,8 +229,8 @@ export function RecordingPage(): JSX.Element {
             {value.protocol === "dash" ? "D" : "H"}
           </span>
           <div className="min-w-0">
-            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Recording dashboard</h1>
-            <p className="mt-0.5 truncate font-mono text-xs text-white/40">{value.sourceUrl}</p>
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">Recording dashboard</h1>
+            <p className="mt-0.5 truncate font-mono text-xs text-slate-400">{value.sourceUrl}</p>
           </div>
         </div>
 
@@ -260,14 +262,18 @@ export function RecordingPage(): JSX.Element {
                 });
               }}
             />
-            <RecordingBrowserPlayer protocol={value.protocol} url={fixedPlaybackUrl} />
+            {(lastRun ?? playback) && <AbrDashboard run={(lastRun ?? playback)!} items={requests.data ?? []} />}
+            {playback && !isTerminal(playback) && <RecordingBrowserPlayer protocol={value.protocol} url={fixedPlaybackUrl} />}
+            {lastRun && playback === undefined && (
+              <div className="mt-8 rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+                Last test run finished. The evidence above reflects its final state — choose a condition and Start to test again.
+              </div>
+            )}
           </>
         )}
 
-        {playback && <AbrDashboard run={playback} items={requests.data ?? []} />}
-
         {value.state === "failed" && (
-          <div className="mt-8 rounded-2xl border border-rose-300/20 bg-rose-300/5 p-5 text-rose-200">
+          <div className="mt-8 rounded-2xl border border-rose-200 bg-rose-50 p-5 text-rose-700">
             {value.errorMessage ?? "Recording failed."}
           </div>
         )}
@@ -296,63 +302,176 @@ function ShapingPanel(props: {
   const stages = profile?.stages ?? ABR_PRESET_PROFILE.stages;
   const isNormal = profile?.name === NORMAL_PLAYBACK_PROFILE.name;
   const canStart = !props.run || isTerminal(props.run);
-  const selectedScenarioId = props.selectedScenario;
-  const selectedScenario = selectedScenarioId ? RESILIENCE_SCENARIOS[selectedScenarioId] : undefined;
+  const [choice, setChoice] = useState<"normal" | "controlled" | null>(() => props.selectedScenario ? "controlled" : profile ? (isNormal ? "normal" : "controlled") : null);
+  const [network, setNetwork] = useState<"normal" | "abr" | null>(null);
+  const [fault, setFault] = useState<ResilienceScenarioId | null>(() => props.selectedScenario ?? null);
+
+  const readyToStart = canStart && !props.creating && choice !== null;
+  function startSelected(): void {
+    if (!readyToStart) return;
+    if (choice === "normal") {
+      props.onScenarioChange(undefined);
+      props.onStart("normal");
+      return;
+    }
+    if (fault) {
+      props.onScenarioChange(fault);
+      props.onStart(`resilience-${fault}`);
+      return;
+    }
+    if (network === "abr") {
+      props.onScenarioChange(undefined);
+      props.onStart("force-abr");
+      return;
+    }
+    props.onScenarioChange(undefined);
+    props.onStart("normal");
+  }
+
+  const selectedFault = fault ? RESILIENCE_SCENARIOS[fault] : undefined;
   return (
-    <section className="gradient-ring mt-8 overflow-hidden rounded-3xl shadow-card">
-      <div className="p-6 sm:p-7">
+    <section className="mt-8 overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-7">
+      <div className="p-0 sm:p-0">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-200/70">Playback mode</p>
-            <h2 className="mt-1.5 text-xl font-semibold tracking-tight">{profile ? (selectedScenario ? selectedScenario.title : isNormal ? "Normal playback" : "Forced ABR") : "Choose how to start"}</h2>
-            <p className="mt-2 max-w-xl text-sm leading-6 text-harness-muted">
-              {profile ? (selectedScenario ? `${selectedScenario.description} The journal records every applied rule.` : isNormal ? "The device receives a generous, stable local network profile with no intentional ABR pressure." : "The device sees a constrained interval followed by recovery, so its representation requests can reveal ABR behavior.") : "Use Normal for a control playback, Force ABR to introduce a constrained interval, or choose a resilience scenario to inject a deterministic delivery fault."}
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Playback mode</p>
+            <h2 className="mt-1.5 text-xl font-semibold tracking-tight text-slate-900">{profile ? (selectedFault ? selectedFault.title : isNormal ? "Normal playback" : "Controlled playback") : "How do you want to test?"}</h2>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500">
+              {profile ? (selectedFault ? `${selectedFault.description} The journal records every applied rule.` : isNormal ? "A generous, stable local network profile with no intentional ABR pressure." : "A constrained interval followed by recovery, so the player's representation requests reveal ABR behavior.") : "Choose a condition below, then start the test. Nothing starts until you press Start."}
             </p>
           </div>
-          {canStart && (
-            <div className="flex flex-wrap gap-2">
-              <button className="rounded-xl border border-white/15 bg-white/[0.06] px-4 py-3 text-sm font-semibold text-white transition hover:border-white/30 disabled:opacity-45" disabled={props.creating} onClick={() => { props.onScenarioChange(undefined); props.onStart("normal"); }}>{props.creating ? "Creating test…" : "Start normal"}</button>
-              <button className="rounded-xl bg-gradient-to-r from-sky-200 to-violet-200 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:brightness-105 disabled:opacity-45" disabled={props.creating} onClick={() => { props.onScenarioChange(undefined); props.onStart("force-abr"); }}>Force ABR</button>
-              {selectedScenarioId && <button className="rounded-xl border border-fuchsia-300/35 bg-fuchsia-300/[.1] px-4 py-3 text-sm font-semibold text-fuchsia-100 transition hover:border-fuchsia-300/60 disabled:opacity-45" disabled={props.creating} onClick={() => props.onStart(`resilience-${selectedScenarioId}`)}>Run resilience scenario</button>}
-            </div>
-          )}
           {props.run && !isTerminal(props.run) && (
-            <button className="rounded-xl border border-rose-300/35 bg-rose-300/[0.08] px-4 py-3 text-sm font-semibold text-rose-100 transition hover:border-rose-300/60 disabled:opacity-45" disabled={props.stopping} onClick={props.onStop}>
+            <button className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-600 transition hover:border-rose-300 disabled:opacity-45" disabled={props.stopping} onClick={props.onStop}>
               {props.stopping ? "Stopping…" : "Stop test run"}
             </button>
           )}
         </div>
 
-        <div className="mt-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-fuchsia-200/70">Resilience scenarios</p>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            <button className={`rounded-xl border p-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${props.selectedScenario === undefined ? "border-fuchsia-300/45 bg-fuchsia-300/[.08] text-fuchsia-100" : "border-white/10 bg-white/[.03] text-white/65 hover:border-white/25"}`} disabled={!canStart || props.creating} onClick={() => props.onScenarioChange(undefined)} type="button"><span className="font-semibold">No injected faults</span><span className="mt-1 block text-xs text-white/40">Use the normal or ABR network profile.</span></button>
-            {RESILIENCE_SCENARIO_IDS.map((id) => {
-              const item = RESILIENCE_SCENARIOS[id];
-              return <button className={`rounded-xl border p-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${props.selectedScenario === id ? "border-fuchsia-300/45 bg-fuchsia-300/[.08] text-fuchsia-100" : "border-white/10 bg-white/[.03] text-white/65 hover:border-white/25"}`} disabled={!canStart || props.creating} key={id} onClick={() => props.onScenarioChange(id)} type="button"><span className="font-semibold">{item.title}</span><span className="mt-1 block text-xs text-white/40">{item.description}</span></button>;
-            })}
+        {!profile && canStart && (
+          <div className="mt-6">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <ChoiceCard
+                title="Normal playback"
+                description="Stable network, no injected conditions. Best as a clean baseline."
+                icon={<PlayIcon />}
+                selected={choice === "normal"}
+                onSelect={() => { setChoice("normal"); setNetwork(null); setFault(null); }}
+                primary
+              />
+              <ChoiceCard
+                title="Controlled conditions"
+                description="Simulate a slow network, ABR pressure, HTTP errors, or delays."
+                icon={<SluceIcon />}
+                selected={choice === "controlled"}
+                onSelect={() => setChoice("controlled")}
+              />
+            </div>
           </div>
-        </div>
+        )}
 
-        <ShapingStepper stages={stages} activeIndex={props.run ? undefined : 0} />
+        {choice === "controlled" && !profile && canStart && (
+          <div className="mt-6 space-y-6">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Network profile</p>
+              <p className="mt-1 text-sm text-slate-500">Constrain bandwidth then recover, so the player can show an ABR switch.</p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <ConditionButton title="Force ABR" description="Constrained interval followed by recovery." selected={fault === null && network === "abr"} onSelect={() => { setNetwork("abr"); setFault(null); }} />
+                <ConditionButton title="Keep normal" description="Stable network; only inject a fault below." selected={fault === null && network !== "abr"} onSelect={() => setNetwork("normal")} />
+              </div>
+            </div>
 
-          {props.url && (
-            <div className="mt-6 rounded-2xl border border-white/10 bg-black/25 p-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Delivery fault <span className="font-normal text-slate-400">optional</span></p>
+              <p className="mt-1 text-sm text-slate-500">Inject a deterministic failure into the request path.</p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <ConditionButton title="No fault" description="Serve every request normally." selected={fault === null} onSelect={() => setFault(null)} />
+                {RESILIENCE_SCENARIO_IDS.map((id) => {
+                  const item = RESILIENCE_SCENARIOS[id];
+                  return <ConditionButton key={id} title={item.title} description={item.description} selected={fault === id} onSelect={() => setFault(id)} />;
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {choice !== null && !profile && canStart && (
+          <button
+            onClick={startSelected}
+            disabled={!readyToStart}
+            className="group relative mt-6 h-14 w-full overflow-hidden rounded-2xl bg-gradient-to-r from-violet-600 via-violet-500 to-fuchsia-500 text-base font-bold text-white shadow-lg shadow-violet-300/40 transition hover:shadow-xl hover:shadow-violet-300/50 hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
+            type="button"
+          >
+            <span aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/70 to-transparent" />
+            <span className="relative">{props.creating ? "Starting…" : "Start playback"}</span>
+          </button>
+        )}
+
+        {profile && <ShapingStepper stages={stages} activeIndex={props.run ? undefined : 0} />}
+
+          {props.run && props.url && (
+            <div className="mt-6 overflow-hidden rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 to-white p-4">
               <div className="flex flex-wrap items-center gap-3">
-                <p className="min-w-0 flex-1 break-all font-mono text-xs text-sky-100">{props.url}</p>
-                <button className="shrink-0 rounded-lg border border-white/15 bg-white/[0.06] px-3 py-1.5 text-xs text-white/80 transition hover:border-white/30 hover:text-white" onClick={props.onCopy}>
+                <p className="min-w-0 flex-1 break-all font-mono text-sm text-violet-800">{props.url}</p>
+                <button className="shrink-0 rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-violet-700" onClick={props.onCopy}>
                   {props.copied ? "Copied" : "Copy playback URL"}
                 </button>
               </div>
-              <p className="mt-2 text-xs leading-5 text-white/40">This URL is fixed for the recording and never changes. A test run applies its shaping while active; without a run the clone is served with the baseline profile.</p>
+              <p className="mt-2 text-xs leading-5 text-violet-700/70">This URL is fixed for the recording and never changes. A test run applies its shaping while active; without a run the clone is served with the baseline profile.</p>
             </div>
           )}
-          {props.run && isTerminal(props.run) && <p className="mt-4 text-sm text-white/50">This test run is finished. The URL stays the same — start a new test to shape the next session.</p>}
-        {props.error && <p className="mt-4 text-sm text-rose-300">{props.error}</p>}
-        {props.stopError && <p className="mt-4 text-sm text-rose-300">{props.stopError}</p>}
+        {props.error && <p className="mt-4 text-sm text-rose-600">{props.error}</p>}
+        {props.stopError && <p className="mt-4 text-sm text-rose-600">{props.stopError}</p>}
       </div>
     </section>
   );
+}
+
+function ChoiceCard(props: { title: string; description: string; icon: ReactNode; selected: boolean; onSelect: () => void; primary?: boolean }): JSX.Element {
+  const theme = props.primary
+    ? "from-sky-500 via-sky-400 to-violet-400"
+    : "from-violet-500 via-fuchsia-500 to-fuchsia-400";
+  const selectedRing = props.primary ? "ring-sky-200 shadow-sky-200/50" : "ring-fuchsia-200 shadow-fuchsia-200/50";
+  return (
+    <button
+      onClick={props.onSelect}
+      className={`group relative overflow-hidden rounded-2xl border p-5 text-left transition duration-200 ${props.selected ? `border-white/60 bg-gradient-to-br ${theme} ring-2 ${selectedRing} shadow-xl` : `border-white/60 bg-gradient-to-br ${theme} shadow-[0_14px_38px_rgba(15,23,42,0.18)] hover:-translate-y-0.5 hover:shadow-[0_22px_50px_rgba(15,23,42,0.26)]`}`}
+      type="button"
+    >
+      <span aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/90 to-transparent" />
+      <span aria-hidden="true" className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-white/30 blur-2xl" />
+      <span aria-hidden="true" className="pointer-events-none absolute -bottom-12 -left-10 h-28 w-28 rounded-full bg-black/10 blur-2xl" />
+      <div className="relative flex items-start gap-3">
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white/20 text-white shadow-sm ring-1 ring-white/40 backdrop-blur-sm">
+          {props.icon}
+        </span>
+        <div className="min-w-0">
+          <p className="font-semibold text-white">{props.title}</p>
+          <p className="mt-1 text-sm leading-5 text-white/85">{props.description}</p>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function ConditionButton(props: { title: string; description: string; selected: boolean; onSelect: () => void }): JSX.Element {
+  return (
+    <button
+      onClick={props.onSelect}
+      className={`group relative overflow-hidden rounded-xl border p-3 text-left text-sm transition ${props.selected ? "border-violet-400 bg-gradient-to-br from-violet-100 to-fuchsia-50 ring-2 ring-violet-200 shadow-sm" : "border-white/70 bg-gradient-to-br from-white/70 to-violet-50/50 hover:border-violet-300/70 hover:from-white/90 hover:shadow-sm"}`}
+      type="button"
+    >
+      <span className="font-semibold text-slate-800">{props.title}</span>
+      <span className="mt-1 block text-xs text-slate-500">{props.description}</span>
+    </button>
+  );
+}
+
+function PlayIcon(): JSX.Element {
+  return <svg aria-hidden="true" fill="none" height="18" viewBox="0 0 24 24" width="18"><path d="m8 5 11 7-11 7V5Z" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.7" /></svg>;
+}
+
+function SluceIcon(): JSX.Element {
+  return <svg aria-hidden="true" fill="none" height="18" viewBox="0 0 24 24" width="18"><path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h9M17 17h3" stroke="currentColor" strokeLinecap="round" strokeWidth="1.7" /><circle cx="15" cy="7" r="1.6" fill="currentColor" /><circle cx="9" cy="12" r="1.6" fill="currentColor" /><circle cx="15" cy="17" r="1.6" fill="currentColor" /></svg>;
 }
 
 function isTerminal(run: PlaybackRun): boolean { return run.state === "completed" || run.state === "expired" || run.state === "failed"; }
@@ -361,13 +480,13 @@ function ShapingStepper({ stages, activeIndex }: { stages: readonly NetworkProfi
   return (
     <div className="mt-6 grid gap-3 sm:grid-cols-3">
       {stages.map((stage, index) => (
-        <div key={index} className={`rounded-2xl border p-4 transition ${activeIndex === index ? "border-sky-300/40 bg-sky-300/[0.07]" : "border-white/[0.08] bg-white/[0.03]"}`}>
+        <div key={index} className={`rounded-2xl border p-4 transition ${activeIndex === index ? "border-violet-300 bg-violet-50" : "border-slate-200 bg-slate-50"}`}>
           <div className="flex items-center justify-between gap-2">
-            <span className={`grid h-6 w-6 place-items-center rounded-full text-[11px] font-bold ${activeIndex === index ? "bg-sky-300 text-slate-950" : "bg-white/10 text-white/60"}`}>{index + 1}</span>
-            <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-white/45">after #{stage.afterVideoRequests} video</span>
+            <span className={`grid h-6 w-6 place-items-center rounded-full text-[11px] font-bold ${activeIndex === index ? "bg-violet-600 text-white" : "bg-white text-slate-500"}`}>{index + 1}</span>
+            <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] uppercase tracking-wider text-slate-500">after #{stage.afterVideoRequests} video</span>
           </div>
-          <p className="mt-3 font-mono text-lg font-semibold text-white">{stage.bandwidthKbps.toLocaleString()} <span className="text-xs font-normal text-white/40">kbps</span></p>
-          <p className="text-xs text-white/45">{stage.latencyMs} ms latency</p>
+          <p className="mt-3 font-mono text-lg font-semibold text-slate-900">{stage.bandwidthKbps.toLocaleString()} <span className="text-xs font-normal text-slate-400">kbps</span></p>
+          <p className="text-xs text-slate-500">{stage.latencyMs} ms latency</p>
         </div>
       ))}
     </div>
@@ -380,11 +499,11 @@ function AbrDashboard({ run, items }: { run: PlaybackRun; items: DeliveryRequest
     <section className="mt-8 space-y-4">
       <div className="animate-fade-up flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-200/70">Live playback run</p>
-          <h2 className="mt-1 text-xl font-semibold tracking-tight">ABR evidence</h2>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Live playback run</p>
+          <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-900">ABR evidence</h2>
         </div>
-        <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/60">
-          <span className="h-1.5 w-1.5 animate-pulse-dot rounded-full bg-emerald-400" />
+        <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600">
+          <span className="h-1.5 w-1.5 animate-pulse-dot rounded-full bg-emerald-500" />
           {stats.variantChanges > 0 ? `${stats.variantChanges} variant change${stats.variantChanges > 1 ? "s" : ""} observed` : items.length > 0 ? "collecting attempts…" : "waiting for device…"}
         </span>
       </div>
@@ -439,8 +558,8 @@ function BandwidthChart({ items, stages }: { items: DeliveryRequest[]; stages: N
       <svg className="w-full" height={H} role="img" aria-label="Bandwidth over requests" viewBox={`0 0 ${W} ${H}`}>
         {ticks(rawMax, 4).map((tick, i) => (
           <g key={i}>
-            <line x1={padL} x2={W - padR} y1={py(tick)} y2={py(tick)} stroke="rgba(255,255,255,0.06)" strokeWidth={1} />
-            <text x={padL - 8} y={py(tick) + 3} className="fill-white/35 font-mono text-[10px]" textAnchor="end">{fmtShortKbps(tick)}</text>
+            <line x1={padL} x2={W - padR} y1={py(tick)} y2={py(tick)} stroke="rgba(15,23,42,0.08)" strokeWidth={1} />
+            <text x={padL - 8} y={py(tick) + 3} className="fill-slate-400 font-mono text-[10px]" textAnchor="end">{fmtShortKbps(tick)}</text>
           </g>
         ))}
         {bands.map((band, i) => (
@@ -460,11 +579,11 @@ function BandwidthChart({ items, stages }: { items: DeliveryRequest[]; stages: N
           </linearGradient>
         </defs>
       </svg>
-      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-white/50">
-        <Legend swatch="bg-sky-300" label="Shaped bandwidth" />
-        <Legend swatch="bg-fuchsia-300" label="Player selection" />
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-500">
+        <Legend swatch="bg-sky-400" label="Shaped bandwidth" />
+        <Legend swatch="bg-fuchsia-500" label="Player selection" />
         {stages.map((_, i) => (
-          <Legend key={i} swatch={STAGE_COLORS[i] ?? "bg-white/30"} label={i === 0 ? "Good" : i === 1 ? "Constrained" : "Recovery"} />
+          <Legend key={i} swatch={STAGE_COLORS[i] ?? "bg-slate-300"} label={i === 0 ? "Good" : i === 1 ? "Constrained" : "Recovery"} />
         ))}
       </div>
     </ChartCard>
@@ -505,7 +624,7 @@ function LatencyChart({ items }: { items: DeliveryRequest[] }): JSX.Element {
           })}
         </svg>
       )}
-      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-[11px] text-white/45">
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-[11px] text-slate-500">
         <Legend swatch="bg-[#43d18b]" label="<150 ms" />
         <Legend swatch="bg-[#fbbf24]" label="150–300 ms" />
         <Legend swatch="bg-[#fb7185]" label=">300 ms" />
@@ -525,40 +644,40 @@ function RequestTimeline({ items }: { items: DeliveryRequest[] }): JSX.Element {
           return (
             <li
               key={item.id}
-              className={`flex items-center gap-3 rounded-xl border p-3 text-sm transition ${item.id === lastId ? "border-sky-300/30 bg-sky-300/[0.05]" : "border-white/[0.08] bg-white/[0.02]"}`}
+              className={`flex items-center gap-3 rounded-xl border p-3 text-sm transition ${item.id === lastId ? "border-sky-300 bg-sky-50" : "border-slate-200 bg-slate-50"}`}
             >
-              <span className={`h-9 w-1 shrink-0 rounded-full ${kindColor[item.resourceKind] ?? "bg-white/20"}`} />
+              <span className={`h-9 w-1 shrink-0 rounded-full ${kindColor[item.resourceKind] ?? "bg-slate-300"}`} />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                  <span className="font-mono text-[11px] text-white/40">t+{relS}s</span>
-                  <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-white/45">{KIND_LABEL[item.resourceKind] ?? item.resourceKind}</span>
-                  {item.faultRuleId && <span className="rounded-full border border-rose-300/25 bg-rose-300/[.08] px-2 py-0.5 text-[10px] font-semibold text-rose-100">Fault · {item.faultAction}</span>}
+                  <span className="font-mono text-[11px] text-slate-400">t+{relS}s</span>
+                  <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] uppercase tracking-wider text-slate-500">{KIND_LABEL[item.resourceKind] ?? item.resourceKind}</span>
+                  {item.faultRuleId && <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-600">Fault · {item.faultAction}</span>}
                   {item.variantResolution ? (
                     <>
                       <span className="inline-flex items-center gap-1">
-                        <span className="h-1.5 w-1.5 rounded-full bg-fuchsia-300" />
+                        <span className="h-1.5 w-1.5 rounded-full bg-fuchsia-500" />
                         {item.variantResolution}
                       </span>
-                      {item.variantBandwidth !== undefined && <span className="font-mono text-xs text-white/45">{fmtKbps(item.variantBandwidth)}</span>}
+                      {item.variantBandwidth !== undefined && <span className="font-mono text-xs text-slate-400">{fmtKbps(item.variantBandwidth)}</span>}
                     </>
                   ) : (
-                    item.mediaSequence !== undefined && <span className="font-mono text-xs text-white/45">seq {item.mediaSequence}</span>
+                    item.mediaSequence !== undefined && <span className="font-mono text-xs text-slate-400">seq {item.mediaSequence}</span>
                   )}
                 </div>
-                <p className="mt-0.5 truncate font-mono text-[11px] text-white/30">{item.logicalPath}</p>
+                <p className="mt-0.5 truncate font-mono text-[11px] text-slate-400">{item.logicalPath}</p>
               </div>
               <div className="shrink-0 text-right text-xs">
-                <div className="flex items-center justify-end gap-1.5 text-white/75">
-                  <span className={`inline-flex items-center rounded-md border px-1.5 py-0.5 font-mono ${STAGE_CHIP[item.stageIndex] ?? "border-white/10 bg-white/[0.05] text-white/50"}`}>S{item.stageIndex + 1}</span>
+                <div className="flex items-center justify-end gap-1.5 text-slate-700">
+                  <span className={`inline-flex items-center rounded-md border px-1.5 py-0.5 font-mono ${STAGE_CHIP[item.stageIndex] ?? "border-slate-200 bg-white text-slate-500"}`}>S{item.stageIndex + 1}</span>
                   <span className="font-mono">{item.latencyMs} ms</span>
                 </div>
-                <p className="mt-1 font-mono text-[10px] text-white/35">{formatBytes(item.bytesSent)}</p>
+                <p className="mt-1 font-mono text-[10px] text-slate-400">{formatBytes(item.bytesSent)}</p>
               </div>
             </li>
           );
         })}
       </ol>
-      <p className="mt-4 text-xs leading-5 text-white/40">
+      <p className="mt-4 text-xs leading-5 text-slate-500">
         A request for another variant only proves network selection. To confirm an ABR switch you still need decode or render telemetry.
       </p>
     </ChartCard>
@@ -570,13 +689,13 @@ function ActivityFeed({ events }: { events: RecordingEvent[] }): JSX.Element {
     <ChartCard title="Recording activity" subtitle="Persisted worker events, restored on reconnect.">
       <ol className="space-y-3">
         {events.map((event) => (
-          <li key={event.id} className="flex gap-3 rounded-xl border border-white/[0.08] bg-white/[0.02] p-3 text-sm">
+          <li key={event.id} className="flex gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
             <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-gradient-to-br from-sky-400/70 to-violet-500/70 text-[10px] font-bold text-white">
               {event.actor?.slice(0, 1) ?? "R"}
             </span>
             <div className="min-w-0">
-              <p className="text-white/85">{event.message}</p>
-              <p className="mt-0.5 text-xs text-white/40">
+              <p className="text-slate-800">{event.message}</p>
+              <p className="mt-0.5 text-xs text-slate-400">
                 {event.actor} · {new Date(event.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
               </p>
             </div>
@@ -589,9 +708,9 @@ function ActivityFeed({ events }: { events: RecordingEvent[] }): JSX.Element {
 
 function ChartCard({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }): JSX.Element {
   return (
-    <section className="rounded-3xl border border-white/[0.08] bg-harness-panel/70 p-5 shadow-card sm:p-6">
-      <h3 className="text-sm font-semibold tracking-tight text-white">{title}</h3>
-      {subtitle && <p className="mt-0.5 text-xs text-harness-muted">{subtitle}</p>}
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <h3 className="text-sm font-semibold tracking-tight text-slate-900">{title}</h3>
+      {subtitle && <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>}
       <div className="mt-4">{children}</div>
     </section>
   );
@@ -599,18 +718,18 @@ function ChartCard({ title, subtitle, children }: { title: string; subtitle?: st
 
 function EmptyChart({ label }: { label: string }): JSX.Element {
   return (
-    <div className="grid h-[250px] place-items-center rounded-2xl border border-dashed border-white/10 bg-white/[0.01]">
-      <p className="max-w-xs text-center text-sm text-white/40">{label}</p>
+    <div className="grid h-[250px] place-items-center rounded-2xl border border-dashed border-slate-300 bg-slate-50">
+      <p className="max-w-xs text-center text-sm text-slate-400">{label}</p>
     </div>
   );
 }
 
 function Metric({ label, value, hint }: { label: string; value: string; hint?: string }): JSX.Element {
   return (
-    <div className="animate-fade-up rounded-2xl border border-white/10 bg-white/[0.04] p-4 shadow-card sm:p-5">
-      <p className="text-[11px] font-medium uppercase tracking-wider text-white/40">{label}</p>
-      <p className="mt-2 text-xl font-semibold">{value}</p>
-      {hint && <p className="mt-0.5 text-[11px] text-white/35">{hint}</p>}
+    <div className="animate-fade-up rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+      <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">{label}</p>
+      <p className="mt-2 text-xl font-semibold text-slate-900">{value}</p>
+      {hint && <p className="mt-0.5 text-[11px] text-slate-400">{hint}</p>}
     </div>
   );
 }
@@ -637,7 +756,9 @@ function Shell({ children }: { children?: ReactNode }): JSX.Element {
             <span className="hidden text-white/85 sm:inline">Video Harness Space</span>
           </Link>
         </header>
-        {children}
+        <div className="mt-6 overflow-hidden rounded-3xl border border-slate-200/90 bg-[#f7f7fb] text-slate-700 shadow-[0_24px_70px_rgba(15,23,42,0.12)]">
+          {children}
+        </div>
       </div>
     </main>
   );
@@ -652,19 +773,19 @@ function AuroraBackdrop(): JSX.Element {
   );
 }
 
-const STAGE_COLORS = ["bg-emerald-400", "bg-amber-400", "bg-violet-400"];
-const STAGE_FILL = ["rgba(67,209,139,0.08)", "rgba(251,191,36,0.08)", "rgba(167,139,250,0.08)"];
+const STAGE_COLORS = ["bg-emerald-500", "bg-amber-500", "bg-violet-500"];
+const STAGE_FILL = ["rgba(16,185,129,0.10)", "rgba(245,158,11,0.10)", "rgba(139,92,246,0.10)"];
 const STAGE_CHIP = [
-  "border-emerald-300/25 bg-emerald-300/10 text-emerald-200",
-  "border-amber-300/25 bg-amber-300/10 text-amber-200",
-  "border-violet-300/25 bg-violet-300/10 text-violet-200",
+  "border-emerald-200 bg-emerald-50 text-emerald-700",
+  "border-amber-200 bg-amber-50 text-amber-700",
+  "border-violet-200 bg-violet-50 text-violet-700",
 ];
 
 const kindColor: Record<string, string> = {
-  master: "bg-white/25",
-  "media-playlist": "bg-sky-300",
-  "video-segment": "bg-fuchsia-400",
-  "audio-segment": "bg-violet-400",
+  master: "bg-slate-300",
+  "media-playlist": "bg-sky-400",
+  "video-segment": "bg-fuchsia-500",
+  "audio-segment": "bg-violet-500",
 };
 
 const KIND_LABEL: Record<string, string> = {

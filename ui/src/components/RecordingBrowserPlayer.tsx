@@ -128,21 +128,21 @@ export function RecordingBrowserPlayer({ protocol, url }: { protocol: "hls" | "d
   };
 
   return (
-    <section className="mt-8 overflow-hidden rounded-3xl border border-sky-300/15 bg-sky-300/[0.035] shadow-card">
+    <section className="mt-8 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="p-6 sm:p-7">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-200/70">Browser smoke test</p>
-            <h2 className="mt-1.5 text-xl font-semibold tracking-tight">Play this recording here</h2>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-harness-muted">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Browser smoke test</p>
+            <h2 className="mt-1.5 text-xl font-semibold tracking-tight text-slate-900">Play this recording here</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
               Uses {protocol === "dash" ? "dash.js" : "hls.js or native HLS"} against the same fixed URL copied to external devices. Starting playback creates real delivery requests and participates in the active network profile.
             </p>
           </div>
           <div className="flex gap-2">
-            <button className="rounded-xl bg-sky-200 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-45" disabled={status === "checking"} onClick={() => void start()}>
+            <button className="rounded-xl bg-sky-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-600 disabled:cursor-not-allowed disabled:opacity-45" disabled={status === "checking"} onClick={() => void start()}>
               {status === "idle" ? "Test in browser" : status === "checking" ? "Checking…" : "Restart playback"}
             </button>
-            {status !== "idle" && <button className="rounded-xl border border-white/15 bg-white/[0.05] px-4 py-2.5 text-sm font-semibold text-white/80 transition hover:border-white/30" onClick={stop}>Stop</button>}
+            {status !== "idle" && <button className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300" onClick={stop}>Stop</button>}
           </div>
         </div>
 
@@ -174,13 +174,13 @@ export function RecordingBrowserPlayer({ protocol, url }: { protocol: "hls" | "d
         <div className="mt-4 flex flex-wrap items-center gap-2" aria-live="polite">
           <span className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${statusTone(status)}`}>{STATUS_LABEL[status]}</span>
           {capabilities.map((capability) => (
-            <span key={`${capability.kind}:${capability.codec}`} className={`rounded-full border px-2.5 py-1 font-mono text-[10px] ${capability.supported ? "border-emerald-300/20 bg-emerald-300/[0.06] text-emerald-200" : "border-rose-300/20 bg-rose-300/[0.06] text-rose-200"}`}>
+            <span key={`${capability.kind}:${capability.codec}`} className={`rounded-full border px-2.5 py-1 font-mono text-[10px] ${capability.supported ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
               {capability.kind} · {capability.codec} · {capability.supported ? "MSE accepted" : "MSE rejected"}
             </span>
           ))}
         </div>
-        <p className={`mt-3 text-sm leading-6 ${status === "error" || status === "unsupported" ? "text-rose-200" : "text-harness-muted"}`}>{note}</p>
-        <p className="mt-2 text-xs leading-5 text-white/35">MSE acceptance is a capability check, not proof of successful hardware decode or rendered frames.</p>
+        <p className={`mt-3 text-sm leading-6 ${status === "error" || status === "unsupported" ? "text-rose-600" : "text-slate-500"}`}>{note}</p>
+        <p className="mt-2 text-xs leading-5 text-slate-400">MSE acceptance is a capability check, not proof of successful hardware decode or rendered frames.</p>
       </div>
     </section>
   );
@@ -219,8 +219,8 @@ function dashErrorMessage(event: DashErrorEvent): string {
 }
 
 function statusTone(status: PlayerStatus): string {
-  if (status === "playing") return "border-emerald-300/25 bg-emerald-300/[0.08] text-emerald-200";
-  if (status === "stalled" || status === "checking" || status === "ready") return "border-amber-300/25 bg-amber-300/[0.08] text-amber-200";
-  if (status === "error" || status === "unsupported") return "border-rose-300/25 bg-rose-300/[0.08] text-rose-200";
-  return "border-white/15 bg-white/[0.05] text-white/60";
+  if (status === "playing") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "stalled" || status === "checking" || status === "ready") return "border-amber-200 bg-amber-50 text-amber-700";
+  if (status === "error" || status === "unsupported") return "border-rose-200 bg-rose-50 text-rose-700";
+  return "border-slate-200 bg-slate-50 text-slate-600";
 }
