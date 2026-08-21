@@ -52,8 +52,11 @@ export function RecordIntakePage(): JSX.Element {
   const navigate = useNavigate();
   const [search] = useSearchParams();
   const [scenario, setScenario] = useState<ResilienceScenarioId | undefined>(() => scenarioFromParam(search.get("scenario")));
-  const [url, setUrl] = useState("");
-  const [protocol, setProtocol] = useState<"hls" | "dash">("hls");
+  const [url, setUrl] = useState(() => search.get("url") ?? "");
+  const [protocol, setProtocol] = useState<"hls" | "dash">(() => {
+    const fromUrl = search.get("url")?.toLowerCase() ?? "";
+    return fromUrl.endsWith(".mpd") ? "dash" : "hls";
+  });
   const [durationSeconds, setDurationSeconds] = useState(120);
   const recording = useMutation({
     mutationFn: () => startRecording({ url, protocol, durationSeconds, startSeconds: 0 }),

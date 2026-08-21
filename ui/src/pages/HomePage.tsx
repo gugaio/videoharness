@@ -1,22 +1,22 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { getHealth, startInvestigation } from "../lib/api";
+import { getHealth } from "../lib/api";
 
 const modules = [
+  {
+    title: "Record & Replay",
+    description: "Record a bounded VOD locally, then replay it under controlled network, failure, and recovery scenarios.",
+    icon: <RecordIcon />,
+    available: true,
+    path: "/record",
+  },
   {
     title: "Investigate",
     description: "Turn a stream URL and reported symptom into a clear, evidence-backed diagnosis.",
     icon: <SearchIcon />,
     available: true,
     path: "/investigations",
-  },
-  {
-    title: "Record & Test",
-    description: "Record a bounded VOD locally, then replay it under controlled network, failure, and recovery scenarios.",
-    icon: <RecordIcon />,
-    available: true,
-    path: "/record",
   },
   {
     title: "Watch",
@@ -37,25 +37,15 @@ const modules = [
 export function HomePage(): JSX.Element {
   const navigate = useNavigate();
   const [url, setUrl] = useState("");
-  const [problemDescription, setProblemDescription] = useState("");
   const health = useQuery({
     queryKey: ["health"],
     queryFn: getHealth,
     refetchInterval: 15_000,
   });
-  const start = useMutation({
-    mutationFn: () => startInvestigation({
-      url,
-      ...(problemDescription.trim() ? { problemDescription: problemDescription.trim() } : {}),
-    }),
-    onSuccess: ({ investigation }) => {
-      navigate(`/investigations/${encodeURIComponent(investigation.id)}`);
-    },
-  });
 
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    if (url.trim() && !start.isPending) start.mutate();
+    if (url.trim()) navigate(`/record?url=${encodeURIComponent(url.trim())}`);
   }
 
   return (
@@ -82,17 +72,17 @@ export function HomePage(): JSX.Element {
         <section className="flex flex-1 flex-col justify-center py-16 sm:py-20">
           <div className="mx-auto w-full max-w-4xl text-center">
             <p className="mb-5 text-xs font-medium uppercase tracking-[0.28em] text-white/40">
-              AI-powered streaming investigations
+              Controlled streaming playback
             </p>
             <h1 className="text-balance text-4xl font-semibold leading-[1.05] tracking-[-0.045em] sm:text-6xl lg:text-[72px]">
-              Investigate any video
-              <br className="hidden sm:block" /> stream{" "}
+              Record any video
+              <br className="hidden sm:block" /> stream and{" "}
               <span className="bg-gradient-to-r from-sky-300 via-violet-300 to-fuchsia-300 bg-clip-text text-transparent">
-                in seconds.
+                replay it under control.
               </span>
             </h1>
             <p className="mx-auto mt-6 max-w-2xl text-pretty text-base leading-7 text-harness-muted sm:text-lg">
-              Paste a URL, inspect the extracted stream structure, then decide when the agent team should analyze the evidence.
+              Clone a VOD locally once, then replay it any day under simulated network, failure, and recovery conditions.
             </p>
           </div>
 
@@ -104,36 +94,24 @@ export function HomePage(): JSX.Element {
                 value={url}
                 onChange={(event) => setUrl(event.target.value)}
                 className="h-14 w-full rounded-xl bg-white/[0.09] px-5 font-mono text-sm text-white outline-none placeholder:text-white/50 focus:bg-white/[0.12] sm:text-base"
-                placeholder="https://example.com/live/master.m3u8"
+                placeholder="https://example.com/vod/master.m3u8"
                 type="url"
               />
             </div>
 
-            <label className="mt-5 block text-left text-sm font-medium text-white/80" htmlFor="problem-description">
-              Problem description <span className="font-normal text-white/45">(optional)</span>
-            </label>
-            <textarea
-              id="problem-description"
-              value={problemDescription}
-              onChange={(event) => setProblemDescription(event.target.value)}
-              maxLength={20_000}
-              className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-white/20 bg-white/[0.07] px-5 py-4 text-sm text-white outline-none backdrop-blur-xl placeholder:text-white/45 transition focus:border-sky-200/65 focus:bg-white/[0.1] focus:ring-2 focus:ring-sky-200/15"
-              placeholder="Example: quality oscillates on a stable connection, or video freezes during a quality change. Add player or device logs if available."
-            />
-            <p className="mt-2 text-left text-xs leading-5 text-white/50">Only the stream URL is required. Device details and logs guide the diagnosis when supplied, but remain user-reported context rather than measured telemetry.</p>
             <button
               className="mt-5 h-16 w-full rounded-2xl border border-white/35 bg-gradient-to-r from-cyan-200 via-sky-300 to-violet-300 text-base font-bold tracking-tight text-slate-950 shadow-[0_14px_38px_rgba(56,189,248,0.28)] transition hover:-translate-y-0.5 hover:brightness-105 hover:shadow-[0_18px_44px_rgba(129,140,248,0.34)] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-200/30 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-65"
-              disabled={!url.trim() || health.data?.ok !== true || start.isPending}
+              disabled={!url.trim() || health.data?.ok !== true}
               type="submit"
             >
-              {start.isPending ? "Opening investigation…" : "Investigate"}
+              Set up recording
             </button>
-            {start.error && <p className="mt-3 text-sm text-rose-300">{start.error.message}</p>}
+            <p className="mt-3 text-xs leading-5 text-white/45">Choose the protocol, window, and playback scenario on the next screen.</p>
           </form>
 
           <div className="mx-auto mt-14 w-full max-w-5xl text-left">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-200/65">Explore all workflows</p>
-            <p className="mt-2 text-sm text-white/50">Investigate streams, run controlled playback tests, or see what is coming next.</p>
+            <p className="mt-2 text-sm text-white/50">Record and replay streams under control, or run an AI-powered investigation.</p>
           </div>
           <div className="mx-auto mt-5 grid w-full max-w-5xl gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {modules.map((module) => (
