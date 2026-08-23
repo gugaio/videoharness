@@ -33,7 +33,8 @@ COPY --from=web-build /src/web/dist ./web/dist
 
 USER streammock
 ENV STREAMMOCK_ADDR=:8080 \
-    STREAMMOCK_DB=/data/streammock.db
+    STREAMMOCK_DB=/data/streammock.db \
+    STREAMMOCK_STORAGE=/data/streammock-data
 EXPOSE 8080
 
 CMD ["./streammock"]

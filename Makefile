@@ -12,20 +12,13 @@ dev:
 	go run ./cmd/server & \
 	cd web && npm run dev
 
-# Run the frontend dev server (Vite, with hot reload and /api, /s proxy).
-front:
-	cd web && npm run dev
-
 # Install frontend dependencies.
-frontend-install:
+install:
 	cd web && npm install
 
 # Build the React frontend into web/dist.
-frontend: frontend-install
+build: install
 	cd web && npm run build
-
-# Alias for frontend.
-build: frontend
 
 # Clean build artifacts.
 clean:
