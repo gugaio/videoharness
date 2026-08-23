@@ -87,6 +87,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	registerFrontend(mux)
+	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("GET /api/streams", srv.handleListStreams)
 	mux.HandleFunc("GET /api/streams/{id}", srv.handleGetStream)
 	mux.HandleFunc("POST /api/streams", srv.handleAddStream)
@@ -117,6 +118,10 @@ func main() {
 		log.Fatalf("server: %v", err)
 	}
 	<-done
+}
+
+func handleHealth(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func seedBBBDemo(mem *store.MemoryStore, cfg config.Config) error {
