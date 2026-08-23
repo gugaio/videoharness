@@ -1,0 +1,64 @@
+package proxy
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"streammock/internal/config"
+	"streammock/internal/db"
+	"streammock/internal/models"
+	"streammock/internal/store"
+)
+
+func TestReadyCloneServesOnlyRegisteredLocalResources(t *testing.T) {
+	directory := t.TempDir()
+	database, err := db.Open(filepath.Join(directory, "streammock.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	streams := store.New(database)
+	now := time.Now().UTC()
+	stream := models.Stream{ID: "clone-test", OriginalURL: "https://origin.example/master.m3u8", ProxyPath: "/s/clone-test/master.m3u8", ActivePreset: "clean", Mode: models.ModeClone, CaptureStatus: models.CaptureQueued, RequestedDurationSeconds: 60, CreatedAt: now, UpdatedAt: now}
+	if err := streams.Add(stream, true); err != nil {
+		t.Fatal(err)
+	}
+	cloneRoot := filepath.Join(directory, "clones", stream.ID)
+	if err := os.MkdirAll(filepath.Join(cloneRoot, "variants", "video-0", "segments"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cloneRoot, "master.m3u8"), []byte("#EXTM3U\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cloneRoot, "variants", "video-0", "segments", "1.ts"), []byte("segment"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resources := []models.Resource{
+		{StreamID: stream.ID, LogicalPath: "master.m3u8", Kind: "master", ContentType: "application/vnd.apple.mpegurl", SizeBytes: 8, SHA256: "test"},
+		{StreamID: stream.ID, LogicalPath: "variants/video-0/segments/1.ts", Kind: "video-segment", ContentType: "video/mp2t", SizeBytes: 7, SHA256: "test"},
+	}
+	if err := streams.CompleteClone(stream.ID, 6, 15, "clones/clone-test", resources); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	NewEngine(config.Config{StorageDir: directory, HTTPTimeout: time.Second}, streams, NewChaos()).Register(mux)
+
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/s/clone-test/variants/video-0/segments/1.ts", nil))
+	if response.Code != http.StatusOK || response.Body.String() != "segment" {
+		t.Fatalf("unexpected response: %d %q", response.Code, response.Body.String())
+	}
+
+	missing := httptest.NewRecorder()
+	mux.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/s/clone-test/not-registered.ts", nil))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("got %d for unregistered resource", missing.Code)
+	}
+}

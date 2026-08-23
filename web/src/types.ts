@@ -10,7 +10,16 @@ export interface Stream {
   proxy_path: string;
   active_preset: string;
   owner_id: string | null;
+  mode: "proxy" | "clone";
+  capture_status: "queued" | "capturing" | "ready" | "failed";
+  requested_duration_seconds: number;
+  duration_seconds?: number;
+  total_bytes?: number;
+  resource_count?: number;
+  error_code?: string;
+  error_message?: string;
   created_at: string;
+  updated_at: string;
   presets: Preset[];
 }
 

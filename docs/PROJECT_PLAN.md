@@ -18,24 +18,25 @@ Consequentemente, a reprodução depende de a origem continuar disponível. A
 janela de 60 segundos é uma transformação da playlist atual, e não uma cópia
 imutável do conteúdo.
 
-## Fase 2 — Clone HLS persistente de até 60 segundos (próxima fase)
+## Fase 2 — Clone HLS persistente (em andamento)
 
-Objetivo: ao criar uma stream, capturar no máximo 60 segundos de conteúdo HLS
-e servi-lo localmente. Depois de concluída a captura, a URL clone deve
-continuar reproduzível mesmo que a URL original deixe de existir.
+Objetivo: ao criar uma stream, capturar por padrão até 60 segundos de conteúdo
+HLS, com duração solicitada de até 5 minutos, e servi-lo localmente. Depois de
+concluída a captura, a URL clone continua reproduzível mesmo que a URL original
+deixe de existir.
 
-Escopo inicial:
+Escopo entregue no primeiro corte:
 
-- Baixar a playlist mestre e a variante de mídia selecionada.
-- Selecionar segmentos cuja duração acumulada seja de, no máximo, 60 segundos
-  por padrão.
-- Baixar e persistir localmente os segmentos e os recursos HLS necessários,
-  incluindo chaves, mapas de inicialização e playlists filhas quando houver.
+- Aceitar master playlist ou media playlist HLS VOD clear/MPEG-TS.
+- Baixar a variante de vídeo de maior `BANDWIDTH` e a rendition de áudio padrão
+  vinculada, quando houver.
+- Selecionar segmentos completos cuja duração acumulada seja de no máximo o
+  valor pedido: 60 segundos por padrão, 300 segundos no máximo.
+- Baixar playlists e segmentos em staging antes da publicação local.
 - Gerar playlists locais com referências locais e `#EXT-X-ENDLIST`.
-- Registrar no banco o modo da stream (`proxy` ou `clone`), estado da captura
-  (`capturing`, `ready` ou `failed`), duração obtida, erro e diretório de
-  armazenamento.
-- Exibir o andamento, falha ou disponibilidade do clone na interface.
+- Registrar no banco modo, estado (`queued`, `capturing`, `ready` ou `failed`),
+  duração, bytes, erro, inventário e diretório de armazenamento.
+- Exibir o andamento, a falha ou a disponibilidade do clone na interface.
 - Manter os presets de caos funcionando sobre os recursos locais clonados.
 
 Critérios de aceite:
@@ -43,18 +44,19 @@ Critérios de aceite:
 - Um clone marcado como `ready` toca sem qualquer requisição à origem.
 - Derrubar ou tornar indisponível a URL de origem não impede a reprodução do
   clone pronto.
-- O clone não ultrapassa 60 segundos de mídia, salvo uma regra explicitamente
-  definida para acomodar a duração indivisível do último segmento.
+- Um clone não ultrapassa a duração solicitada nem o teto absoluto de 300
+  segundos; segmentos indivisíveis que não couberem no limite são omitidos.
 - Falhas de captura ficam visíveis e não produzem um clone parcialmente
   utilizável como se estivesse pronto.
 
-Decisões a definir durante a implementação:
+Limitações deliberadas deste corte:
 
-- Política para playlists mestre com múltiplas qualidades: capturar uma
-  variante escolhida ou todas as variantes.
-- Limite de espaço, expiração e remoção dos clones armazenados.
-- Tratamento de streams criptografadas, byte ranges, fMP4 e playlists live.
-- Local de armazenamento configurável e estratégia de backup.
+- Apenas uma variante de vídeo é preservada; a ladder completa fica para a
+  próxima fase de ABR.
+- AES-128/DRM, byte ranges, fMP4/`EXT-X-MAP`, LL-HLS e playlists live falham
+  explicitamente e nunca geram clone parcial.
+- O diretório é configurável por `STREAMMOCK_STORAGE` (default
+  `streammock-data`) e o limite agregado é 1 GiB por clone.
 
 ## Fase 3 — Operação do acervo de clones
 

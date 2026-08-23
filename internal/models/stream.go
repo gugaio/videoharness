@@ -3,12 +3,41 @@ package models
 import "time"
 
 type Stream struct {
-	ID           string    `json:"id"`
-	OriginalURL  string    `json:"original_url"`
-	ProxyPath    string    `json:"proxy_path"`
-	ActivePreset string    `json:"active_preset"`
-	OwnerID      *string   `json:"owner_id"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID                       string    `json:"id"`
+	OriginalURL              string    `json:"original_url"`
+	ProxyPath                string    `json:"proxy_path"`
+	ActivePreset             string    `json:"active_preset"`
+	OwnerID                  *string   `json:"owner_id"`
+	Mode                     string    `json:"mode"`
+	CaptureStatus            string    `json:"capture_status"`
+	RequestedDurationSeconds float64   `json:"requested_duration_seconds"`
+	DurationSeconds          *float64  `json:"duration_seconds,omitempty"`
+	TotalBytes               *int64    `json:"total_bytes,omitempty"`
+	ResourceCount            *int      `json:"resource_count,omitempty"`
+	StorageKey               *string   `json:"storage_key,omitempty"`
+	ErrorCode                *string   `json:"error_code,omitempty"`
+	ErrorMessage             *string   `json:"error_message,omitempty"`
+	CreatedAt                time.Time `json:"created_at"`
+	UpdatedAt                time.Time `json:"updated_at"`
+}
+
+const (
+	ModeProxy = "proxy"
+	ModeClone = "clone"
+
+	CaptureQueued    = "queued"
+	CaptureCapturing = "capturing"
+	CaptureReady     = "ready"
+	CaptureFailed    = "failed"
+)
+
+type Resource struct {
+	StreamID    string
+	LogicalPath string
+	Kind        string
+	ContentType string
+	SizeBytes   int64
+	SHA256      string
 }
 
 type Preset struct {

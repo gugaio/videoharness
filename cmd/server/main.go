@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"streammock/internal/capture"
 	"streammock/internal/config"
 	"streammock/internal/db"
 	"streammock/internal/models"
@@ -28,9 +29,10 @@ import (
 )
 
 type Server struct {
-	cfg    config.Config
-	store  *store.MemoryStore
-	engine *proxy.Engine
+	cfg     config.Config
+	store   *store.MemoryStore
+	engine  *proxy.Engine
+	capture *capture.Manager
 }
 
 type StreamVM struct {
@@ -78,11 +80,16 @@ func main() {
 
 	chaos := proxy.NewChaos()
 	engine := proxy.NewEngine(cfg, mem, chaos)
+	captureManager := capture.NewManager(cfg, mem)
+	captureCtx, cancelCapture := context.WithCancel(context.Background())
+	defer cancelCapture()
+	captureManager.Start(captureCtx)
 
 	srv := &Server{
-		cfg:    cfg,
-		store:  mem,
-		engine: engine,
+		cfg:     cfg,
+		store:   mem,
+		engine:  engine,
+		capture: captureManager,
 	}
 
 	mux := http.NewServeMux()
@@ -129,11 +136,15 @@ func seedBBBDemo(mem *store.MemoryStore, cfg config.Config) error {
 		return nil
 	}
 	return mem.Add(models.Stream{
-		ID:           "big-buck-bunny",
-		OriginalURL:  cfg.BBBDemoURL,
-		ProxyPath:    "/s/big-buck-bunny/master.m3u8",
-		ActivePreset: "clean",
-		CreatedAt:    time.Now().UTC(),
+		ID:                       "big-buck-bunny",
+		OriginalURL:              cfg.BBBDemoURL,
+		ProxyPath:                "/s/big-buck-bunny/master.m3u8",
+		ActivePreset:             "clean",
+		Mode:                     models.ModeProxy,
+		CaptureStatus:            models.CaptureReady,
+		RequestedDurationSeconds: 60,
+		CreatedAt:                time.Now().UTC(),
+		UpdatedAt:                time.Now().UTC(),
 	}, true)
 }
 
@@ -160,13 +171,21 @@ func (s *Server) handleGetStream(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAddStream(w http.ResponseWriter, r *http.Request) {
-	rawURL, err := bodyParam(r, "url")
-	if err != nil {
+	var body struct {
+		URL             string  `json:"url"`
+		DurationSeconds float64 `json:"duration_seconds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	rawURL = strings.TrimSpace(rawURL)
+	rawURL := strings.TrimSpace(body.URL)
 	if err := validateURL(rawURL); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	duration, err := capture.ValidateDuration(body.DurationSeconds)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -178,24 +197,29 @@ func (s *Server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	st := models.Stream{
-		ID:           id,
-		OriginalURL:  rawURL,
-		ProxyPath:    fmt.Sprintf("/s/%s/master.m3u8", id),
-		ActivePreset: "clean",
-		CreatedAt:    time.Now().UTC(),
+		ID:                       id,
+		OriginalURL:              rawURL,
+		ProxyPath:                fmt.Sprintf("/s/%s/master.m3u8", id),
+		ActivePreset:             "clean",
+		Mode:                     models.ModeClone,
+		CaptureStatus:            models.CaptureQueued,
+		RequestedDurationSeconds: duration,
+		CreatedAt:                time.Now().UTC(),
+		UpdatedAt:                time.Now().UTC(),
 	}
 	userID, authed := s.authenticatedUserID(r)
 	if authed {
 		st.OwnerID = &userID
 	}
-	// Authenticated streams are owned and persisted; anonymous clones are
-	// ephemeral (memory only) so they don't pile up in the database.
-	if err := s.store.Add(st, authed); err != nil {
+	// Clone bytes live on disk, so every clone needs durable metadata even when
+	// created anonymously. Ownership still controls workspace listing and edits.
+	if err := s.store.Add(st, true); err != nil {
 		http.Error(w, fmt.Sprintf("failed to persist stream: %v", err), http.StatusInternalServerError)
 		return
 	}
+	s.capture.Enqueue(st.ID)
 
-	writeJSON(w, http.StatusCreated, map[string]any{
+	writeJSON(w, http.StatusAccepted, map[string]any{
 		"stream": StreamVM{Stream: st, Presets: models.Presets},
 	})
 }

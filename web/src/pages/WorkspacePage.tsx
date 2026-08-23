@@ -10,6 +10,7 @@ export default function WorkspacePage() {
   const [token, setToken] = useState<string | undefined>(undefined);
   const [streams, setStreams] = useState<Stream[]>([]);
   const [url, setUrl] = useState("");
+  const [duration, setDuration] = useState(60);
   const [error, setError] = useState<string | null>(null);
   const [copiedStreamId, setCopiedStreamId] = useState<string | null>(null);
 
@@ -26,7 +27,7 @@ export default function WorkspacePage() {
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     try {
-      const created = await addStream(url.trim(), token);
+      const created = await addStream(url.trim(), duration, token);
       setStreams((prev) => [...prev, withPresets(created)]);
       setUrl("");
     } catch (err) {
@@ -88,7 +89,7 @@ export default function WorkspacePage() {
             <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-xl text-stone-900">+</div>
             <div>
               <h2 className="text-lg font-semibold text-white">Clone a new stream</h2>
-              <p className="mt-1 text-sm text-stone-300/70">Paste an HLS or DASH manifest URL to create a player-ready proxy URL.</p>
+              <p className="mt-1 text-sm text-stone-300/70">Paste an HLS VOD URL. StreamMock stores a self-contained clone before it becomes playable.</p>
             </div>
           </div>
           <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-3 sm:flex-row">
@@ -100,6 +101,17 @@ export default function WorkspacePage() {
               placeholder="https://example.com/master.m3u8"
               className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/25 px-5 py-4 text-sm text-white outline-none transition placeholder:text-stone-500 focus:border-amber-100/60 focus:ring-2 focus:ring-amber-100/15"
             />
+            <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-stone-300">
+              <span>Seconds</span>
+              <input
+                type="number"
+                min="1"
+                max="300"
+                value={duration}
+                onChange={(e) => setDuration(Math.max(1, Math.min(300, Number(e.target.value) || 60)))}
+                className="w-14 bg-transparent text-right text-white outline-none"
+              />
+            </label>
             <button
               type="submit"
               className="rounded-xl bg-white px-6 py-4 text-sm font-semibold text-stone-950 transition hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-white/60"
@@ -131,6 +143,7 @@ export default function WorkspacePage() {
                   <tr>
                     <th className="px-7 py-4 font-medium">Stream</th>
                     <th className="px-5 py-4 font-medium">Source URL</th>
+                    <th className="px-5 py-4 font-medium">Clone</th>
                     <th className="px-5 py-4 font-medium">Playback preset</th>
                     <th className="px-7 py-4 text-right font-medium">Use in your player</th>
                   </tr>
@@ -150,6 +163,11 @@ export default function WorkspacePage() {
                           Proxy: {stream.proxy_path}
                         </a>
                       </td>
+                      <td className="px-5 py-5 text-xs text-stone-300">
+                        <span className="block capitalize">{stream.capture_status}</span>
+                        {stream.duration_seconds !== undefined && <span className="mt-1 block text-stone-500">{stream.duration_seconds.toFixed(1)} s</span>}
+                        {stream.error_message && <span className="mt-1 block max-w-40 text-red-300">{stream.error_message}</span>}
+                      </td>
                       <td className="px-5 py-5">
                         <PresetSelect stream={stream} onPresetChange={replaceStream} token={token} />
                       </td>
@@ -160,10 +178,11 @@ export default function WorkspacePage() {
                           </Link>
                           <button
                             type="button"
+                            disabled={stream.capture_status !== "ready"}
                             onClick={() => void copyProxyUrl(stream)}
-                            className="inline-flex min-w-36 justify-center rounded-lg bg-white px-4 py-2 text-xs font-semibold text-stone-950 transition hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-white/60"
+                            className="inline-flex min-w-36 justify-center rounded-lg bg-white px-4 py-2 text-xs font-semibold text-stone-950 transition hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-white/60 disabled:cursor-not-allowed disabled:opacity-40"
                           >
-                            {copiedStreamId === stream.id ? "Copied!" : "Copy manifest URL"}
+                            {stream.capture_status !== "ready" ? "Clone pending" : copiedStreamId === stream.id ? "Copied!" : "Copy manifest URL"}
                           </button>
                         </div>
                       </td>

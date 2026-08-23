@@ -36,3 +36,4 @@ go.work.sum
 streammock.db
 streammock.db-wal
 streammock.db-shm
+streammock-data/

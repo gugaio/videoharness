@@ -10,7 +10,7 @@ Go backend + React/Vite frontend for recording, mocking, and playing HLS streams
 - `make dev` — backend + Vite dev server on `:5173`, proxying `/api` and `/s/` to `:8080`
 - `make build` — build frontend into `web/dist` (runs `tsc -b && vite build`, so it typechecks)
 - `make clean` — removes `web/dist` and `web/node_modules`
-- No tests exist. Verify with `go build ./...`, `go vet ./...`, and `make build` for the frontend.
+- Run `go test ./...`, `go build ./...`, `go vet ./...`, and `make build` for the frontend.
 
 ## Frontend serving mode
 The server always serves the compiled React SPA from `web/dist` (`registerFrontend` in `cmd/server/main.go`). If `web/dist` is missing, `GET /` returns 503 — run `make build` or `make dev` first. There is no server-rendered fallback; the Go `html/template` UI was removed.
@@ -29,5 +29,5 @@ The server always serves the compiled React SPA from `web/dist` (`registerFronte
 
 ## Architecture
 - Streams persist to SQLite but are served from an in-memory `sync.Map` (`internal/store/memory.go`), loaded at startup.
-- The HLS proxy (`internal/proxy/engine.go`) serves `/s/{id}/master.m3u8` and rewrites every playlist URI to `/s/{id}/r/{base64url(target)}`. Playlists are truncated to a 60s window (`TruncateSeconds` in `internal/config`) and closed with `#EXT-X-ENDLIST`.
+- New streams are captured asynchronously as persistent HLS VOD clones (clear MPEG-TS only): default 60s, maximum 300s. Clone playback reads only local registered resources under `/s/{id}/...`; legacy proxy streams still rewrite every playlist URI to `/s/{id}/r/{base64url(target)}`.
 - HTTP API: `GET/POST /api/streams`, `GET /api/streams/{id}`, `POST /api/streams/{id}/preset`.

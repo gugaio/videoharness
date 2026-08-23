@@ -28,10 +28,10 @@ export async function getStream(id: string): Promise<Stream> {
   return data.stream;
 }
 
-export async function addStream(url: string, token?: string): Promise<Stream> {
+export async function addStream(url: string, durationSeconds = 60, token?: string): Promise<Stream> {
   const data = await request<{ stream: Stream }>(
     "/api/streams",
-    { method: "POST", body: JSON.stringify({ url }) },
+    { method: "POST", body: JSON.stringify({ url, duration_seconds: durationSeconds }) },
     token,
   );
   return data.stream;

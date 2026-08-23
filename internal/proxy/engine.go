@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -25,6 +27,7 @@ type Engine struct {
 	chaos           *Chaos
 	client          *http.Client
 	truncateSeconds float64
+	storageDir      string
 }
 
 func NewEngine(cfg config.Config, st *store.MemoryStore, chaos *Chaos) *Engine {
@@ -35,12 +38,14 @@ func NewEngine(cfg config.Config, st *store.MemoryStore, chaos *Chaos) *Engine {
 			Timeout: cfg.HTTPTimeout,
 		},
 		truncateSeconds: cfg.TruncateSeconds,
+		storageDir:      cfg.StorageDir,
 	}
 }
 
 func (e *Engine) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /s/{id}/master.m3u8", e.serveMaster)
 	mux.HandleFunc("GET /s/{id}/r/{encoded}", e.serveProxied)
+	mux.HandleFunc("GET /s/{id}/{resource...}", e.serveLocal)
 }
 
 func (e *Engine) serveMaster(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +53,10 @@ func (e *Engine) serveMaster(w http.ResponseWriter, r *http.Request) {
 	st, ok := e.store.Get(id)
 	if !ok {
 		http.NotFound(w, r)
+		return
+	}
+	if st.Mode == models.ModeClone {
+		e.serveLocalResource(w, r, st, "master.m3u8")
 		return
 	}
 	if e.chaos.Apply(w, r, true, st.ActivePreset) {
@@ -70,6 +79,10 @@ func (e *Engine) serveProxied(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if st.Mode == models.ModeClone {
+		http.NotFound(w, r)
+		return
+	}
 
 	targetURL := string(target)
 	isManifest := strings.HasSuffix(strings.Split(targetURL, "?")[0], ".m3u8")
@@ -85,6 +98,79 @@ func (e *Engine) serveProxied(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	e.serveSegment(w, r, st, targetURL)
+}
+
+func (e *Engine) serveLocal(w http.ResponseWriter, r *http.Request) {
+	st, ok := e.store.Get(r.PathValue("id"))
+	if !ok || st.Mode != models.ModeClone {
+		http.NotFound(w, r)
+		return
+	}
+	e.serveLocalResource(w, r, st, r.PathValue("resource"))
+}
+
+func (e *Engine) serveLocalResource(w http.ResponseWriter, r *http.Request, st *models.Stream, logicalPath string) {
+	if st.CaptureStatus != models.CaptureReady {
+		message := "clone is not ready"
+		if st.CaptureStatus == models.CaptureFailed {
+			message = "clone capture failed"
+		}
+		http.Error(w, message, http.StatusConflict)
+		return
+	}
+	if !validLogicalPath(logicalPath) {
+		http.NotFound(w, r)
+		return
+	}
+	resource, ok := e.store.GetResource(st.ID, logicalPath)
+	if !ok || st.StorageKey == nil {
+		http.NotFound(w, r)
+		return
+	}
+	isManifest := resource.Kind == "master" || resource.Kind == "media-playlist"
+	if e.chaos.Apply(w, r, isManifest, st.ActivePreset) {
+		return
+	}
+	root := filepath.Join(e.storageDir, filepath.FromSlash(*st.StorageKey))
+	path := filepath.Join(root, filepath.FromSlash(logicalPath))
+	cleanRoot, err := filepath.Abs(root)
+	if err != nil {
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+	cleanPath, err := filepath.Abs(path)
+	if err != nil || !strings.HasPrefix(cleanPath, cleanRoot+string(os.PathSeparator)) {
+		http.NotFound(w, r)
+		return
+	}
+	file, err := os.Open(cleanPath)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", resource.ContentType)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	http.ServeContent(w, r, filepath.Base(logicalPath), info.ModTime(), file)
+}
+
+func validLogicalPath(value string) bool {
+	if value == "" || len(value) > 512 {
+		return false
+	}
+	for _, part := range strings.Split(value, "/") {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *Engine) servePlaylist(w http.ResponseWriter, r *http.Request, st *models.Stream, rawURL string) {
