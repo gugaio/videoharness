@@ -1,0 +1,20 @@
+services:
+  streammock:
+    build:
+      context: .
+      args:
+        # This key is embedded in the browser bundle and is safe to expose.
+        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:?set VITE_CLERK_PUBLISHABLE_KEY in .env}
+    image: streammock:latest
+    ports:
+      - "${STREAMMOCK_PORT:-8080}:8080"
+    environment:
+      # Keep this secret on the server only; it is never included in the frontend image layer.
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?set CLERK_SECRET_KEY in .env}
+      STREAMMOCK_BBB_URL: ${STREAMMOCK_BBB_URL:-https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8}
+    volumes:
+      - streammock-data:/data
+    restart: unless-stopped
+
+volumes:
+  streammock-data:

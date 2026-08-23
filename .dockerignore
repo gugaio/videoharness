@@ -1,0 +1,10 @@
+.git
+.env
+.env.local
+AGENTS.md
+streammock.db
+streammock.db-shm
+streammock.db-wal
+web/node_modules
+web/dist
+**/.DS_Store
