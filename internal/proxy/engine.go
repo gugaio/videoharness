@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -69,7 +70,7 @@ func (e *Engine) serveProxied(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	enc := r.PathValue("encoded")
 
-	target, err := base64.RawURLEncoding.DecodeString(enc)
+	target, err := base64.RawURLEncoding.DecodeString(strings.SplitN(enc, "~", 2)[0])
 	if err != nil {
 		http.Error(w, "invalid proxied url", http.StatusBadRequest)
 		return
@@ -292,8 +293,13 @@ func (e *Engine) proxiedURL(streamID string, base *url.URL, ref string) string {
 	if err != nil {
 		return ref
 	}
-	resolved := base.ResolveReference(u).String()
-	enc := base64.RawURLEncoding.EncodeToString([]byte(resolved))
+	resolved := base.ResolveReference(u)
+	enc := base64.RawURLEncoding.EncodeToString([]byte(resolved.String()))
+	// Append the upstream file name as a readable suffix so the resulting
+	// path still hints at whether it is a manifest or a segment.
+	if name := path.Base(resolved.Path); name != "" && name != "." && name != "/" {
+		enc += "~" + url.PathEscape(name)
+	}
 	return "/s/" + streamID + "/r/" + enc
 }
 

@@ -174,6 +174,7 @@ func (s *Server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		URL             string  `json:"url"`
 		DurationSeconds float64 `json:"duration_seconds"`
+		Mode            string  `json:"mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -182,6 +183,14 @@ func (s *Server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 	rawURL := strings.TrimSpace(body.URL)
 	if err := validateURL(rawURL); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	mode := strings.TrimSpace(body.Mode)
+	if mode == "" {
+		mode = models.ModeClone
+	}
+	if mode != models.ModeClone && mode != models.ModeProxy {
+		http.Error(w, `mode must be "proxy" or "clone"`, http.StatusBadRequest)
 		return
 	}
 	duration, err := capture.ValidateDuration(body.DurationSeconds)
@@ -196,13 +205,17 @@ func (s *Server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	captureStatus := models.CaptureQueued
+	if mode == models.ModeProxy {
+		captureStatus = models.CaptureReady
+	}
 	st := models.Stream{
 		ID:                       id,
 		OriginalURL:              rawURL,
 		ProxyPath:                fmt.Sprintf("/s/%s/master.m3u8", id),
 		ActivePreset:             "clean",
-		Mode:                     models.ModeClone,
-		CaptureStatus:            models.CaptureQueued,
+		Mode:                     mode,
+		CaptureStatus:            captureStatus,
 		RequestedDurationSeconds: duration,
 		CreatedAt:                time.Now().UTC(),
 		UpdatedAt:                time.Now().UTC(),
@@ -217,7 +230,9 @@ func (s *Server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("failed to persist stream: %v", err), http.StatusInternalServerError)
 		return
 	}
-	s.capture.Enqueue(st.ID)
+	if mode == models.ModeClone {
+		s.capture.Enqueue(st.ID)
+	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"stream": StreamVM{Stream: st, Presets: models.Presets},

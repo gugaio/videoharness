@@ -3,8 +3,10 @@ package proxy
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +15,18 @@ import (
 	"streammock/internal/models"
 	"streammock/internal/store"
 )
+
+func TestProxiedURLPreservesFileNameSuffix(t *testing.T) {
+	engine := &Engine{}
+	base, err := url.Parse("https://origin.example/variants/video-0/master.m3u8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := engine.proxiedURL("abc", base, "../segments/seg-1.ts")
+	if !strings.HasSuffix(got, "~seg-1.ts") {
+		t.Fatalf("expected readable file name suffix, got %q", got)
+	}
+}
 
 func TestReadyCloneServesOnlyRegisteredLocalResources(t *testing.T) {
 	directory := t.TempDir()

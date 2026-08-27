@@ -11,6 +11,7 @@ export default function WorkspacePage() {
   const [streams, setStreams] = useState<Stream[]>([]);
   const [url, setUrl] = useState("");
   const [duration, setDuration] = useState(60);
+  const [mode, setMode] = useState<"clone" | "proxy">("clone");
   const [error, setError] = useState<string | null>(null);
   const [copiedStreamId, setCopiedStreamId] = useState<string | null>(null);
 
@@ -27,7 +28,7 @@ export default function WorkspacePage() {
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     try {
-      const created = await addStream(url.trim(), duration, token);
+      const created = await addStream(url.trim(), duration, mode, token);
       setStreams((prev) => [...prev, withPresets(created)]);
       setUrl("");
     } catch (err) {
@@ -88,9 +89,36 @@ export default function WorkspacePage() {
           <div className="flex items-start gap-4">
             <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-xl text-stone-900">+</div>
             <div>
-              <h2 className="text-lg font-semibold text-white">Clone a new stream</h2>
-              <p className="mt-1 text-sm text-stone-300/70">Paste an HLS VOD URL. StreamMock stores a self-contained clone before it becomes playable.</p>
+              <h2 className="text-lg font-semibold text-white">{mode === "clone" ? "Clone a new stream" : "Proxy a new stream"}</h2>
+              <p className="mt-1 text-sm text-stone-300/70">
+                {mode === "clone"
+                  ? "Paste an HLS VOD URL. StreamMock stores a self-contained clone before it becomes playable."
+                  : "Paste an HLS URL. StreamMock proxies it on demand so you can test exactly what the CDN responds."}
+              </p>
             </div>
+          </div>
+          <div className="mt-6">
+            <div className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-black/25 p-1">
+              {(["clone", "proxy"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                    mode === m
+                      ? "bg-white text-stone-950 shadow-sm"
+                      : "text-stone-300 hover:bg-white/5 hover:text-white"
+                  }`}
+                >
+                  {m === "clone" ? "Clone" : "Proxy"}
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-stone-400">
+              {mode === "clone"
+                ? "StreamMock downloads a self-contained copy and serves it locally. Deterministic and offline — replay exactly what the CDN responded."
+                : "StreamMock proxies the CDN on demand, no local copy. See what the origin returns in real time."}
+            </p>
           </div>
           <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-3 sm:flex-row">
             <input
@@ -101,22 +129,24 @@ export default function WorkspacePage() {
               placeholder="https://example.com/master.m3u8"
               className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/25 px-5 py-4 text-sm text-white outline-none transition placeholder:text-stone-500 focus:border-amber-100/60 focus:ring-2 focus:ring-amber-100/15"
             />
-            <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-stone-300">
-              <span>Seconds</span>
-              <input
-                type="number"
-                min="1"
-                max="300"
-                value={duration}
-                onChange={(e) => setDuration(Math.max(1, Math.min(300, Number(e.target.value) || 60)))}
-                className="w-14 bg-transparent text-right text-white outline-none"
-              />
-            </label>
+            {mode === "clone" && (
+              <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-stone-300">
+                <span>Seconds</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="300"
+                  value={duration}
+                  onChange={(e) => setDuration(Math.max(1, Math.min(300, Number(e.target.value) || 60)))}
+                  className="w-14 bg-transparent text-right text-white outline-none"
+                />
+              </label>
+            )}
             <button
               type="submit"
               className="rounded-xl bg-white px-6 py-4 text-sm font-semibold text-stone-950 transition hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-white/60"
             >
-              Clone stream
+              {mode === "clone" ? "Clone stream" : "Create proxy"}
             </button>
           </form>
         </section>
@@ -143,7 +173,7 @@ export default function WorkspacePage() {
                   <tr>
                     <th className="px-7 py-4 font-medium">Stream</th>
                     <th className="px-5 py-4 font-medium">Source URL</th>
-                    <th className="px-5 py-4 font-medium">Clone</th>
+                    <th className="px-5 py-4 font-medium">Mode</th>
                     <th className="px-5 py-4 font-medium">Playback preset</th>
                     <th className="px-7 py-4 text-right font-medium">Use in your player</th>
                   </tr>
@@ -164,7 +194,14 @@ export default function WorkspacePage() {
                         </a>
                       </td>
                       <td className="px-5 py-5 text-xs text-stone-300">
-                        <span className="block capitalize">{stream.capture_status}</span>
+                        <span
+                          className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
+                            stream.mode === "proxy" ? "bg-amber-100/15 text-amber-100" : "bg-white/10 text-stone-300"
+                          }`}
+                        >
+                          {stream.mode}
+                        </span>
+                        <span className="mt-1 block capitalize">{stream.capture_status}</span>
                         {stream.duration_seconds !== undefined && <span className="mt-1 block text-stone-500">{stream.duration_seconds.toFixed(1)} s</span>}
                         {stream.error_message && <span className="mt-1 block max-w-40 text-red-300">{stream.error_message}</span>}
                       </td>
