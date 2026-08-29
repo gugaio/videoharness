@@ -3,6 +3,7 @@ package cmcd
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -138,6 +139,80 @@ func TestV1DecoderLimitsAndMalformedQuery(t *testing.T) {
 	}
 }
 
+func TestV1DecoderLimitBoundaries(t *testing.T) {
+	defaults := DefaultLimits()
+	decoder := NewV1Decoder(defaults)
+
+	exactString := strings.Repeat("a", defaults.MaxStringBytes)
+	if _, err := decoder.DecodeRequest(requestWithCMCD(`com.example-label="` + exactString + `"`)); err != nil {
+		t.Fatalf("string at limit rejected: %v", err)
+	}
+
+	exactSessionID := strings.Repeat("s", defaults.MaxSessionIDRunes)
+	if _, err := decoder.DecodeRequest(requestWithCMCD(`sid="` + exactSessionID + `"`)); err != nil {
+		t.Fatalf("sid at limit rejected: %v", err)
+	}
+
+	keyTooLong := strings.Repeat("a", defaults.MaxKeyBytes-1) + "-x"
+	assertIssues(t, decoder, keyTooLong, []Issue{{Code: IssueKeyTooLong, Key: keyTooLong}})
+
+	keyLimits := defaults
+	keyLimits.MaxCustomKeys = defaults.MaxKeys + 1
+	keyDecoder := NewV1Decoder(keyLimits)
+	if _, err := keyDecoder.DecodeRequest(requestWithCMCD(manyCustomKeys(defaults.MaxKeys))); err != nil {
+		t.Fatalf("payload at key-count limit rejected: %v", err)
+	}
+	assertIssues(t, keyDecoder, manyCustomKeys(defaults.MaxKeys+1), []Issue{{Code: IssueTooManyKeys}})
+
+	rawLimits := defaults
+	rawLimits.MaxRawValueBytes = len(`sid="s"`)
+	rawDecoder := NewV1Decoder(rawLimits)
+	if _, err := rawDecoder.DecodeRequest(requestWithCMCD(`sid="s"`)); err != nil {
+		t.Fatalf("payload at raw limit rejected: %v", err)
+	}
+	assertIssues(t, rawDecoder, `sid="ss"`, []Issue{{Code: IssuePayloadTooLarge}})
+}
+
+func TestV1DecoderValidatesRequiredHundredIncrements(t *testing.T) {
+	decoder := NewV1Decoder(DefaultLimits())
+	for _, key := range []string{"bl", "dl", "mtp", "rtp"} {
+		t.Run(key, func(t *testing.T) {
+			assertIssues(t, decoder, key+"=150", []Issue{{Code: IssueInvalidIncrement, Key: key}})
+		})
+	}
+}
+
+func TestV1DecoderAcceptsCMCDV1RangeForms(t *testing.T) {
+	decoder := NewV1Decoder(DefaultLimits())
+	for _, value := range []string{"10-", "10-20", "-20"} {
+		t.Run(value, func(t *testing.T) {
+			got, err := decoder.DecodeRequest(requestWithCMCD(`nrr="` + value + `"`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.NextRangeRequest == nil || *got.NextRangeRequest != value {
+				t.Fatalf("nrr = %v, want %q", got.NextRangeRequest, value)
+			}
+		})
+	}
+	for _, value := range []string{"-", "10--20", "20-10", "-0", "+1-2", "1-a"} {
+		t.Run("invalid_"+value, func(t *testing.T) {
+			assertIssues(t, decoder, `nrr="`+value+`"`, []Issue{{Code: IssueInvalidRange, Key: "nrr"}})
+		})
+	}
+}
+
+func TestV1DecoderRejectsInvalidUTF8(t *testing.T) {
+	decoder := NewV1Decoder(DefaultLimits())
+	request := httptest.NewRequest("GET", "/", nil)
+	request.URL = &url.URL{Path: "/", RawQuery: "CMCD=%FF"}
+	_, err := decoder.DecodeRequest(request)
+	var validation *ValidationError
+	if !errors.As(err, &validation) || !reflect.DeepEqual(validation.Issues, []Issue{{Code: IssueInvalidUTF8}}) {
+		t.Fatalf("invalid UTF-8 issues = %#v", validation)
+	}
+}
+
 func FuzzV1Decoder(f *testing.F) {
 	for _, seed := range []string{
 		"CMCD=br%3D3200%2Csid%3D%22seed%22",
@@ -220,4 +295,17 @@ func manyCustomKeys(count int) string {
 		parts = append(parts, "com.example-"+strconv.Itoa(i))
 	}
 	return strings.Join(parts, ",")
+}
+
+func requestWithCMCD(raw string) *http.Request {
+	return httptest.NewRequest("GET", "/?CMCD="+url.QueryEscape(raw), nil)
+}
+
+func assertIssues(t *testing.T, decoder Decoder, raw string, want []Issue) {
+	t.Helper()
+	_, err := decoder.DecodeRequest(requestWithCMCD(raw))
+	var validation *ValidationError
+	if !errors.As(err, &validation) || !reflect.DeepEqual(validation.Issues, want) {
+		t.Fatalf("issues = %#v, want %#v", validation, want)
+	}
 }

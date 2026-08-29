@@ -59,6 +59,10 @@ func (d *V1Decoder) DecodeRequest(r *http.Request) (NormalizedCMCD, error) {
 		issues = append(issues, Issue{Code: IssuePayloadTooLarge})
 		return out, validationError(issues)
 	}
+	if !utf8.ValidString(rawValue) {
+		issues = append(issues, Issue{Code: IssueInvalidUTF8})
+		return out, validationError(issues)
+	}
 	out.RawValue = rawValue
 	if rawValue == "" {
 		if len(issues) == 0 {
@@ -85,7 +89,7 @@ func (d *V1Decoder) DecodeRequest(r *http.Request) (NormalizedCMCD, error) {
 			issues = append(issues, d.assignStandard(&out, entry)...)
 			continue
 		}
-		if !strings.Contains(entry.key, "-") {
+		if !validCustomKey(entry.key) {
 			issues = append(issues, Issue{Code: IssueUnknownKey, Key: entry.key})
 			continue
 		}
@@ -223,7 +227,10 @@ func parseValue(raw, key string, limits Limits) (string, bool, []Issue) {
 	}
 	if raw[0] != '"' {
 		if strings.ContainsAny(raw, "\\\"") {
-			return "", false, []Issue{{Code: IssueInvalidKey, Key: key}}
+			return "", false, []Issue{{Code: IssueUnexpectedValue, Key: key}}
+		}
+		if len(raw) > limits.MaxStringBytes {
+			return "", false, []Issue{{Code: IssueStringTooLong, Key: key}}
 		}
 		return raw, false, nil
 	}
@@ -310,6 +317,9 @@ func (d *V1Decoder) assignStandard(out *NormalizedCMCD, entry token) []Issue {
 		if issue != nil {
 			return []Issue{*issue}
 		}
+		if requiresHundredIncrement(key) && value%100 != 0 {
+			return []Issue{{Code: IssueInvalidIncrement, Key: key}}
+		}
 		switch key {
 		case "br":
 			out.BitrateKbps = scalar(value)
@@ -339,7 +349,11 @@ func (d *V1Decoder) assignStandard(out *NormalizedCMCD, entry token) []Issue {
 		if !entry.quoted {
 			return []Issue{{Code: IssueUnexpectedValue, Key: key}}
 		}
-		out.NextObjectRequest = stringPtr(entry.value)
+		value, err := url.PathUnescape(entry.value)
+		if err != nil || !utf8.ValidString(value) {
+			return []Issue{{Code: IssueBadValueEncoding, Key: key}}
+		}
+		out.NextObjectRequest = stringPtr(value)
 	case "nrr":
 		if !entry.quoted || !validRange(entry.value) {
 			return []Issue{{Code: IssueInvalidRange, Key: key}}
@@ -383,6 +397,20 @@ func positiveInteger(raw, key string, allowZero bool) (int64, *Issue) {
 func isStandardKey(key string) bool {
 	switch key {
 	case "br", "bl", "bs", "cid", "d", "dl", "mtp", "nor", "nrr", "ot", "pr", "rtp", "sf", "sid", "st", "su", "tb":
+		return true
+	default:
+		return false
+	}
+}
+
+func validCustomKey(value string) bool {
+	separator := strings.IndexByte(value, '-')
+	return separator > 0 && separator < len(value)-1
+}
+
+func requiresHundredIncrement(key string) bool {
+	switch key {
+	case "bl", "dl", "mtp", "rtp":
 		return true
 	default:
 		return false
@@ -435,12 +463,37 @@ func validStreamingFormat(value StreamingFormat) bool {
 
 func validRange(value string) bool {
 	start, end, found := strings.Cut(value, "-")
-	if !found || start == "" || end == "" {
+	if !found || strings.Contains(end, "-") || (start == "" && end == "") {
 		return false
 	}
-	_, startErr := strconv.ParseInt(start, 10, 64)
-	_, endErr := strconv.ParseInt(end, 10, 64)
-	return startErr == nil && endErr == nil
+	if start != "" && !decimalDigits(start) {
+		return false
+	}
+	if end != "" && !decimalDigits(end) {
+		return false
+	}
+	if start == "" {
+		suffix, err := strconv.ParseUint(end, 10, 64)
+		return err == nil && suffix > 0
+	}
+	startValue, startErr := strconv.ParseUint(start, 10, 64)
+	if end == "" {
+		return startErr == nil
+	}
+	endValue, endErr := strconv.ParseUint(end, 10, 64)
+	return startErr == nil && endErr == nil && startValue <= endValue
+}
+
+func decimalDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func scalar[T any](value T) *ObjectValues[T] { return &ObjectValues[T]{Scalar: &value} }
@@ -477,7 +530,7 @@ func canonical(out NormalizedCMCD) string {
 		values["mtp"] = strconv.FormatInt(*out.MeasuredThroughputKbps.Scalar, 10)
 	}
 	if out.NextObjectRequest != nil {
-		values["nor"] = quote(*out.NextObjectRequest)
+		values["nor"] = quote(encodeURIComponent(*out.NextObjectRequest))
 	}
 	if out.NextRangeRequest != nil {
 		values["nrr"] = quote(*out.NextRangeRequest)
@@ -523,6 +576,21 @@ func canonical(out NormalizedCMCD) string {
 		}
 	}
 	return strings.Join(parts, ",")
+}
+
+func encodeURIComponent(value string) string {
+	const hex = "0123456789ABCDEF"
+	var builder strings.Builder
+	for _, b := range []byte(value) {
+		if (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || strings.ContainsRune("-_.!~*'()", rune(b)) {
+			builder.WriteByte(b)
+			continue
+		}
+		builder.WriteByte('%')
+		builder.WriteByte(hex[b>>4])
+		builder.WriteByte(hex[b&0x0f])
+	}
+	return builder.String()
 }
 
 func quote(value string) string {

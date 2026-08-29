@@ -103,6 +103,9 @@ CREATE TABLE IF NOT EXISTS streams (
 	}
 	for _, column := range []struct{ name, definition string }{
 		{"client_range", "TEXT NOT NULL DEFAULT ''"}, {"forwarded_range", "TEXT NOT NULL DEFAULT ''"}, {"upstream_status", "INTEGER NOT NULL DEFAULT 0"}, {"content_range", "TEXT NOT NULL DEFAULT ''"}, {"content_length", "INTEGER NOT NULL DEFAULT 0"}, {"range_result", "TEXT NOT NULL DEFAULT 'not_requested'"}, {"diagnostic", "TEXT NOT NULL DEFAULT ''"}, {"intervention", "TEXT NOT NULL DEFAULT ''"}, {"added_latency_ms", "INTEGER NOT NULL DEFAULT 0"}, {"injected_status", "INTEGER NOT NULL DEFAULT 0"},
+		{"started_at_ms", "INTEGER"}, {"completed_at_ms", "INTEGER"}, {"user_agent", "TEXT NOT NULL DEFAULT ''"},
+		{"dns_ms", "INTEGER"}, {"connect_ms", "INTEGER"}, {"tls_ms", "INTEGER"}, {"ttfb_ms", "INTEGER"}, {"relay_ms", "INTEGER"}, {"local_serve_ms", "INTEGER"},
+		{"connection_reused", "INTEGER"}, {"transport_error", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := d.ensureProxyRequestColumn(column.name, column.definition); err != nil {
 			return err
@@ -110,6 +113,92 @@ CREATE TABLE IF NOT EXISTS streams (
 	}
 	if _, err := d.conn.Exec(`CREATE INDEX IF NOT EXISTS idx_proxy_requests_ws ON proxy_requests(workspace_slug, last_seen_at DESC)`); err != nil {
 		return fmt.Errorf("migrate proxy_requests index: %w", err)
+	}
+	if err := d.migratePlaybackInspector(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *DB) migratePlaybackInspector() error {
+	const schema = `
+CREATE TABLE IF NOT EXISTS playback_sessions (
+  id TEXT PRIMARY KEY,
+  workspace_slug TEXT NOT NULL,
+  stream_id TEXT NOT NULL,
+  cmcd_sid TEXT NOT NULL,
+  content_id TEXT,
+  cmcd_version INTEGER NOT NULL,
+  player_name TEXT,
+  player_version TEXT,
+  user_agent TEXT,
+  initial_preset TEXT NOT NULL,
+  observer_connected INTEGER NOT NULL DEFAULT 0,
+  started_at_ms INTEGER NOT NULL,
+  last_seen_at_ms INTEGER NOT NULL,
+  ended_at_ms INTEGER,
+  created_at_ms INTEGER NOT NULL,
+  ingest_token_hash TEXT,
+  ingest_expires_at_ms INTEGER,
+  allowed_origin TEXT,
+  UNIQUE(workspace_slug, stream_id, cmcd_sid)
+);
+CREATE INDEX IF NOT EXISTS idx_playback_sessions_workspace_recent
+  ON playback_sessions(workspace_slug, last_seen_at_ms DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_playback_sessions_ingest_token
+  ON playback_sessions(ingest_token_hash) WHERE ingest_token_hash IS NOT NULL;
+CREATE TABLE IF NOT EXISTS request_cmcd (
+  request_id INTEGER PRIMARY KEY,
+  session_id TEXT,
+  version INTEGER NOT NULL,
+  valid INTEGER NOT NULL,
+  sid TEXT,
+  cid TEXT,
+  ot TEXT,
+  sf TEXT,
+  st TEXT,
+  br_kbps INTEGER,
+  tb_kbps INTEGER,
+  mtp_kbps INTEGER,
+  rtp_kbps INTEGER,
+  bl_ms INTEGER,
+  dl_ms INTEGER,
+  object_duration_ms INTEGER,
+  playback_rate REAL,
+  startup INTEGER,
+  buffer_starvation INTEGER,
+  next_object_request TEXT,
+  next_range_request TEXT,
+  raw_value TEXT,
+  canonical_value TEXT,
+  extra_json TEXT,
+  validation_errors_json TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_request_cmcd_session ON request_cmcd(session_id, request_id);
+CREATE TABLE IF NOT EXISTS playback_events (
+  id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  sequence_number INTEGER NOT NULL,
+  event_type TEXT NOT NULL,
+  wall_time_ms INTEGER NOT NULL,
+  monotonic_ms INTEGER NOT NULL,
+  media_time_ms INTEGER,
+  buffer_ahead_ms INTEGER,
+  bitrate_kbps INTEGER,
+  throughput_kbps INTEGER,
+  payload_json TEXT,
+  received_at_ms INTEGER NOT NULL,
+  PRIMARY KEY (session_id, id)
+);
+CREATE INDEX IF NOT EXISTS idx_playback_events_timeline
+  ON playback_events(session_id, wall_time_ms, sequence_number);
+CREATE TRIGGER IF NOT EXISTS delete_proxy_request_cmcd
+AFTER DELETE ON proxy_requests
+BEGIN
+  DELETE FROM request_cmcd WHERE request_id = OLD.id;
+END;`
+	if _, err := d.conn.Exec(schema); err != nil {
+		return fmt.Errorf("migrate playback inspector: %w", err)
 	}
 	return nil
 }
@@ -129,6 +218,17 @@ const proxyRequestsSchema = `CREATE TABLE proxy_requests (
     intervention    TEXT NOT NULL DEFAULT '',
     added_latency_ms INTEGER NOT NULL DEFAULT 0,
     injected_status INTEGER NOT NULL DEFAULT 0,
+	started_at_ms INTEGER,
+	completed_at_ms INTEGER,
+	user_agent TEXT NOT NULL DEFAULT '',
+	dns_ms INTEGER,
+	connect_ms INTEGER,
+	tls_ms INTEGER,
+	ttfb_ms INTEGER,
+	relay_ms INTEGER,
+	local_serve_ms INTEGER,
+	connection_reused INTEGER,
+	transport_error TEXT NOT NULL DEFAULT '',
     hit_count      INTEGER NOT NULL DEFAULT 1,
     first_seen_at  TEXT NOT NULL,
     last_seen_at   TEXT NOT NULL

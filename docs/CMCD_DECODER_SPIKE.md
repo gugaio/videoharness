@@ -29,8 +29,10 @@ troca de implementação possível se surgir uma biblioteca adequada.
 
 ## Tooling JavaScript
 
-`@svta/cml-cmcd@2.4.0` foi avaliada somente para geração de fixtures. O pacote
-publicado no npm declara `dist/index.js` e `dist/index.d.ts`, mas a instalação
-na data deste spike não contém o diretório `dist`; por isso ele não é usado.
-Os fixtures JSON são deliberadamente pequenos, auditáveis e versionados no
-repositório. Nenhuma dependência Node participa do runtime Go.
+`@svta/cml-cmcd@2.4.0` é uma dependência de desenvolvimento exata do frontend,
+usada somente por `web/scripts/generate-cmcd-fixtures.mjs`. O script gera os
+casos v1 válidos de referência e possui modo `--check`; fixtures inválidas são
+manuais porque um encoder de referência não deve produzi-las.
+
+O pacote e seus peer dependencies não são importados pelo React nem pelo
+backend. Nenhuma dependência Node participa do runtime Go.

@@ -1,6 +1,7 @@
 import { useAuth } from "@clerk/react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import RequestsPanel from "../components/RequestsPanel";
+import PlaybackInspector from "../components/PlaybackInspector";
 
 export default function DashboardPage() {
   const { id } = useParams();
@@ -55,6 +56,7 @@ export default function DashboardPage() {
           source={source}
           preset={preset}
         />
+		<PlaybackInspector getToken={getToken} streamId={id} source={source} preset={preset} />
       </div>
     </main>
   );

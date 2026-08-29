@@ -1,15 +1,26 @@
 {
   "name": "complete v1 query",
-  "url": "/s/stream/master.m3u8?CMCD=br%3D3200%2Cbl%3D1200%2Cbs%2Ccid%3D%22content-1%22%2Cd%3D4004%2Cdl%3D900%2Cmtp%3D25400%2Cot%3Dv%2Cpr%3D1.5%2Crtp%3D15000%2Csf%3Dh%2Csid%3D%22session-1%22%2Cst%3Dv%2Csu%2Ctb%3D6000",
+  "url": "/s/stream/master.m3u8?CMCD=bl%3D1200%2Cbr%3D3200%2Cbs%2Ccid%3D%22content-1%22%2Cd%3D4004%2Cdl%3D900%2Cmtp%3D25400%2Cot%3Dv%2Cpr%3D1.5%2Crtp%3D15000%2Csf%3Dh%2Csid%3D%22session-1%22%2Cst%3Dv%2Csu%2Ctb%3D6000",
   "want": {
     "present": true,
     "version": 1,
-    "raw_value": "br=3200,bl=1200,bs,cid=\"content-1\",d=4004,dl=900,mtp=25400,ot=v,pr=1.5,rtp=15000,sf=h,sid=\"session-1\",st=v,su,tb=6000",
+    "raw_value": "bl=1200,br=3200,bs,cid=\"content-1\",d=4004,dl=900,mtp=25400,ot=v,pr=1.5,rtp=15000,sf=h,sid=\"session-1\",st=v,su,tb=6000",
     "canonical_value": "bl=1200,br=3200,bs,cid=\"content-1\",d=4004,dl=900,mtp=25400,ot=v,pr=1.5,rtp=15000,sf=h,sid=\"session-1\",st=v,su,tb=6000",
-    "sid": "session-1", "cid": "content-1", "ot": "v", "sf": "h", "st": "v",
-    "br_kbps": 3200, "tb_kbps": 6000, "mtp_kbps": 25400, "rtp_kbps": 15000,
-    "bl_ms": 1200, "dl_ms": 900, "object_duration_ms": 4004, "playback_rate": 1.5,
-    "startup": true, "buffer_starvation": true
+    "sid": "session-1",
+    "cid": "content-1",
+    "ot": "v",
+    "sf": "h",
+    "st": "v",
+    "br_kbps": 3200,
+    "tb_kbps": 6000,
+    "mtp_kbps": 25400,
+    "rtp_kbps": 15000,
+    "bl_ms": 1200,
+    "dl_ms": 900,
+    "object_duration_ms": 4004,
+    "playback_rate": 1.5,
+    "startup": true,
+    "buffer_starvation": true
   },
   "issues": []
 }

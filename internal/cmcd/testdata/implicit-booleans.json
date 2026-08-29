@@ -1,12 +1,14 @@
 {
   "name": "implicit booleans",
-  "url": "/s/stream/r/resource?CMCD=bs%2Csu%2Csid%3D%22session-2%22",
+  "url": "/s/stream/r/resource?CMCD=bs%2Csid%3D%22session-2%22%2Csu",
   "want": {
     "present": true,
     "version": 1,
-    "raw_value": "bs,su,sid=\"session-2\"",
+    "raw_value": "bs,sid=\"session-2\",su",
     "canonical_value": "bs,sid=\"session-2\",su",
-    "sid": "session-2", "startup": true, "buffer_starvation": true
+    "sid": "session-2",
+    "startup": true,
+    "buffer_starvation": true
   },
   "issues": []
 }

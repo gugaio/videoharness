@@ -22,23 +22,27 @@ import (
 	"streammock/internal/capture"
 	"streammock/internal/config"
 	"streammock/internal/db"
+	"streammock/internal/diagnostics"
 	"streammock/internal/models"
 	"streammock/internal/proxy"
 	"streammock/internal/pubnet"
 	"streammock/internal/ratelimit"
 	"streammock/internal/store"
+	"streammock/internal/telemetry"
 
 	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/clerk/clerk-sdk-go/v2/jwt"
+	"github.com/google/uuid"
 )
 
 type Server struct {
-	cfg     config.Config
-	store   *store.MemoryStore
-	engine  *proxy.Engine
-	capture *capture.Manager
-	limiter *ratelimit.Limiter
-	db      *db.DB
+	cfg           config.Config
+	store         *store.MemoryStore
+	engine        *proxy.Engine
+	capture       *capture.Manager
+	limiter       *ratelimit.Limiter
+	ingestLimiter *ratelimit.Limiter
+	db            *db.DB
 }
 
 // handlerError carries an HTTP status alongside its user-facing message.
@@ -105,17 +109,20 @@ func main() {
 	captureManager.Start(bgCtx)
 
 	limiter := ratelimit.New(cfg.RateLimitPerMinute, cfg.RateLimitBurst)
+	ingestLimiter := ratelimit.New(240, 40)
 	go limiter.StartCleanup(bgCtx, time.Minute, 15*time.Minute)
+	go ingestLimiter.StartCleanup(bgCtx, time.Minute, 15*time.Minute)
 	go mem.StartSweeper(bgCtx, cfg.EphemeralTTL, cfg.SweeperInterval)
 	go retainProxyRequests(bgCtx, database)
 
 	srv := &Server{
-		cfg:     cfg,
-		store:   mem,
-		engine:  engine,
-		capture: captureManager,
-		limiter: limiter,
-		db:      database,
+		cfg:           cfg,
+		store:         mem,
+		engine:        engine,
+		capture:       captureManager,
+		limiter:       limiter,
+		ingestLimiter: ingestLimiter,
+		db:            database,
 	}
 
 	mux := http.NewServeMux()
@@ -129,6 +136,13 @@ func main() {
 	mux.HandleFunc("GET /api/workspace", srv.handleGetWorkspace)
 	mux.HandleFunc("GET /api/workspace/requests", srv.handleWorkspaceRequests)
 	mux.HandleFunc("DELETE /api/workspace/requests", srv.handleWorkspaceRequests)
+	mux.HandleFunc("GET /api/playback/sessions", srv.handlePlaybackSessions)
+	mux.HandleFunc("POST /api/playback/sessions", srv.handleCreatePlaybackSession)
+	mux.HandleFunc("GET /api/playback/sessions/{id}", srv.handlePlaybackSession)
+	mux.HandleFunc("GET /api/playback/sessions/{id}/timeline", srv.handlePlaybackTimeline)
+	mux.HandleFunc("GET /api/playback/sessions/{id}/export", srv.handlePlaybackExport)
+	mux.HandleFunc("POST /i/{token}/events", srv.handlePlaybackEvents)
+	mux.HandleFunc("OPTIONS /i/{token}/events", srv.handlePlaybackEventsPreflight)
 	mux.HandleFunc("GET /p.m3u8", srv.handleOnDemand)
 	mux.HandleFunc("GET /p", srv.handleOnDemand)
 	mux.HandleFunc("OPTIONS /p.m3u8", handlePreflight)
@@ -500,14 +514,310 @@ func retainProxyRequests(ctx context.Context, database *db.DB) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if _, err := database.PurgeProxyRequests(24 * time.Hour); err != nil {
-				log.Printf("purge proxy requests: %v", err)
+			if err := database.PurgePlaybackTelemetry(24*time.Hour, 7*24*time.Hour); err != nil {
+				log.Printf("purge playback telemetry: %v", err)
 			}
 			if _, err := database.TrimProxyRequests(1000); err != nil {
 				log.Printf("trim proxy requests: %v", err)
 			}
 		}
 	}
+}
+
+type sessionListItem struct {
+	Session telemetry.Session        `json:"session"`
+	Summary telemetry.SessionSummary `json:"summary"`
+}
+
+func (s *Server) ownedWorkspace(r *http.Request) (string, bool) {
+	userID, ok := s.authenticatedUserID(r)
+	if !ok {
+		return "", false
+	}
+	slug, err := s.db.EnsureWorkspace(userID)
+	if err != nil {
+		log.Printf("ensure workspace: %v", err)
+		return "", false
+	}
+	return slug, true
+}
+
+func (s *Server) handlePlaybackSessions(w http.ResponseWriter, r *http.Request) {
+	slug, ok := s.ownedWorkspace(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	streamID := strings.TrimSpace(r.URL.Query().Get("stream"))
+	if streamID == "" {
+		source := strings.TrimSpace(r.URL.Query().Get("source"))
+		if source != "" {
+			preset := strings.TrimSpace(r.URL.Query().Get("preset"))
+			if preset == "" {
+				preset = "clean"
+			}
+			streamID = onDemandID(source, &slug, preset, 60)
+		}
+	}
+	sessions, err := s.db.ListPlaybackSessions(slug, streamID, 50)
+	if err != nil {
+		log.Printf("list playback sessions: %v", err)
+		http.Error(w, "failed to load sessions", http.StatusInternalServerError)
+		return
+	}
+	items := make([]sessionListItem, 0, len(sessions))
+	for _, session := range sessions {
+		timeline, err := s.db.PlaybackTimeline(slug, string(session.ID))
+		if err != nil {
+			log.Printf("summarize playback session: %v", err)
+			continue
+		}
+		items = append(items, sessionListItem{Session: session, Summary: timeline.Summary})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": items})
+}
+
+func (s *Server) handleCreatePlaybackSession(w http.ResponseWriter, r *http.Request) {
+	slug, ok := s.ownedWorkspace(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var body struct {
+		Source          string  `json:"source"`
+		StreamID        string  `json:"stream_id"`
+		Preset          string  `json:"preset"`
+		ContentID       string  `json:"content_id"`
+		AllowedOrigin   string  `json:"allowed_origin"`
+		DurationSeconds float64 `json:"duration_seconds"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	body.Source = strings.TrimSpace(body.Source)
+	body.StreamID = strings.TrimSpace(body.StreamID)
+	body.Preset = strings.TrimSpace(body.Preset)
+	if body.Preset == "" {
+		body.Preset = "clean"
+	}
+	if !models.ValidPreset(body.Preset) {
+		http.Error(w, "unknown preset", http.StatusBadRequest)
+		return
+	}
+	duration, err := capture.ValidateDuration(body.DurationSeconds)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	streamID := body.StreamID
+	playbackURL := ""
+	if body.Source != "" {
+		if err := pubnet.ValidateURL(body.Source); err != nil {
+			http.Error(w, "invalid url: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		streamID = onDemandID(body.Source, &slug, body.Preset, duration)
+		params := url.Values{"url": {body.Source}}
+		if body.Preset != "clean" {
+			params.Set("preset", body.Preset)
+		}
+		if duration != 60 {
+			params.Set("duration", strconv.FormatFloat(duration, 'f', -1, 64))
+		}
+		playbackURL = "/ws/" + slug + "/p.m3u8?" + params.Encode()
+	} else if streamID != "" {
+		stream, exists := s.store.Get(streamID)
+		if !exists || stream.WorkspaceSlug == nil || *stream.WorkspaceSlug != slug {
+			http.Error(w, "stream not found", http.StatusNotFound)
+			return
+		}
+		playbackURL = stream.ProxyPath
+	} else {
+		http.Error(w, "source or stream_id is required", http.StatusBadRequest)
+		return
+	}
+	contentID := strings.TrimSpace(body.ContentID)
+	if contentID == "" {
+		sum := sha256.Sum256([]byte(streamID))
+		contentID = "sm-" + hex.EncodeToString(sum[:8])
+	}
+	if len([]rune(contentID)) > 64 {
+		http.Error(w, "content_id is too long", http.StatusBadRequest)
+		return
+	}
+	cmcdSID := uuid.NewString()
+	token, err := newOpaqueToken(24)
+	if err != nil {
+		http.Error(w, "failed to create session", http.StatusInternalServerError)
+		return
+	}
+	tokenHash := sha256.Sum256([]byte(token))
+	expiresAt := time.Now().UTC().Add(time.Hour).UnixMilli()
+	allowedOrigin := strings.TrimSpace(body.AllowedOrigin)
+	if allowedOrigin == "" {
+		allowedOrigin = strings.TrimSpace(r.Header.Get("Origin"))
+	}
+	session, err := s.db.CreatePlaybackSession(db.PlaybackSessionCreate{
+		WorkspaceSlug: slug, StreamID: streamID, CMCDSessionID: cmcdSID, ContentID: &contentID,
+		InitialPreset: body.Preset, UserAgent: r.UserAgent(), TokenHash: hex.EncodeToString(tokenHash[:]), TokenExpiresMS: expiresAt, AllowedOrigin: allowedOrigin,
+	})
+	if err != nil {
+		log.Printf("create playback session: %v", err)
+		http.Error(w, "failed to create session", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"session": session, "cmcd_session_id": cmcdSID, "content_id": contentID, "playback_url": playbackURL,
+		"ingest_url": "/i/" + token + "/events", "ingest_expires_at_ms": expiresAt,
+	})
+}
+
+func (s *Server) playbackTimelineForOwner(w http.ResponseWriter, r *http.Request) (telemetry.Timeline, bool) {
+	slug, ok := s.ownedWorkspace(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return telemetry.Timeline{}, false
+	}
+	timeline, err := s.db.PlaybackTimeline(slug, r.PathValue("id"))
+	if err != nil {
+		if db.IsNotFound(err) {
+			http.NotFound(w, r)
+		} else {
+			log.Printf("load playback timeline: %v", err)
+			http.Error(w, "failed to load playback session", http.StatusInternalServerError)
+		}
+		return telemetry.Timeline{}, false
+	}
+	return timeline, true
+}
+
+func (s *Server) handlePlaybackSession(w http.ResponseWriter, r *http.Request) {
+	timeline, ok := s.playbackTimelineForOwner(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"session": timeline.Session, "summary": timeline.Summary, "findings": diagnostics.Analyze(timeline)})
+}
+
+func (s *Server) handlePlaybackTimeline(w http.ResponseWriter, r *http.Request) {
+	timeline, ok := s.playbackTimelineForOwner(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"timeline": timeline, "findings": diagnostics.Analyze(timeline)})
+}
+
+func (s *Server) handlePlaybackExport(w http.ResponseWriter, r *http.Request) {
+	timeline, ok := s.playbackTimelineForOwner(w, r)
+	if !ok {
+		return
+	}
+	w.Header().Set("Content-Disposition", `attachment; filename="streammock-playback-`+r.PathValue("id")+`.json"`)
+	writeJSON(w, http.StatusOK, map[string]any{"schema_version": 1, "exported_at_ms": time.Now().UTC().UnixMilli(), "timeline": timeline, "findings": diagnostics.Analyze(timeline)})
+}
+
+func (s *Server) handlePlaybackEventsPreflight(w http.ResponseWriter, r *http.Request) {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		origin = "*"
+	}
+	w.Header().Set("Access-Control-Allow-Origin", origin)
+	w.Header().Set("Vary", "Origin")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Access-Control-Max-Age", "600")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handlePlaybackEvents(w http.ResponseWriter, r *http.Request) {
+	rawToken := r.PathValue("token")
+	if len(rawToken) < 24 || len(rawToken) > 128 {
+		http.Error(w, "invalid ingest token", http.StatusUnauthorized)
+		return
+	}
+	tokenHash := sha256.Sum256([]byte(rawToken))
+	hash := hex.EncodeToString(tokenHash[:])
+	if s.ingestLimiter != nil && !s.ingestLimiter.Allow(hash[:16]+":"+ratelimit.ClientIP(r)) {
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+		return
+	}
+	session, allowedOrigin, err := s.db.ResolveIngestSession(hash, time.Now().UTC().UnixMilli())
+	if err != nil {
+		http.Error(w, "invalid or expired ingest token", http.StatusUnauthorized)
+		return
+	}
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if allowedOrigin != "" && origin != "" && origin != allowedOrigin {
+		http.Error(w, "origin not allowed", http.StatusForbidden)
+		return
+	}
+	if origin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Vary", "Origin")
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
+	var batch struct {
+		Events []telemetry.PlaybackEvent `json:"events"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&batch); err != nil {
+		http.Error(w, "invalid event batch", http.StatusBadRequest)
+		return
+	}
+	if len(batch.Events) == 0 || len(batch.Events) > 20 {
+		http.Error(w, "event batch must contain 1 to 20 events", http.StatusBadRequest)
+		return
+	}
+	for i := range batch.Events {
+		if err := validatePlaybackEvent(batch.Events[i]); err != nil {
+			http.Error(w, fmt.Sprintf("invalid event %d: %v", i, err), http.StatusBadRequest)
+			return
+		}
+	}
+	inserted, err := s.db.InsertPlaybackEvents(string(session.ID), batch.Events)
+	if err != nil {
+		log.Printf("ingest playback events: %v", err)
+		http.Error(w, "failed to ingest events", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": inserted, "duplicates": int64(len(batch.Events)) - inserted})
+}
+
+var playbackEventTypes = map[string]bool{
+	"session_started": true, "session_ended": true, "play_requested": true, "first_frame": true, "playing": true,
+	"buffering_started": true, "buffering_ended": true, "seek_started": true, "seek_ended": true, "paused": true, "resumed": true,
+	"ended": true, "media_error": true, "visibility_changed": true, "media_snapshot": true,
+	"manifest_loading": true, "manifest_loaded": true, "manifest_parsed": true, "fragment_loading": true, "fragment_loaded": true,
+	"fragment_parsed": true, "fragment_buffered": true, "buffer_appended": true, "buffer_append_error": true,
+	"level_switching": true, "level_switched": true, "emergency_downswitch": true, "fps_drop": true,
+	"stall_detected": true, "stall_resolved": true, "hls_error": true,
+}
+
+func validatePlaybackEvent(event telemetry.PlaybackEvent) error {
+	if _, err := uuid.Parse(event.ID); err != nil {
+		return errors.New("id must be a UUID")
+	}
+	if !playbackEventTypes[event.EventType] {
+		return errors.New("unknown event_type")
+	}
+	if event.SequenceNumber < 0 || event.WallTimeMS <= 0 || event.MonotonicMS < 0 {
+		return errors.New("invalid timestamp or sequence")
+	}
+	if event.PayloadJSON != nil {
+		if len(*event.PayloadJSON) > 16*1024 || !json.Valid([]byte(*event.PayloadJSON)) {
+			return errors.New("payload_json must be valid JSON up to 16 KiB")
+		}
+	}
+	return nil
+}
+
+func newOpaqueToken(bytes int) (string, error) {
+	buffer := make([]byte, bytes)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buffer), nil
 }
 
 // handleGetWorkspace returns (creating on first call) the caller's workspace

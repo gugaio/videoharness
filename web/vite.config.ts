@@ -10,6 +10,7 @@ export default defineConfig({
       "/api": "http://localhost:8080",
       "/s/": "http://localhost:8080",
       "/ws/": "http://localhost:8080",
+	  "/i/": "http://localhost:8080",
     },
   },
 });

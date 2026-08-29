@@ -5,12 +5,168 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
 	"streammock/internal/config"
 	"streammock/internal/models"
 )
+
+func TestCMCDIsCapturedCorrelatedAndNeverForwarded(t *testing.T) {
+	t.Setenv("STREAMMOCK_ALLOW_PRIVATE_TARGETS", "1")
+	var upstreamCMCD []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCMCD = append(upstreamCMCD, r.URL.Query().Get("CMCD"))
+		if strings.HasSuffix(r.URL.Path, "/master.m3u8") {
+			_, _ = w.Write([]byte("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1200000\nvariant.m3u8\n"))
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/variant.m3u8") {
+			_, _ = w.Write([]byte("#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\nseg0.ts\n#EXT-X-ENDLIST\n"))
+			return
+		}
+		_, _ = w.Write([]byte("segment"))
+	}))
+	defer upstream.Close()
+	streams := newTestStreamStore(t)
+	slug := "ws-cmcd"
+	stream := newEphemeralProxyStream("cmcd-stream", upstream.URL+"/master.m3u8", 60)
+	stream.WorkspaceSlug = &slug
+	if err := streams.Add(stream, false); err != nil {
+		t.Fatal(err)
+	}
+	var logged []models.ProxyRequest
+	engine := NewEngine(configForProxyEngine(), streams, NewChaos()).WithRequestSink(func(req models.ProxyRequest) { logged = append(logged, req) })
+	mux := http.NewServeMux()
+	engine.Register(mux)
+	cmcdQuery := url.QueryEscape(`br=1200,bl=800,mtp=1800,dl=700,ot=v,sf=h,sid="session-a",su,x-note="ok"`)
+	master := httptest.NewRecorder()
+	mux.ServeHTTP(master, httptest.NewRequest(http.MethodGet, "/s/cmcd-stream/master.m3u8?CMCD="+cmcdQuery, nil))
+	if master.Code != http.StatusOK {
+		t.Fatalf("master status %d: %s", master.Code, master.Body.String())
+	}
+	var resource string
+	for _, line := range strings.Split(master.Body.String(), "\n") {
+		if strings.HasPrefix(line, "/s/") {
+			resource = line
+			break
+		}
+	}
+	if resource == "" {
+		t.Fatalf("rewritten variant missing from %s", master.Body.String())
+	}
+	segment := httptest.NewRecorder()
+	mux.ServeHTTP(segment, httptest.NewRequest(http.MethodGet, resource+"?CMCD="+cmcdQuery, nil))
+	if segment.Code != http.StatusOK {
+		t.Fatalf("variant status %d", segment.Code)
+	}
+	var segmentResource string
+	for _, line := range strings.Split(segment.Body.String(), "\n") {
+		if strings.HasPrefix(line, "/s/") {
+			segmentResource = line
+			break
+		}
+	}
+	if segmentResource == "" {
+		t.Fatalf("rewritten segment missing from %s", segment.Body.String())
+	}
+	segment = httptest.NewRecorder()
+	mux.ServeHTTP(segment, httptest.NewRequest(http.MethodGet, segmentResource+"?CMCD="+cmcdQuery, nil))
+	if segment.Code != http.StatusOK {
+		t.Fatalf("segment status %d", segment.Code)
+	}
+	if len(logged) != 3 {
+		t.Fatalf("logged %d requests, want 3", len(logged))
+	}
+	if logged[0].Kind != models.KindMaster || logged[1].Kind != models.KindVariant || logged[2].Kind != models.KindSegment {
+		t.Fatalf("unexpected kinds: %q %q %q", logged[0].Kind, logged[1].Kind, logged[2].Kind)
+	}
+	for _, req := range logged {
+		if req.CMCD == nil || !req.CMCD.Valid || req.CMCD.SessionID == nil || *req.CMCD.SessionID != "session-a" {
+			t.Fatalf("CMCD correlation missing: %+v", req.CMCD)
+		}
+		if req.CMCD.BitrateKbps == nil || *req.CMCD.BitrateKbps != 1200 || req.CMCD.Custom["x-note"].String == nil {
+			t.Fatalf("CMCD projection incomplete: %+v", req.CMCD)
+		}
+	}
+	for _, value := range upstreamCMCD {
+		if value != "" {
+			t.Fatalf("origin received CMCD %q", value)
+		}
+	}
+}
+
+func TestInvalidCMCDFailsOpenAndIsRecorded(t *testing.T) {
+	base := upstreamFixture(t)
+	streams := newTestStreamStore(t)
+	slug := "ws-invalid-cmcd"
+	stream := newEphemeralProxyStream("cmcd-invalid", base, 60)
+	stream.WorkspaceSlug = &slug
+	if err := streams.Add(stream, false); err != nil {
+		t.Fatal(err)
+	}
+	var got models.ProxyRequest
+	engine := NewEngine(configForProxyEngine(), streams, NewChaos()).WithRequestSink(func(req models.ProxyRequest) { got = req })
+	mux := http.NewServeMux()
+	engine.Register(mux)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, `/s/cmcd-invalid/master.m3u8?CMCD=br%3Dnot-a-number%2Csid%3D%22still-correlated%22`, nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("invalid telemetry changed playback status to %d", response.Code)
+	}
+	if got.CMCD == nil || got.CMCD.Valid || len(got.CMCD.ValidationErrors) == 0 {
+		t.Fatalf("invalid CMCD was not retained: %+v", got.CMCD)
+	}
+}
+
+func TestOriginTraceSeparatesTTFBRelayAndConnectionReuse(t *testing.T) {
+	t.Setenv("STREAMMOCK_ALLOW_PRIVATE_TARGETS", "1")
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(20 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		time.Sleep(20 * time.Millisecond)
+		_, _ = w.Write([]byte("segment"))
+	}))
+	defer upstream.Close()
+	streams := newTestStreamStore(t)
+	slug := "ws-trace"
+	stream := newEphemeralProxyStream("trace-stream", upstream.URL, 60)
+	stream.WorkspaceSlug = &slug
+	if err := streams.Add(stream, false); err != nil {
+		t.Fatal(err)
+	}
+	var logged []models.ProxyRequest
+	engine := NewEngine(configForProxyEngine(), streams, NewChaos()).WithRequestSink(func(req models.ProxyRequest) { logged = append(logged, req) })
+	mux := http.NewServeMux()
+	engine.Register(mux)
+	encoded := base64.RawURLEncoding.EncodeToString([]byte(upstream.URL + "/seg.ts"))
+	for range 2 {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/s/trace-stream/r/"+encoded, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("status %d", response.Code)
+		}
+	}
+	if len(logged) != 2 {
+		t.Fatalf("logged=%d", len(logged))
+	}
+	for _, req := range logged {
+		if req.TTFBMS == nil || *req.TTFBMS < 10 || req.RelayMS == nil || *req.RelayMS < 10 {
+			t.Fatalf("missing causal phases: %+v", req)
+		}
+	}
+	if logged[1].ConnectionReused == nil || !*logged[1].ConnectionReused {
+		t.Fatalf("second connection not marked reused: %+v", logged[1])
+	}
+	if logged[1].ConnectMS != nil || logged[1].TLSMS != nil {
+		t.Fatalf("reused connection invented phases: %+v", logged[1])
+	}
+}
 
 type zeroRandomSource struct{}
 

@@ -115,6 +115,14 @@ func TestOnDemandReusesDeterministicIDPerPlaybackConfiguration(t *testing.T) {
 	if !st.CreatedAt.Equal(firstCreatedAt) {
 		t.Fatal("deterministic reuse must preserve CreatedAt")
 	}
+	beforeCMCD := len(mem.All())
+	withCMCD := do(target + `&CMCD=sid%3D%22different-request-state%22%2Cbr%3D1200`)
+	if withCMCD.Code != http.StatusOK {
+		t.Fatalf("CMCD request status %d", withCMCD.Code)
+	}
+	if len(mem.All()) != beforeCMCD {
+		t.Fatal("CMCD must not participate in deterministic stream identity")
+	}
 
 	explicit := do(target + "&preset=subway_3g")
 	if explicit.Code != http.StatusOK {

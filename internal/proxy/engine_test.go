@@ -40,7 +40,8 @@ func TestReadyCloneServesOnlyRegisteredLocalResources(t *testing.T) {
 	}
 	streams := store.New(database)
 	now := time.Now().UTC()
-	stream := models.Stream{ID: "clone-test", OriginalURL: "https://origin.example/master.m3u8", ProxyPath: "/s/clone-test/master.m3u8", ActivePreset: "clean", Mode: models.ModeClone, CaptureStatus: models.CaptureQueued, RequestedDurationSeconds: 60, CreatedAt: now, UpdatedAt: now}
+	slug := "ws-clone"
+	stream := models.Stream{ID: "clone-test", OriginalURL: "https://origin.example/master.m3u8", ProxyPath: "/s/clone-test/master.m3u8", ActivePreset: "clean", Mode: models.ModeClone, CaptureStatus: models.CaptureQueued, RequestedDurationSeconds: 60, WorkspaceSlug: &slug, CreatedAt: now, UpdatedAt: now}
 	if err := streams.Add(stream, true); err != nil {
 		t.Fatal(err)
 	}
@@ -62,12 +63,16 @@ func TestReadyCloneServesOnlyRegisteredLocalResources(t *testing.T) {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	NewEngine(config.Config{StorageDir: directory, HTTPTimeout: time.Second}, streams, NewChaos()).Register(mux)
+	var logged []models.ProxyRequest
+	NewEngine(config.Config{StorageDir: directory, HTTPTimeout: time.Second}, streams, NewChaos()).WithRequestSink(func(request models.ProxyRequest) { logged = append(logged, request) }).Register(mux)
 
 	response := httptest.NewRecorder()
-	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/s/clone-test/variants/video-0/segments/1.ts", nil))
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, `/s/clone-test/variants/video-0/segments/1.ts?CMCD=sid%3D%22clone-session%22%2Cot%3Dv`, nil))
 	if response.Code != http.StatusOK || response.Body.String() != "segment" {
 		t.Fatalf("unexpected response: %d %q", response.Code, response.Body.String())
+	}
+	if len(logged) != 1 || logged[0].CMCD == nil || logged[0].CMCD.SessionID == nil || *logged[0].CMCD.SessionID != "clone-session" || logged[0].LocalServeMS == nil || logged[0].TTFBMS != nil {
+		t.Fatalf("clone telemetry should be local and CMCD-correlated: %+v", logged)
 	}
 
 	missing := httptest.NewRecorder()

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"path"
@@ -16,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"streammock/internal/cmcd"
 	"streammock/internal/config"
 	"streammock/internal/models"
 	"streammock/internal/pubnet"
@@ -31,6 +33,7 @@ type Engine struct {
 	truncateSeconds float64
 	storageDir      string
 	sink            RequestSink
+	cmcdDecoder     cmcd.Decoder
 }
 
 func NewEngine(cfg config.Config, st *store.MemoryStore, chaos *Chaos) *Engine {
@@ -40,6 +43,7 @@ func NewEngine(cfg config.Config, st *store.MemoryStore, chaos *Chaos) *Engine {
 		client:          pubnet.NewHTTPClient(cfg.HTTPTimeout),
 		truncateSeconds: cfg.TruncateSeconds,
 		storageDir:      cfg.StorageDir,
+		cmcdDecoder:     cmcd.NewV1Decoder(cmcd.DefaultLimits()),
 	}
 }
 
@@ -224,7 +228,7 @@ func (e *Engine) servePlaylist(w http.ResponseWriter, r *http.Request, st *model
 		return
 	}
 
-	body, err := e.fetch(r.Context(), rawURL)
+	body, err := e.fetch(r.Context(), rawURL, statusWriterFrom(w))
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to fetch upstream playlist: %v", err), http.StatusBadGateway)
 		return
@@ -253,8 +257,14 @@ func (e *Engine) serveSegment(w http.ResponseWriter, r *http.Request, st *models
 		req.Header.Set("User-Agent", "StreamMock/0.1 (HLS proxy)")
 	}
 
+	if sw := statusWriterFrom(w); sw != nil {
+		req = req.WithContext(httptrace.WithClientTrace(req.Context(), sw.clientTrace()))
+	}
 	resp, err := e.client.Do(req)
 	if err != nil {
+		if sw := statusWriterFrom(w); sw != nil {
+			sw.transportError = err.Error()
+		}
 		http.Error(w, fmt.Sprintf("failed to fetch upstream segment: %v", err), http.StatusBadGateway)
 		return
 	}
@@ -287,26 +297,48 @@ func (e *Engine) serveSegment(w http.ResponseWriter, r *http.Request, st *models
 	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 		_, _ = io.Copy(w, resp.Body)
 	}
+	if sw := statusWriterFrom(w); sw != nil {
+		sw.markRelayDone()
+	}
 }
 
-func (e *Engine) fetch(ctx context.Context, rawURL string) ([]byte, error) {
+func (e *Engine) fetch(ctx context.Context, rawURL string, sw *statusWriter) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "StreamMock/0.1 (HLS proxy)")
+	if sw != nil {
+		req = req.WithContext(httptrace.WithClientTrace(req.Context(), sw.clientTrace()))
+	}
 
 	resp, err := e.client.Do(req)
 	if err != nil {
+		if sw != nil {
+			sw.transportError = err.Error()
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if sw != nil {
+		sw.upstreamStatus = resp.StatusCode
+		sw.contentLength = resp.ContentLength
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil, fmt.Errorf("upstream returned %s", resp.Status)
 	}
-	return io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if sw != nil {
+		sw.markRelayDone()
+	}
+	return body, err
+}
+
+func statusWriterFrom(w http.ResponseWriter) *statusWriter {
+	sw, _ := w.(*statusWriter)
+	return sw
 }
 
 // transformPlaylist rewrites every URI so it routes back through StreamMock and

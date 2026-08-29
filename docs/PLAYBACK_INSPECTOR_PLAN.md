@@ -1,7 +1,7 @@
 # Plano de desenvolvimento — Playback Inspector
 
-Status: aprovado para implementação incremental  
-Escopo ativo: fases 0 a 4  
+Status: fases 0 a 4 implementadas
+Escopo ativo: fases 0 a 4 concluídas; fases 5 a 7 permanecem futuras
 Última atualização: 2026-08-29
 
 ## 1. Objetivo
@@ -399,6 +399,11 @@ POST /i/{write_only_token}/events
 
 ## 10. Fase 0 — Fundação, contratos e conformidade
 
+Status: concluída em 2026-08-29. Decisões e contratos estão documentados em
+[`CMCD_DECODER_SPIKE.md`](CMCD_DECODER_SPIKE.md),
+[`PLAYBACK_INSPECTOR_CONTRACTS.md`](PLAYBACK_INSPECTOR_CONTRACTS.md) e
+[`PLAYBACK_INSPECTOR_MIGRATIONS.md`](PLAYBACK_INSPECTOR_MIGRATIONS.md).
+
 ### Objetivo
 
 Remover ambiguidades antes de alterar o caminho crítico do proxy.
@@ -433,6 +438,8 @@ Remover ambiguidades antes de alterar o caminho crítico do proxy.
 - `go test ./...`, `go build ./...`, `go vet ./...` e `make build` passam.
 
 ## 11. Fase 1 — CMCD v1 Query MVP
+
+Status: concluída em 2026-08-29.
 
 ### Objetivo
 
@@ -483,6 +490,8 @@ Capturar o estado CMCD de cada request sem alterar a reprodução ou a origem.
 
 ## 12. Fase 2 — Sessões, correlações e primeiro Inspector
 
+Status: concluída em 2026-08-29.
+
 ### Objetivo
 
 Deixar de mostrar apenas requests soltos e apresentar uma execução de playback
@@ -528,6 +537,8 @@ como uma unidade investigável.
 - Consultas permanecem rápidas dentro dos limites de retenção.
 
 ## 13. Fase 3 — Timings causais e motor de diagnósticos
+
+Status: concluída em 2026-08-29.
 
 ### Objetivo
 
@@ -589,6 +600,8 @@ transformar os sinais em explicações reproduzíveis.
 - O dashboard nunca descreve inferência de risco como stall confirmado.
 
 ## 14. Fase 4 — Observer JavaScript core + HLS.js
+
+Status: concluída em 2026-08-29.
 
 ### Objetivo
 
@@ -723,4 +736,3 @@ Todos os cortes devem manter:
 - Shaka CMCD configuration: <https://shaka-player-demo.appspot.com/docs/api/shaka.extern.html>
 - Shaka Player events/stats: <https://shaka-project.github.io/shaka-player/docs/api/shaka.Player.html>
 - Go CMCD package candidate: <https://pkg.go.dev/github.com/untangledco/streaming/cmcd>
-

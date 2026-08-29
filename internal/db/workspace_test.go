@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"streammock/internal/cmcd"
 	"streammock/internal/models"
+	"streammock/internal/telemetry"
 )
 
 func newWorkspaceDB(t *testing.T) *DB {
@@ -172,5 +174,163 @@ func TestPurgeAndTrimProxyRequests(t *testing.T) {
 	}
 	if len(other) != 1 || other[0].TargetURL != "https://origin/master.m3u8" {
 		t.Fatalf("ws-other rows damaged: %+v", other)
+	}
+}
+
+func TestProxyRequestCMCDSessionAndEventsRoundTrip(t *testing.T) {
+	database := newWorkspaceDB(t)
+	sid, cid := "cmcd-session-a", "content-a"
+	br, mtp, bl, dl := int64(1200), int64(900), int64(800), int64(500)
+	startup, starvation := true, false
+	base := models.ProxyRequest{
+		WorkspaceSlug: "ws-inspector", StreamID: "stream-a", StreamMode: models.ModeProxy, Kind: models.KindSegment,
+		TargetURL: "https://origin/seg.ts", Status: 200, DurationMS: 700, Bytes: 100_000, ActivePreset: "clean",
+		StartedAtMS: 1_000, CompletedAtMS: 1_700,
+		CMCD: &models.RequestCMCD{Version: 1, Valid: true, SessionID: &sid, ContentID: &cid, BitrateKbps: &br, MeasuredThroughputKbps: &mtp, BufferLengthMS: &bl, DeadlineMS: &dl, Startup: &startup, BufferStarvation: &starvation},
+	}
+	if err := database.InsertProxyRequest(base); err != nil {
+		t.Fatal(err)
+	}
+	second := base
+	second.TargetURL = "https://origin/seg2.ts"
+	second.StartedAtMS = 2_000
+	second.CompletedAtMS = 2_200
+	second.DurationMS = 200
+	if err := database.InsertProxyRequest(second); err != nil {
+		t.Fatal(err)
+	}
+	var sessionCount, cmcdCount int
+	if err := database.conn.QueryRow(`SELECT COUNT(*) FROM playback_sessions`).Scan(&sessionCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.conn.QueryRow(`SELECT COUNT(*) FROM request_cmcd`).Scan(&cmcdCount); err != nil {
+		t.Fatal(err)
+	}
+	if sessionCount != 1 || cmcdCount != 2 {
+		t.Fatalf("sessions=%d cmcd=%d, want 1/2", sessionCount, cmcdCount)
+	}
+	rows, err := database.ListProxyRequests("ws-inspector", models.ModeProxy, "stream-a", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].ID == 0 || rows[0].CMCD == nil || rows[0].CMCD.SessionInternalID == nil {
+		t.Fatalf("CMCD list round trip failed: %+v", rows)
+	}
+	sessionID := *rows[0].CMCD.SessionInternalID
+	payload := `{"method":"requestVideoFrameCallback"}`
+	events := []telemetry.PlaybackEvent{
+		{ID: "00000000-0000-4000-8000-000000000001", SequenceNumber: 0, EventType: "play_requested", WallTimeMS: 900, MonotonicMS: 10},
+		{ID: "00000000-0000-4000-8000-000000000002", SequenceNumber: 1, EventType: "first_frame", WallTimeMS: 1_400, MonotonicMS: 510, PayloadJSON: &payload},
+		{ID: "00000000-0000-4000-8000-000000000003", SequenceNumber: 2, EventType: "buffering_started", WallTimeMS: 1_800, MonotonicMS: 900},
+		{ID: "00000000-0000-4000-8000-000000000004", SequenceNumber: 3, EventType: "buffering_ended", WallTimeMS: 2_100, MonotonicMS: 1_200},
+	}
+	inserted, err := database.InsertPlaybackEvents(sessionID, events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inserted != 4 {
+		t.Fatalf("inserted=%d", inserted)
+	}
+	duplicates, err := database.InsertPlaybackEvents(sessionID, events)
+	if err != nil || duplicates != 0 {
+		t.Fatalf("dedupe inserted=%d err=%v", duplicates, err)
+	}
+	timeline, err := database.PlaybackTimeline("ws-inspector", sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if timeline.Summary.RequestCount != 2 || timeline.Summary.StartupTimeMS == nil || *timeline.Summary.StartupTimeMS != 500 || timeline.Summary.RebufferCount != 1 || timeline.Summary.RebufferDurationMS != 300 {
+		t.Fatalf("unexpected summary: %+v", timeline.Summary)
+	}
+	if timeline.Summary.DeadlineMissCount != 1 {
+		t.Fatalf("deadline misses=%d, want 1", timeline.Summary.DeadlineMissCount)
+	}
+}
+
+func TestInvalidAndUncorrelatedCMCDRemainsFailOpen(t *testing.T) {
+	database := newWorkspaceDB(t)
+	request := models.ProxyRequest{WorkspaceSlug: "ws-invalid", StreamID: "stream", Kind: models.KindMaster, TargetURL: "https://origin/master.m3u8", Status: 200,
+		CMCD: &models.RequestCMCD{Version: 1, Valid: false, ValidationErrors: []cmcd.Issue{{Code: cmcd.IssueInvalidNumber, Key: "br"}}, RawValue: "br=nope"}}
+	if err := database.InsertProxyRequest(request); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := database.ListProxyRequests("ws-invalid", models.ModeProxy, "stream", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Status != 200 || rows[0].CMCD == nil || rows[0].CMCD.Valid || len(rows[0].CMCD.ValidationErrors) != 1 {
+		t.Fatalf("invalid CMCD not preserved: %+v", rows)
+	}
+	var sessions int
+	if err := database.conn.QueryRow(`SELECT COUNT(*) FROM playback_sessions`).Scan(&sessions); err != nil {
+		t.Fatal(err)
+	}
+	if sessions != 0 {
+		t.Fatalf("uncorrelated request created %d sessions", sessions)
+	}
+	if _, err := database.DeleteProxyRequests("ws-invalid", models.ModeProxy, "stream"); err != nil {
+		t.Fatal(err)
+	}
+	var cmcdRows int
+	if err := database.conn.QueryRow(`SELECT COUNT(*) FROM request_cmcd`).Scan(&cmcdRows); err != nil {
+		t.Fatal(err)
+	}
+	if cmcdRows != 0 {
+		t.Fatalf("CMCD dependent rows survived request deletion: %d", cmcdRows)
+	}
+}
+
+func TestSameStreamKeepsDifferentCMCDSessionsIsolated(t *testing.T) {
+	database := newWorkspaceDB(t)
+	for index, sid := range []string{"sid-one", "sid-two"} {
+		request := models.ProxyRequest{WorkspaceSlug: "ws-isolation", StreamID: "same-stream", Kind: models.KindSegment, TargetURL: "https://origin/" + sid + ".ts", Status: 200, StartedAtMS: int64(1000 + index*1000), CompletedAtMS: int64(1100 + index*1000), DurationMS: 100,
+			CMCD: &models.RequestCMCD{Version: 1, Valid: true, SessionID: &sid}}
+		if err := database.InsertProxyRequest(request); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sessions, err := database.ListPlaybackSessions("ws-isolation", "same-stream", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("got %d sessions, want 2", len(sessions))
+	}
+	for _, session := range sessions {
+		timeline, err := database.PlaybackTimeline("ws-isolation", string(session.ID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if timeline.Summary.RequestCount != 1 {
+			t.Fatalf("session %s contains %d requests", session.CMCDSessionID, timeline.Summary.RequestCount)
+		}
+		for _, entry := range timeline.Entries {
+			if entry.Request != nil && (entry.Request.CMCD == nil || entry.Request.CMCD.SessionID == nil || *entry.Request.CMCD.SessionID != session.CMCDSessionID) {
+				t.Fatalf("cross-session request in %s: %+v", session.CMCDSessionID, entry.Request)
+			}
+		}
+	}
+}
+
+func TestExplicitObserverSessionLinksLaterCMCDRequests(t *testing.T) {
+	database := newWorkspaceDB(t)
+	sid := "preview-session"
+	session, err := database.CreatePlaybackSession(PlaybackSessionCreate{WorkspaceSlug: "ws-preview", StreamID: "od-preview", CMCDSessionID: sid, InitialPreset: "clean"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.InsertProxyRequest(models.ProxyRequest{WorkspaceSlug: "ws-preview", StreamID: "od-preview", Kind: models.KindMaster, TargetURL: "https://origin/master.m3u8", Status: 200, StartedAtMS: 1_000, CompletedAtMS: 1_100, DurationMS: 100, CMCD: &models.RequestCMCD{Version: 1, Valid: true, SessionID: &sid}}); err != nil {
+		t.Fatal(err)
+	}
+	event := telemetry.PlaybackEvent{ID: "00000000-0000-4000-8000-000000000010", SequenceNumber: 0, EventType: "session_started", WallTimeMS: 900, MonotonicMS: 1}
+	if _, err := database.InsertPlaybackEvents(string(session.ID), []telemetry.PlaybackEvent{event}); err != nil {
+		t.Fatal(err)
+	}
+	timeline, err := database.PlaybackTimeline("ws-preview", string(session.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(timeline.Entries) != 2 || timeline.Summary.RequestCount != 1 || timeline.Summary.EventCount != 1 || !timeline.Session.ObserverConnected {
+		t.Fatalf("explicit session did not unify telemetry: %+v", timeline)
 	}
 }

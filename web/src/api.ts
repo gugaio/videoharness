@@ -1,4 +1,4 @@
-import { DEFAULT_PRESETS, type ProxyRequest, type Stream } from "./types";
+import { DEFAULT_PRESETS, type CreatedPlaybackSession, type Finding, type PlaybackTimeline, type ProxyRequest, type SessionListItem, type Stream } from "./types";
 
 async function request<T>(
   path: string,
@@ -91,4 +91,31 @@ export async function clearWorkspaceRequests(token: string, mode: "proxy" | "clo
 
 export function withPresets(stream: Omit<Stream, "presets">): Stream {
   return { ...stream, presets: DEFAULT_PRESETS };
+}
+
+export async function createPlaybackSession(token: string, input: { source?: string; stream_id?: string; preset?: string; content_id?: string; duration_seconds?: number; allowed_origin?: string }): Promise<CreatedPlaybackSession> {
+	return request<CreatedPlaybackSession>("/api/playback/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }, token);
+}
+
+export async function listPlaybackSessions(token: string, filters: { stream?: string; source?: string; preset?: string } = {}): Promise<SessionListItem[]> {
+	const params = new URLSearchParams();
+	if (filters.stream) params.set("stream", filters.stream);
+	if (filters.source) params.set("source", filters.source);
+	if (filters.preset) params.set("preset", filters.preset);
+	const data = await request<{ sessions: SessionListItem[] }>(`/api/playback/sessions?${params.toString()}`, {}, token);
+	return data.sessions ?? [];
+}
+
+export async function getPlaybackTimeline(token: string, id: string): Promise<{ timeline: PlaybackTimeline; findings: Finding[] }> {
+	return request<{ timeline: PlaybackTimeline; findings: Finding[] }>(`/api/playback/sessions/${id}/timeline`, {}, token);
+}
+
+export async function exportPlaybackSession(token: string, id: string): Promise<void> {
+	const response = await fetch(`/api/playback/sessions/${id}/export`, { headers: { Authorization: `Bearer ${token}` } });
+	if (!response.ok) throw new Error(await response.text() || "Export failed");
+	const blob = await response.blob();
+	const href = URL.createObjectURL(blob);
+	const link = document.createElement("a");
+	link.href = href; link.download = `streammock-playback-${id}.json`; link.click();
+	URL.revokeObjectURL(href);
 }

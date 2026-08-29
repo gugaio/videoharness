@@ -11,6 +11,8 @@ em `internal/cmcd`, `internal/telemetry` e `internal/diagnostics`.
   múltiplos códigos estáveis. Payload inválido nunca implica erro HTTP.
 - `RawValue` preserva a forma URL-decodificada apenas quando tem até 8 KiB.
 - `CanonicalValue` ordena chaves para facilitar fixtures e comparação.
+- `nor` é percent-decoded depois do decode da query e volta à codificação RFC
+  3986 na forma canônica.
 - Métricas possuem nome com unidade: `*_ms` ou `*_kbps`.
 - Métricas ausentes são `nil`; `0` só existe quando foi explicitamente enviado
   e permitido para aquela chave.
@@ -32,6 +34,10 @@ Limites iniciais:
 Custom keys devem possuir um hífen para evitar colisão com chaves CMCD
 reservadas. Chaves ou parâmetros `CMCD` duplicados são inválidos, sem política
 de sobrescrever o último valor.
+
+Em CMCD v1, `bl`, `dl`, `mtp` e `rtp` devem chegar em múltiplos de 100. `nrr`
+aceita as três formas definidas pelo padrão: `início-`, `início-fim` e
+`-sufixo`.
 
 ## Sessão e timeline
 

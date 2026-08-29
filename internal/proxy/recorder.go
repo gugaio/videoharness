@@ -1,10 +1,14 @@
 package proxy
 
 import (
+	"crypto/tls"
 	"net/http"
+	"net/http/httptrace"
 	"strings"
+	"sync"
 	"time"
 
+	"streammock/internal/cmcd"
 	"streammock/internal/models"
 	"streammock/internal/ratelimit"
 )
@@ -18,6 +22,13 @@ type RequestSink func(models.ProxyRequest)
 // logging.
 func (e *Engine) WithRequestSink(sink RequestSink) *Engine {
 	e.sink = sink
+	return e
+}
+
+// WithCMCDDecoder swaps the decoder behind the stable boundary. A nil decoder
+// disables capture while keeping playback and request logging operational.
+func (e *Engine) WithCMCDDecoder(decoder cmcd.Decoder) *Engine {
+	e.cmcdDecoder = decoder
 	return e
 }
 
@@ -36,6 +47,73 @@ type statusWriter struct {
 	intervention   string
 	addedLatencyMS int64
 	injectedStatus int
+	startedAt      time.Time
+	local          bool
+	transportError string
+	trace          originTrace
+}
+
+type originTrace struct {
+	mu                                       sync.Mutex
+	startedAt                                time.Time
+	dnsStarted, connectStarted, tlsStarted   time.Time
+	firstByteAt                              time.Time
+	dnsMS, connectMS, tlsMS, ttfbMS, relayMS *int64
+	connectionReused                         *bool
+}
+
+func durationPtr(duration time.Duration) *int64 { value := duration.Milliseconds(); return &value }
+
+func (w *statusWriter) clientTrace() *httptrace.ClientTrace {
+	w.trace.mu.Lock()
+	w.trace.startedAt = time.Now()
+	w.trace.mu.Unlock()
+	return &httptrace.ClientTrace{
+		DNSStart: func(httptrace.DNSStartInfo) { w.trace.mu.Lock(); w.trace.dnsStarted = time.Now(); w.trace.mu.Unlock() },
+		DNSDone: func(httptrace.DNSDoneInfo) {
+			w.trace.mu.Lock()
+			if !w.trace.dnsStarted.IsZero() {
+				w.trace.dnsMS = durationPtr(time.Since(w.trace.dnsStarted))
+			}
+			w.trace.mu.Unlock()
+		},
+		ConnectStart: func(_, _ string) { w.trace.mu.Lock(); w.trace.connectStarted = time.Now(); w.trace.mu.Unlock() },
+		ConnectDone: func(_, _ string, _ error) {
+			w.trace.mu.Lock()
+			if !w.trace.connectStarted.IsZero() {
+				w.trace.connectMS = durationPtr(time.Since(w.trace.connectStarted))
+			}
+			w.trace.mu.Unlock()
+		},
+		TLSHandshakeStart: func() { w.trace.mu.Lock(); w.trace.tlsStarted = time.Now(); w.trace.mu.Unlock() },
+		TLSHandshakeDone: func(tls.ConnectionState, error) {
+			w.trace.mu.Lock()
+			if !w.trace.tlsStarted.IsZero() {
+				w.trace.tlsMS = durationPtr(time.Since(w.trace.tlsStarted))
+			}
+			w.trace.mu.Unlock()
+		},
+		GotConn: func(info httptrace.GotConnInfo) {
+			w.trace.mu.Lock()
+			value := info.Reused
+			w.trace.connectionReused = &value
+			w.trace.mu.Unlock()
+		},
+		GotFirstResponseByte: func() {
+			w.trace.mu.Lock()
+			w.trace.firstByteAt = time.Now()
+			w.trace.ttfbMS = durationPtr(w.trace.firstByteAt.Sub(w.trace.startedAt))
+			w.trace.mu.Unlock()
+		},
+	}
+}
+
+func (w *statusWriter) markRelayDone() {
+	w.trace.mu.Lock()
+	defer w.trace.mu.Unlock()
+	if !w.trace.firstByteAt.IsZero() {
+		w.trace.relayMS = durationPtr(time.Since(w.trace.firstByteAt))
+	}
 }
 
 // applyChaos records the exact StreamMock intervention on the request before
@@ -73,33 +151,58 @@ func (w *statusWriter) statusOrDefault() int {
 // track wraps a handler entry: it returns a recording statusWriter and defers
 // the sink call for the given kind/target. Handlers pass their own kind.
 func (e *Engine) track(w http.ResponseWriter, r *http.Request, st *models.Stream, kind, targetURL string) (*statusWriter, func()) {
-	sw := &statusWriter{ResponseWriter: w}
 	start := time.Now()
+	sw := &statusWriter{ResponseWriter: w, startedAt: start, local: st.Mode == models.ModeClone, trace: originTrace{startedAt: start}}
+	var requestCMCD *models.RequestCMCD
+	if st.WorkspaceSlug != nil && e.cmcdDecoder != nil {
+		decoded, decodeErr := e.cmcdDecoder.DecodeRequest(r)
+		requestCMCD = models.NewRequestCMCD(decoded, decodeErr)
+	}
 	return sw, func() {
 		if e.sink == nil || st.WorkspaceSlug == nil {
 			return
 		}
+		completed := time.Now()
+		sw.trace.mu.Lock()
+		dnsMS, connectMS, tlsMS, ttfbMS, relayMS, reused := sw.trace.dnsMS, sw.trace.connectMS, sw.trace.tlsMS, sw.trace.ttfbMS, sw.trace.relayMS, sw.trace.connectionReused
+		sw.trace.mu.Unlock()
+		var localMS *int64
+		if sw.local {
+			localMS = durationPtr(completed.Sub(start))
+		}
 		e.sink(models.ProxyRequest{
-			WorkspaceSlug:  *st.WorkspaceSlug,
-			StreamID:       st.ID,
-			StreamMode:     st.Mode,
-			Kind:           kind,
-			TargetURL:      targetURL,
-			Status:         sw.statusOrDefault(),
-			DurationMS:     time.Since(start).Milliseconds(),
-			Bytes:          sw.bytes,
-			ClientIP:       ratelimit.ClientIP(r),
-			ActivePreset:   st.ActivePreset,
-			ClientRange:    r.Header.Get("Range"),
-			ForwardedRange: sw.forwardedRange,
-			UpstreamStatus: sw.upstreamStatus,
-			ContentRange:   sw.contentRange,
-			ContentLength:  sw.contentLength,
-			RangeResult:    rangeResult(r.Header.Get("Range"), sw),
-			Diagnostic:     sw.diagnostic,
-			Intervention:   sw.intervention,
-			AddedLatencyMS: sw.addedLatencyMS,
-			InjectedStatus: sw.injectedStatus,
+			WorkspaceSlug:    *st.WorkspaceSlug,
+			StreamID:         st.ID,
+			StreamMode:       st.Mode,
+			Kind:             kind,
+			TargetURL:        targetURL,
+			Status:           sw.statusOrDefault(),
+			DurationMS:       completed.Sub(start).Milliseconds(),
+			Bytes:            sw.bytes,
+			ClientIP:         ratelimit.ClientIP(r),
+			ActivePreset:     st.ActivePreset,
+			ClientRange:      r.Header.Get("Range"),
+			ForwardedRange:   sw.forwardedRange,
+			UpstreamStatus:   sw.upstreamStatus,
+			ContentRange:     sw.contentRange,
+			ContentLength:    sw.contentLength,
+			RangeResult:      rangeResult(r.Header.Get("Range"), sw),
+			Diagnostic:       sw.diagnostic,
+			Intervention:     sw.intervention,
+			AddedLatencyMS:   sw.addedLatencyMS,
+			InjectedStatus:   sw.injectedStatus,
+			StartedAtMS:      start.UTC().UnixMilli(),
+			CompletedAtMS:    completed.UTC().UnixMilli(),
+			UserAgent:        r.UserAgent(),
+			DNSMS:            dnsMS,
+			ConnectMS:        connectMS,
+			TLSMS:            tlsMS,
+			TTFBMS:           ttfbMS,
+			RelayMS:          relayMS,
+			LocalServeMS:     localMS,
+			ConnectionReused: reused,
+			TransportError:   sw.transportError,
+			CMCD:             requestCMCD,
 		})
 	}
 }

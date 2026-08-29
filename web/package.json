@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+	"test": "vitest run",
+    "fixtures:cmcd": "node scripts/generate-cmcd-fixtures.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -16,13 +18,16 @@
     "react-router-dom": "^6.26.2"
   },
   "devDependencies": {
+    "@svta/cml-cmcd": "2.4.0",
     "@tailwindcss/vite": "^4.0.0",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
+    "jsdom": "26.1.0",
     "tailwindcss": "^4.0.0",
     "typescript": "~5.6.2",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "vitest": "3.2.4"
   },
   "packageManager": "yarn@4.4.1+sha224.fd21d9eb5fba020083811af1d4953acc21eeb9f6ff97efd1b3f9d4de"
 }

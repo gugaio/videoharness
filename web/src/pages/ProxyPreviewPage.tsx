@@ -2,7 +2,9 @@ import { useAuth } from "@clerk/react";
 import Hls from "hls.js";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { getWorkspace } from "../api";
+import { createPlaybackSession } from "../api";
+import { hlsJsAdapter, observePlayback } from "../lib/playback-observer";
+import type { CreatedPlaybackSession } from "../types";
 
 export default function ProxyPreviewPage() {
   const { getToken } = useAuth();
@@ -10,7 +12,7 @@ export default function ProxyPreviewPage() {
   const source = query.get("source")?.trim() ?? "";
   const preset = query.get("preset") ?? "clean";
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [playbackURL, setPlaybackURL] = useState<string | null>(null);
+  const [prepared, setPrepared] = useState<CreatedPlaybackSession | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const dashboardParams = new URLSearchParams();
@@ -20,7 +22,7 @@ export default function ProxyPreviewPage() {
 
   useEffect(() => {
     let cancelled = false;
-    setPlaybackURL(null);
+    setPrepared(null);
     setError(null);
 
     if (!source) {
@@ -32,10 +34,9 @@ export default function ProxyPreviewPage() {
 
     getToken()
       .then(async (token) => {
-        const workspace = await getWorkspace(token ?? undefined);
-        const params = new URLSearchParams({ url: source });
-        if (preset !== "clean") params.set("preset", preset);
-        if (!cancelled) setPlaybackURL(`${workspace.playback_url}?${params.toString()}`);
+        if (!token) throw new Error("Authentication is required to create an Inspector session.");
+        const session = await createPlaybackSession(token, { source, preset, allowed_origin: window.location.origin });
+        if (!cancelled) setPrepared(session);
       })
       .catch((reason: unknown) => {
         if (!cancelled) {
@@ -50,33 +51,40 @@ export default function ProxyPreviewPage() {
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !playbackURL) return;
+    if (!video || !prepared) return;
 
     if (Hls.isSupported()) {
-      const hls = new Hls();
-      hls.loadSource(playbackURL);
+	  const hls = new Hls({ cmcd: { sessionId: prepared.cmcd_session_id, contentId: prepared.content_id, useHeaders: false, version: 1 } });
+	  const observer = observePlayback({ media: video, adapter: hlsJsAdapter(hls), sessionId: prepared.cmcd_session_id, ingestUrl: prepared.ingest_url });
+	  hls.loadSource(prepared.playback_url);
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
+		observer.playRequested();
         void video.play().catch(() => undefined);
       });
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) setError(`Playback failed: ${data.details}`);
       });
-      return () => hls.destroy();
+	  return () => { observer.destroy(); hls.destroy(); };
     }
 
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = playbackURL;
+	  // Native HLS cannot be configured to emit CMCD, but the Observer remains
+	  // useful and stays fail-open.
+	  const observer = observePlayback({ media: video, sessionId: prepared.cmcd_session_id, ingestUrl: prepared.ingest_url });
+	  video.src = prepared.playback_url;
+	  observer.playRequested();
       void video.play().catch(() => undefined);
       return () => {
-        video.pause();
+		observer.destroy();
+		video.pause();
         video.removeAttribute("src");
         video.load();
       };
     }
 
     setError("This browser cannot play HLS streams.");
-  }, [playbackURL]);
+  }, [prepared]);
 
   return (
     <main className="min-h-screen bg-[#11100f] text-stone-100">
@@ -106,13 +114,14 @@ export default function ProxyPreviewPage() {
           <video ref={videoRef} controls autoPlay playsInline className="aspect-video w-full bg-black" />
         </section>
 
-        {!playbackURL && !error && <p className="mt-4 text-sm text-stone-400">Preparing preview…</p>}
+		{!prepared && !error && <p className="mt-4 text-sm text-stone-400">Preparing Inspector session…</p>}
         {error && (
           <p className="mt-4 rounded-xl border border-red-300/20 bg-red-400/10 px-4 py-3 text-sm text-red-200">
             {error}
           </p>
         )}
         {source && <p className="mt-4 break-all font-mono text-xs text-stone-500">Source: {source}</p>}
+		{prepared && <p className="mt-2 break-all font-mono text-xs text-stone-500">CMCD sid: {prepared.cmcd_session_id} · Observer connected with the same session ID</p>}
       </div>
     </main>
   );

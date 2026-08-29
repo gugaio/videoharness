@@ -6,6 +6,8 @@ type IssueCode string
 
 const (
 	IssueBadQueryEncoding   IssueCode = "bad_query_encoding"
+	IssueBadValueEncoding   IssueCode = "bad_value_encoding"
+	IssueInvalidUTF8        IssueCode = "invalid_utf8"
 	IssueDuplicateParameter IssueCode = "duplicate_parameter"
 	IssuePayloadTooLarge    IssueCode = "payload_too_large"
 	IssueEmptyPayload       IssueCode = "empty_payload"
@@ -21,9 +23,11 @@ const (
 	IssueStringTooLong      IssueCode = "string_too_long"
 	IssueInvalidNumber      IssueCode = "invalid_number"
 	IssueOutOfRange         IssueCode = "out_of_range"
+	IssueInvalidIncrement   IssueCode = "invalid_increment"
 	IssueInvalidEnum        IssueCode = "invalid_enum"
 	IssueUnknownKey         IssueCode = "unknown_key"
 	IssueInvalidRange       IssueCode = "invalid_range"
+	IssueDecoderError       IssueCode = "decoder_error"
 )
 
 // Issue is serializable so a future persistence layer can expose a precise
