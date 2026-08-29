@@ -182,7 +182,6 @@ export default function WorkspacePage() {
           <div className="flex items-center justify-between gap-4 border-b border-white/10 px-5 py-5 sm:px-7">
             <div>
               <h2 className="font-semibold text-white">Your cloned streams</h2>
-              <p className="mt-1 text-sm text-stone-400">Copy the clone URL into your own player. Use the preview only when you need to test it here.</p>
             </div>
             <button
               type="button"
