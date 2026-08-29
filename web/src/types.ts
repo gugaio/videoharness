@@ -23,6 +23,21 @@ export interface Stream {
   presets: Preset[];
 }
 
+export interface ProxyRequest {
+  workspace_slug: string;
+  stream_id: string;
+  kind: "master" | "variant" | "segment" | "asset";
+  target_url: string;
+  status: number;
+  duration_ms: number;
+  bytes: number;
+  client_ip: string;
+  active_preset: string;
+  hit_count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
 export const DEFAULT_PRESETS: Preset[] = [
   { key: "clean", label: "Clean", description: "Pass-through with zero modification." },
   { key: "subway_3g", label: "Subway 3G", description: "1500-3000ms artificial latency and a 10% chance of HTTP 504." },

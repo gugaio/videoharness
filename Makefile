@@ -7,6 +7,9 @@ all: build backend
 backend:
 	go run ./cmd/server
 
+front:
+	cd web && npm run dev
+
 # Run backend + Vite dev server (with hot reload and /api, /s proxy).
 dev:
 	go run ./cmd/server & \

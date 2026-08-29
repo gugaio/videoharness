@@ -1,10 +1,6 @@
 services:
   streammock:
-    build:
-      context: .
-      args:
-        # This key is embedded in the browser bundle and is safe to expose.
-        VITE_CLERK_PUBLISHABLE_KEY: pk_test_Z2VuZXJvdXMtZGVlci04NDk4LmNsZXJrLmFjY291bnRzLmRldiQ
+    build: .
     image: streammock:latest
     ports:
       - "${STREAMMOCK_PORT:-8080}:8080"

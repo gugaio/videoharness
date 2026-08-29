@@ -2,19 +2,24 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
 
 type Config struct {
-	Addr            string
-	DBPath          string
-	TruncateSeconds float64
-	StorageDir      string
-	CloneMaxBytes   int64
-	BBBDemoURL      string
-	HTTPTimeout     time.Duration
-	ClerkSecretKey  string
+	Addr               string
+	DBPath             string
+	TruncateSeconds    float64
+	StorageDir         string
+	CloneMaxBytes      int64
+	BBBDemoURL         string
+	HTTPTimeout        time.Duration
+	ClerkSecretKey     string
+	RateLimitPerMinute float64
+	RateLimitBurst     int
+	EphemeralTTL       time.Duration
+	SweeperInterval    time.Duration
 }
 
 func Load() Config {
@@ -28,7 +33,30 @@ func Load() Config {
 		BBBDemoURL:      envOr("STREAMMOCK_BBB_URL", "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"),
 		HTTPTimeout:     30 * time.Second,
 		ClerkSecretKey:  envOr("CLERK_SECRET_KEY", ""),
+
+		RateLimitPerMinute: envFloat("STREAMMOCK_RATELIMIT_RPM", 10),
+		RateLimitBurst:     envInt("STREAMMOCK_RATELIMIT_BURST", 5),
+		EphemeralTTL:       time.Duration(envInt("STREAMMOCK_EPHEMERAL_TTL_MINUTES", 60)) * time.Minute,
+		SweeperInterval:    10 * time.Minute,
 	}
+}
+
+func envFloat(key string, fallback float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if parsed, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if parsed, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return fallback
 }
 
 func envOr(key, fallback string) string {

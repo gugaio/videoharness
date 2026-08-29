@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +15,8 @@ type MemoryStore struct {
 	db        *db.DB
 	streams   sync.Map // map[streamID]*models.Stream
 	resources sync.Map // map[streamID/logicalPath]models.Resource
+	ephemeral sync.Map // map[streamID]struct{} — memory-only streams (never persisted)
+	access    sync.Map // map[streamID]time.Time — last access, drives the janitor
 }
 
 func New(database *db.DB) *MemoryStore {
@@ -38,6 +42,7 @@ func (s *MemoryStore) Get(id string) (*models.Stream, bool) {
 	if !ok {
 		return nil, false
 	}
+	s.access.Store(id, time.Now().UTC())
 	return v.(*models.Stream), true
 }
 
@@ -52,8 +57,14 @@ func (s *MemoryStore) All() []models.Stream {
 	return out
 }
 
-// Add stores the stream in memory and, when persist is true, writes it to the database.
+// Add stores the stream in memory and, when persist is true, writes it to the
+// database. Streams added with persist=false are ephemeral: they live only in
+// this process, never appear in workspaces, and are eligible for the janitor.
 func (s *MemoryStore) Add(st models.Stream, persist bool) error {
+	if !persist {
+		s.ephemeral.Store(st.ID, struct{}{})
+	}
+	s.access.Store(st.ID, time.Now().UTC())
 	if persist {
 		if err := s.db.InsertStream(st); err != nil {
 			return err
@@ -81,8 +92,11 @@ func (s *MemoryStore) SetPreset(id, preset string) error {
 	if !models.ValidPreset(preset) {
 		return fmt.Errorf("invalid preset %q", preset)
 	}
-	if err := s.db.UpdatePreset(id, preset); err != nil {
-		return err
+	// Ephemeral streams have no database row; they only exist in memory.
+	if _, isEphemeral := s.ephemeral.Load(id); !isEphemeral {
+		if err := s.db.UpdatePreset(id, preset); err != nil {
+			return err
+		}
 	}
 	if v, ok := s.streams.Load(id); ok {
 		cp := *v.(*models.Stream)
@@ -90,6 +104,64 @@ func (s *MemoryStore) SetPreset(id, preset string) error {
 		s.streams.Store(id, &cp)
 	}
 	return nil
+}
+
+// Remove drops a stream and its registered resources from memory. It has no
+// effect on database rows, which never exist for ephemeral streams.
+func (s *MemoryStore) Remove(id string) {
+	s.streams.Delete(id)
+	s.ephemeral.Delete(id)
+	s.access.Delete(id)
+	prefix := id + "\x00"
+	s.resources.Range(func(key, _ any) bool {
+		if k, ok := key.(string); ok && strings.HasPrefix(k, prefix) {
+			s.resources.Delete(k)
+		}
+		return true
+	})
+}
+
+// StartSweeper periodically removes ephemeral streams that have not been
+// accessed for ttl. It blocks until ctx is cancelled.
+func (s *MemoryStore) StartSweeper(ctx context.Context, ttl, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.SweepEphemeral(ttl)
+		}
+	}
+}
+
+// SweepEphemeral removes idle ephemeral streams and returns how many were
+// removed.
+func (s *MemoryStore) SweepEphemeral(ttl time.Duration) int {
+	cutoff := time.Now().UTC().Add(-ttl)
+	removed := 0
+	s.ephemeral.Range(func(key, _ any) bool {
+		id, ok := key.(string)
+		if !ok {
+			return true
+		}
+		var last time.Time
+		if v, exists := s.access.Load(id); exists {
+			last, _ = v.(time.Time)
+		} else {
+			// No access recorded: keep the stream alive for one more cycle
+			// and stamp it now so it eventually ages out.
+			s.access.Store(id, time.Now().UTC())
+			return true
+		}
+		if last.Before(cutoff) {
+			s.Remove(id)
+			removed++
+		}
+		return true
+	})
+	return removed
 }
 
 func (s *MemoryStore) MarkCapturing(id string) error {

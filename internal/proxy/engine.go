@@ -18,6 +18,7 @@ import (
 
 	"streammock/internal/config"
 	"streammock/internal/models"
+	"streammock/internal/pubnet"
 	"streammock/internal/store"
 )
 
@@ -29,15 +30,14 @@ type Engine struct {
 	client          *http.Client
 	truncateSeconds float64
 	storageDir      string
+	sink            RequestSink
 }
 
 func NewEngine(cfg config.Config, st *store.MemoryStore, chaos *Chaos) *Engine {
 	return &Engine{
-		store: st,
-		chaos: chaos,
-		client: &http.Client{
-			Timeout: cfg.HTTPTimeout,
-		},
+		store:           st,
+		chaos:           chaos,
+		client:          pubnet.NewHTTPClient(cfg.HTTPTimeout),
 		truncateSeconds: cfg.TruncateSeconds,
 		storageDir:      cfg.StorageDir,
 	}
@@ -47,23 +47,57 @@ func (e *Engine) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /s/{id}/master.m3u8", e.serveMaster)
 	mux.HandleFunc("GET /s/{id}/r/{encoded}", e.serveProxied)
 	mux.HandleFunc("GET /s/{id}/{resource...}", e.serveLocal)
+	mux.HandleFunc("OPTIONS /s/{id}/master.m3u8", handlePreflight)
+	mux.HandleFunc("OPTIONS /s/{id}/r/{encoded}", handlePreflight)
+	mux.HandleFunc("OPTIONS /s/{id}/{resource...}", handlePreflight)
+}
+
+// ServeMasterStream serves the entry playlist for a proxy stream (and
+// delegates to local storage for clones). Exported so the public on-demand
+// endpoint can reuse the playback path without an HTTP redirect.
+func (e *Engine) ServeMasterStream(w http.ResponseWriter, r *http.Request, st *models.Stream) {
+	sw, done := e.track(w, r, st, models.KindMaster, st.OriginalURL)
+	defer done()
+	if st.Mode == models.ModeClone {
+		e.serveLocalResource(sw, r, st, "master.m3u8")
+		return
+	}
+	if e.chaos.Apply(sw, r, true, st.ActivePreset) {
+		return
+	}
+	e.servePlaylist(sw, r, st, st.OriginalURL)
+}
+
+// handlePreflight answers CORS preflight requests for all playback routes so
+// browser-based HLS players hosted on other origins can fetch streams.
+func handlePreflight(w http.ResponseWriter, _ *http.Request) {
+	setCORS(w.Header())
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Range, Origin, Content-Type")
+	w.Header().Set("Access-Control-Max-Age", "86400")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func setCORS(h http.Header) {
+	h.Set("Access-Control-Allow-Origin", "*")
+}
+
+// playlistTruncateSeconds picks the per-stream duration cap, falling back to
+// the global default (60s) when the stream does not request one.
+func (e *Engine) playlistTruncateSeconds(st *models.Stream) float64 {
+	if st.RequestedDurationSeconds > 0 {
+		return st.RequestedDurationSeconds
+	}
+	return e.truncateSeconds
 }
 
 func (e *Engine) serveMaster(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	st, ok := e.store.Get(id)
+	st, ok := e.store.Get(r.PathValue("id"))
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
-	if st.Mode == models.ModeClone {
-		e.serveLocalResource(w, r, st, "master.m3u8")
-		return
-	}
-	if e.chaos.Apply(w, r, true, st.ActivePreset) {
-		return
-	}
-	e.servePlaylist(w, r, st, st.OriginalURL)
+	e.ServeMasterStream(w, r, st)
 }
 
 func (e *Engine) serveProxied(w http.ResponseWriter, r *http.Request) {
@@ -87,18 +121,24 @@ func (e *Engine) serveProxied(w http.ResponseWriter, r *http.Request) {
 
 	targetURL := string(target)
 	isManifest := strings.HasSuffix(strings.Split(targetURL, "?")[0], ".m3u8")
+	kind := models.KindSegment
 	if isManifest {
-		if e.chaos.Apply(w, r, true, st.ActivePreset) {
+		kind = models.KindVariant
+	}
+	sw, done := e.track(w, r, st, kind, targetURL)
+	defer done()
+	if isManifest {
+		if e.chaos.Apply(sw, r, true, st.ActivePreset) {
 			return
 		}
-		e.servePlaylist(w, r, st, targetURL)
+		e.servePlaylist(sw, r, st, targetURL)
 		return
 	}
 
-	if e.chaos.Apply(w, r, false, st.ActivePreset) {
+	if e.chaos.Apply(sw, r, false, st.ActivePreset) {
 		return
 	}
-	e.serveSegment(w, r, st, targetURL)
+	e.serveSegment(sw, r, st, targetURL)
 }
 
 func (e *Engine) serveLocal(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +147,10 @@ func (e *Engine) serveLocal(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	e.serveLocalResource(w, r, st, r.PathValue("resource"))
+	logicalPath := r.PathValue("resource")
+	sw, done := e.track(w, r, st, kindForPlaylistPath(logicalPath), logicalPath)
+	defer done()
+	e.serveLocalResource(sw, r, st, logicalPath)
 }
 
 func (e *Engine) serveLocalResource(w http.ResponseWriter, r *http.Request, st *models.Stream, logicalPath string) {
@@ -158,7 +201,7 @@ func (e *Engine) serveLocalResource(w http.ResponseWriter, r *http.Request, st *
 	w.Header().Set("Content-Type", resource.ContentType)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	setCORS(w.Header())
 	http.ServeContent(w, r, filepath.Base(logicalPath), info.ModTime(), file)
 }
 
@@ -187,10 +230,11 @@ func (e *Engine) servePlaylist(w http.ResponseWriter, r *http.Request, st *model
 		return
 	}
 
+	setCORS(w.Header())
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
-	transformed := e.transformPlaylist(body, base, st.ID)
+	transformed := e.transformPlaylist(body, base, st.ID, e.playlistTruncateSeconds(st))
 	_, _ = w.Write(transformed)
 }
 
@@ -210,6 +254,7 @@ func (e *Engine) serveSegment(w http.ResponseWriter, r *http.Request, st *models
 	defer resp.Body.Close()
 
 	copyHeaders(w.Header(), resp.Header)
+	setCORS(w.Header())
 	w.WriteHeader(resp.StatusCode)
 	if resp.StatusCode == http.StatusOK {
 		_, _ = io.Copy(w, resp.Body)
@@ -238,8 +283,8 @@ func (e *Engine) fetch(ctx context.Context, rawURL string) ([]byte, error) {
 
 // transformPlaylist rewrites every URI so it routes back through StreamMock and
 // truncates the media sequence once the cumulative #EXTINF duration reaches the
-// 60-second cap, closing the playlist with #EXT-X-ENDLIST.
-func (e *Engine) transformPlaylist(body []byte, base *url.URL, streamID string) []byte {
+// per-stream cap, closing the playlist with #EXT-X-ENDLIST.
+func (e *Engine) transformPlaylist(body []byte, base *url.URL, streamID string, maxSeconds float64) []byte {
 	var out bytes.Buffer
 	sc := bufio.NewScanner(bytes.NewReader(body))
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -260,7 +305,7 @@ func (e *Engine) transformPlaylist(body []byte, base *url.URL, streamID string) 
 			if dur, ok := parseEXTINFDuration(line); ok {
 				cumulative += dur
 			}
-			if cumulative > e.truncateSeconds {
+			if cumulative > maxSeconds {
 				truncated = true
 				continue
 			}
@@ -336,6 +381,7 @@ func copyHeaders(dst, src http.Header) {
 		"Upgrade",
 		"Content-Length",
 		"Content-Encoding",
+		"Set-Cookie",
 	} {
 		dst.Del(h)
 	}

@@ -8,6 +8,7 @@ type Stream struct {
 	ProxyPath                string    `json:"proxy_path"`
 	ActivePreset             string    `json:"active_preset"`
 	OwnerID                  *string   `json:"owner_id"`
+	WorkspaceSlug            *string   `json:"workspace_slug,omitempty"`
 	Mode                     string    `json:"mode"`
 	CaptureStatus            string    `json:"capture_status"`
 	RequestedDurationSeconds float64   `json:"requested_duration_seconds"`

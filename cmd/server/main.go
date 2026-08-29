@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -22,6 +24,8 @@ import (
 	"streammock/internal/db"
 	"streammock/internal/models"
 	"streammock/internal/proxy"
+	"streammock/internal/pubnet"
+	"streammock/internal/ratelimit"
 	"streammock/internal/store"
 
 	"github.com/clerk/clerk-sdk-go/v2"
@@ -33,7 +37,17 @@ type Server struct {
 	store   *store.MemoryStore
 	engine  *proxy.Engine
 	capture *capture.Manager
+	limiter *ratelimit.Limiter
+	db      *db.DB
 }
+
+// handlerError carries an HTTP status alongside its user-facing message.
+type handlerError struct {
+	status int
+	msg    string
+}
+
+func (e *handlerError) Error() string { return e.msg }
 
 type StreamVM struct {
 	Stream  models.Stream
@@ -80,16 +94,28 @@ func main() {
 
 	chaos := proxy.NewChaos()
 	engine := proxy.NewEngine(cfg, mem, chaos)
+	engine = engine.WithRequestSink(func(req models.ProxyRequest) {
+		if err := database.InsertProxyRequest(req); err != nil {
+			log.Printf("record proxy request: %v", err)
+		}
+	})
 	captureManager := capture.NewManager(cfg, mem)
-	captureCtx, cancelCapture := context.WithCancel(context.Background())
-	defer cancelCapture()
-	captureManager.Start(captureCtx)
+	bgCtx, cancelBG := context.WithCancel(context.Background())
+	defer cancelBG()
+	captureManager.Start(bgCtx)
+
+	limiter := ratelimit.New(cfg.RateLimitPerMinute, cfg.RateLimitBurst)
+	go limiter.StartCleanup(bgCtx, time.Minute, 15*time.Minute)
+	go mem.StartSweeper(bgCtx, cfg.EphemeralTTL, cfg.SweeperInterval)
+	go retainProxyRequests(bgCtx, database)
 
 	srv := &Server{
 		cfg:     cfg,
 		store:   mem,
 		engine:  engine,
 		capture: captureManager,
+		limiter: limiter,
+		db:      database,
 	}
 
 	mux := http.NewServeMux()
@@ -99,6 +125,16 @@ func main() {
 	mux.HandleFunc("GET /api/streams/{id}", srv.handleGetStream)
 	mux.HandleFunc("POST /api/streams", srv.handleAddStream)
 	mux.HandleFunc("POST /api/streams/{id}/preset", srv.handleSetPreset)
+	mux.HandleFunc("GET /api/workspace", srv.handleGetWorkspace)
+	mux.HandleFunc("GET /api/workspace/requests", srv.handleWorkspaceRequests)
+	mux.HandleFunc("GET /p.m3u8", srv.handleOnDemand)
+	mux.HandleFunc("GET /p", srv.handleOnDemand)
+	mux.HandleFunc("OPTIONS /p.m3u8", handlePreflight)
+	mux.HandleFunc("OPTIONS /p", handlePreflight)
+	mux.HandleFunc("GET /ws/{slug}/p.m3u8", srv.handleWorkspaceOnDemand)
+	mux.HandleFunc("GET /ws/{slug}/p", srv.handleWorkspaceOnDemand)
+	mux.HandleFunc("OPTIONS /ws/{slug}/p.m3u8", handlePreflight)
+	mux.HandleFunc("OPTIONS /ws/{slug}/p", handlePreflight)
 	srv.engine.Register(mux)
 
 	httpServer := &http.Server{
@@ -273,6 +309,223 @@ func (s *Server) handleSetPreset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"stream": StreamVM{Stream: *st, Presets: models.Presets},
 	})
+}
+
+// handleOnDemand is the public no-signup entry point: /p.m3u8?url=<hls>&preset=&duration=
+// It proxies the given HLS stream on the fly (nothing is recorded), reusing a
+// deterministic stream ID per source URL so player refreshes keep working and
+// preset changes survive. These streams are anonymous, memory-only and never
+// appear in any workspace.
+func (s *Server) handleOnDemand(w http.ResponseWriter, r *http.Request) {
+	s.serveOnDemand(w, r, nil)
+}
+
+// handleWorkspaceOnDemand is the workspace-scoped variant:
+// /ws/{slug}/p.m3u8?url=<hls>&preset=&duration= — no auth (HLS players cannot
+// send headers), but the slug must be a registered workspace. Playback through
+// it is attributed to the workspace and shows up on its request board.
+func (s *Server) handleWorkspaceOnDemand(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	if _, ok := s.db.WorkspaceOwner(slug); !ok {
+		http.NotFound(w, r)
+		return
+	}
+	s.serveOnDemand(w, r, &slug)
+}
+
+func (s *Server) serveOnDemand(w http.ResponseWriter, r *http.Request, slug *string) {
+	if !s.limiter.Allow(ratelimit.ClientIP(r)) {
+		w.Header().Set("Retry-After", "30")
+		http.Error(w, "rate limit exceeded; slow down or try again later", http.StatusTooManyRequests)
+		return
+	}
+	st, herr := s.buildOnDemandStream(r, slug)
+	if herr != nil {
+		http.Error(w, herr.msg, herr.status)
+		return
+	}
+	if err := s.store.Add(*st, false); err != nil {
+		http.Error(w, "failed to register stream", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	live, _ := s.store.Get(st.ID)
+	s.engine.ServeMasterStream(w, r, live)
+}
+
+// buildOnDemandStream validates the query parameters and returns the
+// memory-only stream for the request, reusing deterministic IDs so identical
+// URLs (and workspace scopes) share one stream instead of allocating
+// unbounded memory. When slug is nil the stream is public/anonymous; the
+// reused stream keeps its prior creation time and, unless a preset is
+// explicitly requested, its active preset.
+func (s *Server) buildOnDemandStream(r *http.Request, slug *string) (*models.Stream, *handlerError) {
+	q := r.URL.Query()
+	rawURL := strings.TrimSpace(q.Get("url"))
+	if err := pubnet.ValidateURL(rawURL); err != nil {
+		return nil, &handlerError{http.StatusBadRequest, "invalid url: " + err.Error()}
+	}
+	preset := strings.TrimSpace(q.Get("preset"))
+	if preset != "" && !models.ValidPreset(preset) {
+		return nil, &handlerError{http.StatusBadRequest, fmt.Sprintf("unknown preset %q; valid presets: %s", preset, presetKeys())}
+	}
+	duration, err := parseOnDemandDuration(q.Get("duration"))
+	if err != nil {
+		return nil, &handlerError{http.StatusBadRequest, err.Error()}
+	}
+
+	id := onDemandID(rawURL, slug)
+	now := time.Now().UTC()
+	st := &models.Stream{
+		ID:                       id,
+		OriginalURL:              rawURL,
+		ProxyPath:                fmt.Sprintf("/s/%s/master.m3u8", id),
+		ActivePreset:             preset,
+		Mode:                     models.ModeProxy,
+		CaptureStatus:            models.CaptureReady,
+		RequestedDurationSeconds: duration,
+		WorkspaceSlug:            slug,
+		CreatedAt:                now,
+		UpdatedAt:                now,
+	}
+	if existing, ok := s.store.Get(id); ok {
+		st.CreatedAt = existing.CreatedAt
+		if preset == "" {
+			st.ActivePreset = existing.ActivePreset
+		}
+	} else if preset == "" {
+		st.ActivePreset = models.Presets[0].Key
+	}
+	return st, nil
+}
+
+// parseOnDemandDuration mirrors capture.ValidateDuration but with messages
+// phrased for the public ?duration= query parameter.
+func parseOnDemandDuration(raw string) (float64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 60, nil
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, errors.New("invalid duration: must be a number of seconds")
+	}
+	duration, err := capture.ValidateDuration(value)
+	if err != nil {
+		return 0, errors.New("duration must be between 1 and 300 seconds")
+	}
+	return duration, nil
+}
+
+// onDemandID derives a stable stream ID from the source URL and, when the
+// stream belongs to a workspace, from the workspace slug — so two boards
+// proxying the same URL never collide.
+func onDemandID(rawURL string, slug *string) string {
+	key := strings.TrimSpace(rawURL)
+	if slug != nil && *slug != "" {
+		key = *slug + "\x00" + key
+	}
+	sum := sha256.Sum256([]byte(key))
+	return "od-" + hex.EncodeToString(sum[:8])
+}
+
+func presetKeys() string {
+	keys := make([]string, 0, len(models.Presets))
+	for _, p := range models.Presets {
+		keys = append(keys, p.Key)
+	}
+	return strings.Join(keys, ", ")
+}
+
+// retainProxyRequests enforces the board retention policy: requests older than
+// 24h are purged and each workspace keeps at most 1,000 most recent rows.
+func retainProxyRequests(ctx context.Context, database *db.DB) {
+	ticker := time.NewTicker(15 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := database.PurgeProxyRequests(24 * time.Hour); err != nil {
+				log.Printf("purge proxy requests: %v", err)
+			}
+			if _, err := database.TrimProxyRequests(1000); err != nil {
+				log.Printf("trim proxy requests: %v", err)
+			}
+		}
+	}
+}
+
+// handleGetWorkspace returns (creating on first call) the caller's workspace
+// slug and the matching on-demand playback URL.
+func (s *Server) handleGetWorkspace(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.authenticatedUserID(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	slug, err := s.db.EnsureWorkspace(userID)
+	if err != nil {
+		log.Printf("ensure workspace: %v", err)
+		http.Error(w, "failed to load workspace", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"slug":         slug,
+		"playback_url": fmt.Sprintf("/ws/%s/p.m3u8", slug),
+	})
+}
+
+// handleWorkspaceRequests serves the request board: the caller's own recent
+// proxy requests, newest first. Another workspace's slug may not be inspected.
+func (s *Server) handleWorkspaceRequests(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.authenticatedUserID(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	slug := strings.TrimSpace(r.URL.Query().Get("workspace"))
+	if slug == "" {
+		own, err := s.db.EnsureWorkspace(userID)
+		if err != nil {
+			log.Printf("ensure workspace: %v", err)
+			http.Error(w, "failed to load workspace", http.StatusInternalServerError)
+			return
+		}
+		slug = own
+	} else if owner, exists := s.db.WorkspaceOwner(slug); !exists || owner != userID {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	requests, err := s.db.ListProxyRequests(slug, 100)
+	if err != nil {
+		log.Printf("list proxy requests: %v", err)
+		http.Error(w, "failed to load requests", http.StatusInternalServerError)
+		return
+	}
+	if requests == nil {
+		requests = []models.ProxyRequest{}
+	}
+	total, err := s.db.CountProxyRequests(slug, time.Now().Add(-24*time.Hour))
+	if err != nil {
+		log.Printf("count proxy requests: %v", err)
+		http.Error(w, "failed to count requests", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"requests":  requests,
+		"total_24h": total,
+	})
+}
+
+func handlePreflight(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Range, Origin, Content-Type")
+	w.Header().Set("Access-Control-Max-Age", "86400")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // authenticatedUserID verifies the Clerk session JWT from the Authorization

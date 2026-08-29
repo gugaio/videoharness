@@ -1,4 +1,4 @@
-import { DEFAULT_PRESETS, type Stream } from "./types";
+import { DEFAULT_PRESETS, type ProxyRequest, type Stream } from "./types";
 
 async function request<T>(
   path: string,
@@ -48,6 +48,23 @@ export async function setPreset(
     token,
   );
   return data.stream;
+}
+
+export async function getWorkspace(token?: string): Promise<{ slug: string; playback_url: string }> {
+  return request<{ slug: string; playback_url: string }>("/api/workspace", {}, token);
+}
+
+export async function getWorkspaceRequests(
+  token: string,
+  workspace?: string,
+): Promise<{ requests: ProxyRequest[]; total_24h: number }> {
+  const query = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
+  const data = await request<{ requests: ProxyRequest[]; total_24h: number }>(
+    `/api/workspace/requests${query}`,
+    {},
+    token,
+  );
+  return { requests: data.requests ?? [], total_24h: data.total_24h ?? 0 };
 }
 
 export function withPresets(stream: Omit<Stream, "presets">): Stream {

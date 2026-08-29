@@ -2,15 +2,15 @@ package capture
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"streammock/internal/pubnet"
 )
 
 type sourceClient struct {
@@ -18,42 +18,11 @@ type sourceClient struct {
 }
 
 func newSourceClient(timeout time.Duration) *sourceClient {
-	dialer := &net.Dialer{Timeout: timeout}
-	transport := &http.Transport{
-		Proxy: nil,
-		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(address)
-			if err != nil {
-				return nil, err
-			}
-			ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
-			if err != nil {
-				return nil, fmt.Errorf("resolve source host: %w", err)
-			}
-			for _, ip := range ips {
-				if !publicIP(net.IP(ip.AsSlice())) {
-					continue
-				}
-				return dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
-			}
-			return nil, errors.New("source host does not resolve to a public address")
-		},
-		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
-	}
-	return &sourceClient{client: &http.Client{
-		Timeout:   timeout,
-		Transport: transport,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 4 {
-				return errors.New("source exceeded redirect limit")
-			}
-			return validateSourceURL(req.URL.String())
-		},
-	}}
+	return &sourceClient{client: pubnet.NewHTTPClient(timeout)}
 }
 
 func (c *sourceClient) get(ctx context.Context, rawURL string) (*http.Response, error) {
-	if err := validateSourceURL(rawURL); err != nil {
+	if err := pubnet.ValidateURL(rawURL); err != nil {
 		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
@@ -84,26 +53,6 @@ func (c *sourceClient) text(ctx context.Context, rawURL string, maxBytes int64) 
 		return nil, nil, err
 	}
 	return body, response.Request.URL, nil
-}
-
-func publicIP(ip net.IP) bool {
-	return ip.IsGlobalUnicast() && !ip.IsPrivate() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast() && !ip.IsMulticast() && !ip.IsUnspecified()
-}
-
-func validateSourceURL(rawURL string) error {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return fmt.Errorf("invalid source URL: %w", err)
-	}
-	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil {
-		return errors.New("source URL must be HTTP(S), have a host, and contain no credentials")
-	}
-	if host := parsed.Hostname(); net.ParseIP(host) != nil {
-		if !publicIP(net.ParseIP(host)) {
-			return errors.New("source URL cannot target a private address")
-		}
-	}
-	return nil
 }
 
 func readLimited(reader io.Reader, maxBytes int64) ([]byte, error) {

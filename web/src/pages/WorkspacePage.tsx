@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { UserButton, useAuth } from "@clerk/react";
-import { addStream, listStreams, withPresets } from "../api";
+import { addStream, getWorkspace, listStreams, withPresets } from "../api";
+import OnDemandCard from "../components/OnDemandCard";
 import PresetSelect from "../components/PresetSelect";
+import RequestsPanel from "../components/RequestsPanel";
 import type { Stream } from "../types";
 
 export default function WorkspacePage() {
   const { getToken } = useAuth();
   const [token, setToken] = useState<string | undefined>(undefined);
+  const [workspaceSlug, setWorkspaceSlug] = useState<string | undefined>(undefined);
   const [streams, setStreams] = useState<Stream[]>([]);
   const [url, setUrl] = useState("");
   const [duration, setDuration] = useState(60);
@@ -19,8 +22,12 @@ export default function WorkspacePage() {
     getToken()
       .then(async (t) => {
         setToken(t ?? undefined);
-        const rows = await listStreams(t ?? "");
+        const [rows, workspace] = await Promise.all([
+          listStreams(t ?? ""),
+          getWorkspace(t ?? undefined).catch(() => null),
+        ]);
         setStreams(rows.map(withPresets));
+        if (workspace) setWorkspaceSlug(workspace.slug);
       })
       .catch((e: Error) => setError(e.message));
   }, [getToken]);
@@ -150,6 +157,10 @@ export default function WorkspacePage() {
             </button>
           </form>
         </section>
+
+        <OnDemandCard slug={workspaceSlug} />
+
+        <RequestsPanel token={token} />
 
         {error && <p className="mt-5 rounded-xl border border-red-300/20 bg-red-400/10 px-4 py-3 text-sm text-red-200">{error}</p>}
 

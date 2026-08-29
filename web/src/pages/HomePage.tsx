@@ -56,13 +56,16 @@ export default function HomePage() {
             </SignInButton>
           </Show>
           <Show when="signed-in">
-            <div className="flex items-center gap-3">
-              <Link to="/workspace" className="hidden text-sm font-medium text-white/90 hover:text-white sm:inline">
-                Workspace
-              </Link>
-              <UserButton />
-            </div>
+            <Link
+              to="/workspace"
+              className="hidden rounded-full border border-white/25 px-7 py-3 text-base font-medium text-white/90 transition hover:bg-white/10 sm:inline-flex"
+            >
+              Workspace
+            </Link>
           </Show>
+          <div className="flex items-center self-center">
+            <UserButton />
+          </div>
         </div>
       </header>
 
