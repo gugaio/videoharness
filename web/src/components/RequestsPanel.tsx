@@ -41,7 +41,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function RequestsPanel({ token }: { token?: string }) {
+export default function RequestsPanel({ getToken }: { getToken: () => Promise<string | null> }) {
   const [requests, setRequests] = useState<ProxyRequest[]>([]);
   const [total24h, setTotal24h] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -49,13 +49,16 @@ export default function RequestsPanel({ token }: { token?: string }) {
   const timer = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!token) return;
     let cancelled = false;
 
     async function poll() {
       if (document.visibilityState === "hidden") return;
       try {
-        const data = await getWorkspaceRequests(token as string);
+        // Clerk rotates session JWTs. Fetch a current token for each poll instead
+        // of repeatedly using the token that was current when the page mounted.
+        const token = await getToken();
+        if (!token) return;
+        const data = await getWorkspaceRequests(token);
         if (!cancelled) {
           setRequests(data.requests);
           setTotal24h(data.total_24h);
@@ -75,9 +78,7 @@ export default function RequestsPanel({ token }: { token?: string }) {
       cancelled = true;
       if (timer.current !== null) window.clearInterval(timer.current);
     };
-  }, [token]);
-
-  if (!token) return null;
+  }, [getToken]);
 
   return (
     <section className="mt-6 overflow-hidden rounded-3xl border border-white/10 bg-black/15">
