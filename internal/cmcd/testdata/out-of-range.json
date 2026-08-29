@@ -1,0 +1,14 @@
+{
+  "name": "out of range values",
+  "url": "/s/stream/master.m3u8?CMCD=br%3D0%2Csid%3D%2266666666666666666666666666666666666666666666666666666666666666666%22",
+  "want": {
+    "present": true,
+    "version": 1,
+    "raw_value": "br=0,sid=\"66666666666666666666666666666666666666666666666666666666666666666\"",
+    "canonical_value": ""
+  },
+  "issues": [
+    { "code": "out_of_range", "key": "br" },
+    { "code": "string_too_long", "key": "sid" }
+  ]
+}

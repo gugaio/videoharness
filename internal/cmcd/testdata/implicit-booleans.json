@@ -1,0 +1,12 @@
+{
+  "name": "implicit booleans",
+  "url": "/s/stream/r/resource?CMCD=bs%2Csu%2Csid%3D%22session-2%22",
+  "want": {
+    "present": true,
+    "version": 1,
+    "raw_value": "bs,su,sid=\"session-2\"",
+    "canonical_value": "bs,sid=\"session-2\",su",
+    "sid": "session-2", "startup": true, "buffer_starvation": true
+  },
+  "issues": []
+}

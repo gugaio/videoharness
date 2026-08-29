@@ -1,0 +1,18 @@
+{
+  "name": "typed custom values",
+  "url": "/s/stream/master.m3u8?CMCD=com.example-flag%2Ccom.example-count%3D5%2Ccom.example-ratio%3D0.75%2Ccom.example-label%3D%22hello%22%2Ccom.example-token%3Dalpha-beta",
+  "want": {
+    "present": true,
+    "version": 1,
+    "raw_value": "com.example-flag,com.example-count=5,com.example-ratio=0.75,com.example-label=\"hello\",com.example-token=alpha-beta",
+    "canonical_value": "com.example-count=5,com.example-flag,com.example-label=\"hello\",com.example-ratio=0.75,com.example-token=alpha-beta",
+    "custom": {
+      "com.example-flag": { "kind": "boolean", "boolean": true },
+      "com.example-count": { "kind": "integer", "integer": 5 },
+      "com.example-ratio": { "kind": "decimal", "decimal": 0.75 },
+      "com.example-label": { "kind": "string", "string": "hello" },
+      "com.example-token": { "kind": "token", "token": "alpha-beta" }
+    }
+  },
+  "issues": []
+}

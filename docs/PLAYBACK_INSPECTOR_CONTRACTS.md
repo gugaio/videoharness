@@ -1,0 +1,56 @@
+# Contratos do Playback Inspector — Fase 0
+
+Este documento fixa os contratos usados pelas fases 1 a 4. Os tipos Go vivem
+em `internal/cmcd`, `internal/telemetry` e `internal/diagnostics`.
+
+## CMCD
+
+- Transporte do MVP: parâmetro de query string exatamente chamado `CMCD`.
+- Versão do MVP: v1; headers ficam para a Fase 6.
+- Um decoder retorna `NormalizedCMCD` e pode retornar `ValidationError` com
+  múltiplos códigos estáveis. Payload inválido nunca implica erro HTTP.
+- `RawValue` preserva a forma URL-decodificada apenas quando tem até 8 KiB.
+- `CanonicalValue` ordena chaves para facilitar fixtures e comparação.
+- Métricas possuem nome com unidade: `*_ms` ou `*_kbps`.
+- Métricas ausentes são `nil`; `0` só existe quando foi explicitamente enviado
+  e permitido para aquela chave.
+- `ObjectValues[T]` permite representar valores scalar v1 e valores por tipo
+  de objeto no CMCD v2 sem quebrar o contrato.
+
+Limites iniciais:
+
+| Limite | Valor |
+| --- | ---: |
+| Payload CMCD URL-decodificado | 8 KiB |
+| Payload codificado antes do decode | 24 KiB |
+| Chaves totais | 64 |
+| Chaves customizadas | 16 |
+| Nome de chave | 64 bytes |
+| String quoted/customizada | 1 KiB |
+| `sid` e `cid` | 64 caracteres |
+
+Custom keys devem possuir um hífen para evitar colisão com chaves CMCD
+reservadas. Chaves ou parâmetros `CMCD` duplicados são inválidos, sem política
+de sobrescrever o último valor.
+
+## Sessão e timeline
+
+Persistência usa `INTEGER` Unix epoch em milissegundos. JSON também usa
+`*_at_ms`, para não perder precisão durante uma timeline sincronizada.
+
+- Sessão é única por `(workspace_slug, stream_id, cmcd_sid)`.
+- `cid` identifica conteúdo, mas não substitui `sid` para correlação.
+- `initial_preset` é o snapshot do primeiro request; a intervenção em cada
+  request continua sendo a fonte de verdade se o preset mudar durante a sessão.
+- Uma entrada de timeline é `request` ou `event`, nunca ambos.
+- Entradas são ordenadas por `at_ms`, depois `kind`, depois o ID do payload.
+
+## Findings
+
+Um finding possui `rule_id`, `rule_version`, severidade (`info`, `warning` ou
+`error`), confiança (`low`, `medium` ou `high`), mensagem, evidências e
+medições. Medições são numéricas e sempre carregam unidade (`ms`, `kbps`,
+`bytes`, `ratio` ou `count`).
+
+O texto deve distinguir fato observado de risco inferido. Por exemplo,
+`deadline_miss` sem Observer indica risco; não afirma rebuffer confirmado.

@@ -62,7 +62,7 @@ func (e *Engine) ServeMasterStream(w http.ResponseWriter, r *http.Request, st *m
 		e.serveLocalResource(sw, r, st, "master.m3u8")
 		return
 	}
-	if e.chaos.Apply(sw, r, true, st.ActivePreset) {
+	if e.applyChaos(sw, r, true, st.ActivePreset) {
 		return
 	}
 	e.servePlaylist(sw, r, st, st.OriginalURL)
@@ -128,14 +128,14 @@ func (e *Engine) serveProxied(w http.ResponseWriter, r *http.Request) {
 	sw, done := e.track(w, r, st, kind, targetURL)
 	defer done()
 	if isManifest {
-		if e.chaos.Apply(sw, r, true, st.ActivePreset) {
+		if e.applyChaos(sw, r, true, st.ActivePreset) {
 			return
 		}
 		e.servePlaylist(sw, r, st, targetURL)
 		return
 	}
 
-	if e.chaos.Apply(sw, r, false, st.ActivePreset) {
+	if e.applyChaos(sw, r, false, st.ActivePreset) {
 		return
 	}
 	e.serveSegment(sw, r, st, targetURL)
@@ -172,7 +172,7 @@ func (e *Engine) serveLocalResource(w http.ResponseWriter, r *http.Request, st *
 		return
 	}
 	isManifest := resource.Kind == "master" || resource.Kind == "media-playlist"
-	if e.chaos.Apply(w, r, isManifest, st.ActivePreset) {
+	if e.applyChaos(w, r, isManifest, st.ActivePreset) {
 		return
 	}
 	root := filepath.Join(e.storageDir, filepath.FromSlash(*st.StorageKey))
@@ -244,7 +244,14 @@ func (e *Engine) serveSegment(w http.ResponseWriter, r *http.Request, st *models
 		http.Error(w, "invalid segment url", http.StatusBadRequest)
 		return
 	}
-	req.Header.Set("User-Agent", "StreamMock/0.1 (HLS proxy)")
+	for _, header := range []string{"Range", "If-Range", "Accept", "User-Agent"} {
+		if value := r.Header.Get(header); value != "" {
+			req.Header.Set(header, value)
+		}
+	}
+	if req.Header.Get("User-Agent") == "" {
+		req.Header.Set("User-Agent", "StreamMock/0.1 (HLS proxy)")
+	}
 
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -252,11 +259,32 @@ func (e *Engine) serveSegment(w http.ResponseWriter, r *http.Request, st *models
 		return
 	}
 	defer resp.Body.Close()
+	if sw, ok := w.(*statusWriter); ok {
+		sw.forwardedRange = req.Header.Get("Range")
+		sw.upstreamStatus = resp.StatusCode
+		sw.contentRange = resp.Header.Get("Content-Range")
+		sw.contentLength = resp.ContentLength
+		if requested := r.Header.Get("Range"); requested != "" {
+			switch {
+			case resp.StatusCode == http.StatusOK:
+				sw.rangeResult = "ignored"
+				sw.diagnostic = "origin ignored the player's Range request and returned 200 OK"
+			case resp.StatusCode == http.StatusPartialContent && sw.contentRange == "":
+				sw.rangeResult = "missing_content_range"
+				sw.diagnostic = "origin returned 206 Partial Content without Content-Range"
+			case resp.StatusCode == http.StatusPartialContent:
+				sw.rangeResult = "satisfied"
+			default:
+				sw.rangeResult = "failed"
+				sw.diagnostic = fmt.Sprintf("origin returned %s to the player's Range request", resp.Status)
+			}
+		}
+	}
 
 	copyHeaders(w.Header(), resp.Header)
 	setCORS(w.Header())
 	w.WriteHeader(resp.StatusCode)
-	if resp.StatusCode == http.StatusOK {
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 		_, _ = io.Copy(w, resp.Body)
 	}
 }

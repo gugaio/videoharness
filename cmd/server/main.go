@@ -128,6 +128,7 @@ func main() {
 	mux.HandleFunc("POST /api/streams/{id}/preset", srv.handleSetPreset)
 	mux.HandleFunc("GET /api/workspace", srv.handleGetWorkspace)
 	mux.HandleFunc("GET /api/workspace/requests", srv.handleWorkspaceRequests)
+	mux.HandleFunc("DELETE /api/workspace/requests", srv.handleWorkspaceRequests)
 	mux.HandleFunc("GET /p.m3u8", srv.handleOnDemand)
 	mux.HandleFunc("GET /p", srv.handleOnDemand)
 	mux.HandleFunc("OPTIONS /p.m3u8", handlePreflight)
@@ -569,6 +570,19 @@ func (s *Server) handleWorkspaceRequests(w http.ResponseWriter, r *http.Request)
 			streamID = onDemandID(source, &slug, preset, 60)
 		}
 	}
+	if r.Method == http.MethodDelete {
+		if streamID == "" {
+			http.Error(w, "a stream is required to clear activity", http.StatusBadRequest)
+			return
+		}
+		if _, err := s.db.DeleteProxyRequests(slug, mode, streamID); err != nil {
+			log.Printf("clear proxy requests: %v", err)
+			http.Error(w, "failed to clear activity", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	requests, err := s.db.ListProxyRequests(slug, mode, streamID, 20)
 	if err != nil {
 		log.Printf("list proxy requests: %v", err)
@@ -578,8 +592,21 @@ func (s *Server) handleWorkspaceRequests(w http.ResponseWriter, r *http.Request)
 	if requests == nil {
 		requests = []models.ProxyRequest{}
 	}
+	rangeSummary := map[string]int{"requested": 0, "satisfied": 0, "issues": 0}
+	for _, req := range requests {
+		if req.ClientRange == "" {
+			continue
+		}
+		rangeSummary["requested"]++
+		if req.RangeResult == "satisfied" {
+			rangeSummary["satisfied"]++
+		} else {
+			rangeSummary["issues"]++
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"requests": requests,
+		"requests":      requests,
+		"range_summary": rangeSummary,
 	})
 }
 

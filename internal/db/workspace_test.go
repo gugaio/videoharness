@@ -58,6 +58,7 @@ func TestInsertProxyRequestKeepsRepeats(t *testing.T) {
 		WorkspaceSlug: "ws-a", StreamID: "od-1", Kind: models.KindSegment,
 		TargetURL: "https://origin/seg0.ts", Status: 200, DurationMS: 120, Bytes: 500,
 		ClientIP: "203.0.113.5", ActivePreset: "subway_3g",
+		Intervention: "latency", AddedLatencyMS: 1800,
 	}
 	if err := database.InsertProxyRequest(req); err != nil {
 		t.Fatal(err)
@@ -90,6 +91,9 @@ func TestInsertProxyRequestKeepsRepeats(t *testing.T) {
 	}
 	if got.ClientIP != "198.51.100.9" {
 		t.Errorf("client_ip = %q, want latest", got.ClientIP)
+	}
+	if got.Intervention != "latency" || got.AddedLatencyMS != 1800 || got.InjectedStatus != 0 {
+		t.Errorf("intervention fields were not preserved: %+v", got)
 	}
 
 	count, err := database.CountProxyRequests("ws-a", time.Now().Add(-time.Hour))

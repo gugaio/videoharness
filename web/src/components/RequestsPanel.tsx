@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { getWorkspaceRequests } from "../api";
+import { clearWorkspaceRequests, getWorkspaceRequests } from "../api";
 import type { ProxyRequest } from "../types";
 
 const POLL_INTERVAL_MS = 4000;
@@ -41,9 +41,39 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function rangeClass(result: ProxyRequest["range_result"]): string {
+  if (result === "satisfied") return "bg-emerald-400/15 text-emerald-300";
+  if (result === "ignored" || result === "missing_content_range" || result === "failed") return "bg-red-400/15 text-red-200";
+  return "bg-white/8 text-stone-400";
+}
+
+function interventionDescription(req: ProxyRequest): string | null {
+  const effects: string[] = [];
+  if ((req.added_latency_ms ?? 0) > 0) {
+    const seconds = ((req.added_latency_ms ?? 0) / 1000)
+      .toFixed(2)
+      .replace(/\.00$/, "")
+      .replace(/(\.\d)0$/, "$1");
+    effects.push(`+${seconds}s latency`);
+  }
+  if ((req.injected_status ?? 0) > 0) {
+    effects.push(`HTTP ${req.injected_status} injected`);
+  }
+  return effects.length > 0 ? effects.join(" · ") : null;
+}
+
+function originResponse(req: ProxyRequest): string {
+  if (req.injected_status) return "Not contacted — response injected by StreamMock";
+  if (req.upstream_status) {
+    return `${req.upstream_status}${req.content_range ? ` · ${req.content_range}` : ""}`;
+  }
+  return `${req.status}`;
+}
+
 export default function RequestsPanel({ getToken, mode, streamId, source, preset }: { getToken: () => Promise<string | null>; mode: "proxy" | "clone"; streamId?: string; source?: string; preset?: string }) {
   const [requests, setRequests] = useState<ProxyRequest[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [expandedRequest, setExpandedRequest] = useState<number | null>(null);
   const [, setTick] = useState(0); // re-render for relative timestamps
   const timer = useRef<number | null>(null);
 
@@ -82,7 +112,19 @@ export default function RequestsPanel({ getToken, mode, streamId, source, preset
   const emptyTitle = mode === "clone" ? "No clone requests yet" : "No proxy requests yet";
   const emptyDescription = mode === "clone"
     ? "Play a cloned stream and its most recent requests will appear here."
-    : "Play something through your live proxy link above and its most recent requests will appear here.";
+    : "Open the player preview in a separate tab, or use the live proxy URL in your own player. Requests will appear here.";
+
+  async function clearActivity() {
+    if (!window.confirm("Clear this stream's activity history?")) return;
+    try {
+      const token = await getToken();
+      if (!token) return;
+      await clearWorkspaceRequests(token, mode, streamId, source, preset);
+      setRequests([]);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
 
   return (
     <section className="mt-6 overflow-hidden rounded-3xl border border-white/10 bg-black/15">
@@ -97,6 +139,7 @@ export default function RequestsPanel({ getToken, mode, streamId, source, preset
           <p className="text-xs uppercase tracking-[0.16em] text-stone-400">Showing</p>
           <p className="mt-1 text-2xl font-semibold text-white">{requests.length}</p>
         </div>
+        <button type="button" onClick={() => void clearActivity()} disabled={requests.length === 0} className="rounded-lg border border-white/10 px-3 py-2 text-xs font-medium text-stone-300 transition hover:border-red-300/45 hover:bg-red-400/10 hover:text-red-100 disabled:cursor-not-allowed disabled:opacity-40">Clear activity</button>
       </div>
 
       {error && (
@@ -116,25 +159,31 @@ export default function RequestsPanel({ getToken, mode, streamId, source, preset
       ) : (
         <ul className="divide-y divide-white/10">
           {requests.slice(0, MAX_ROWS).map((req, index) => (
-            <li key={`${req.stream_id} ${req.target_url} ${req.last_seen_at} ${index}`} className="flex items-center gap-4 px-5 py-3.5 transition hover:bg-white/[0.03] sm:px-7">
-              <span className={`inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(req.status)}`}>
-                {req.status}
-              </span>
-              <span className="hidden shrink-0 rounded-full bg-white/8 px-2.5 py-1 text-[11px] text-stone-300 sm:inline-block">
-                {kindLabel(req.kind)}
-              </span>
-              <span className="min-w-0 flex-1 truncate font-mono text-xs text-stone-300" title={req.target_url}>
-                {req.target_url}
-              </span>
-              <span className="hidden shrink-0 text-[11px] text-stone-500 md:inline">
-                {(req.duration_ms / 1000).toFixed(2)}s · {formatBytes(req.bytes)}
-                {req.active_preset !== "clean" && ` · ${req.active_preset}`}
-              </span>
-              <span className="w-16 shrink-0 text-right text-[11px] text-stone-500">{timeAgo(req.last_seen_at)}</span>
+            <li key={`${req.stream_id} ${req.target_url} ${req.last_seen_at} ${index}`}>
+              <button type="button" onClick={() => setExpandedRequest(expandedRequest === index ? null : index)} className="flex w-full items-center gap-4 px-5 py-3.5 text-left transition hover:bg-white/[0.03] sm:px-7">
+                <span className={`inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(req.status)}`}>{req.status}</span>
+                <span className="hidden shrink-0 rounded-full bg-white/8 px-2.5 py-1 text-[11px] text-stone-300 sm:inline-block">{kindLabel(req.kind)}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-mono text-xs text-stone-300" title={req.target_url}>{req.target_url}</span>
+                  {interventionDescription(req) && (
+                    <span className={`mt-1 inline-flex rounded-md px-2 py-0.5 text-[10px] font-semibold ${req.injected_status ? "bg-red-400/15 text-red-200" : "bg-amber-400/15 text-amber-200"}`}>
+                      Server intervention: {interventionDescription(req)}
+                    </span>
+                  )}
+                </span>
+                <span className="hidden shrink-0 text-[11px] text-stone-500 md:inline">{(req.duration_ms / 1000).toFixed(2)}s · {formatBytes(req.bytes)}{req.active_preset !== "clean" && ` · ${req.active_preset}`}</span>
+                {req.client_range && <span className={`hidden shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium lg:inline ${rangeClass(req.range_result)}`}>Range: {req.range_result}</span>}
+                <span className="w-16 shrink-0 text-right text-[11px] text-stone-500">{timeAgo(req.last_seen_at)}</span>
+              </button>
+              {expandedRequest === index && <div className="border-t border-white/10 bg-white/[0.025] px-5 py-4 sm:px-7"><div className="grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4"><Detail label="Player Range" value={req.client_range || "Not requested"} /><Detail label="Forwarded Range" value={req.forwarded_range || "Not forwarded"} /><Detail label="Origin response" value={originResponse(req)} /><Detail label="Response size" value={(req.content_length ?? 0) > 0 ? formatBytes(req.content_length ?? 0) : formatBytes(req.bytes)} />{interventionDescription(req) && <Detail label="Server intervention" value={interventionDescription(req) ?? ""} />}</div><div className={`mt-3 rounded-lg px-3 py-2 text-xs ${rangeClass(req.range_result)}`}><span className="font-semibold">Range result: {req.range_result}</span>{req.diagnostic && <span className="ml-2">{req.diagnostic}</span>}</div></div>}
             </li>
           ))}
         </ul>
       )}
     </section>
   );
+}
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-lg border border-white/10 bg-black/15 px-3 py-2"><p className="text-[10px] uppercase tracking-[0.12em] text-stone-500">{label}</p><p className="mt-1 break-all font-mono text-stone-200">{value}</p></div>;
 }

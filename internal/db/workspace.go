@@ -72,9 +72,9 @@ func (d *DB) InsertProxyRequest(req models.ProxyRequest) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := d.conn.Exec(
-		`INSERT INTO proxy_requests (workspace_slug, stream_id, stream_mode, kind, target_url, status, duration_ms, bytes, client_ip, active_preset, hit_count, first_seen_at, last_seen_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-		req.WorkspaceSlug, req.StreamID, req.StreamMode, req.Kind, req.TargetURL, req.Status, req.DurationMS, req.Bytes, req.ClientIP, req.ActivePreset, now, now,
+		`INSERT INTO proxy_requests (workspace_slug, stream_id, stream_mode, kind, target_url, status, duration_ms, bytes, client_ip, active_preset, client_range, forwarded_range, upstream_status, content_range, content_length, range_result, diagnostic, intervention, added_latency_ms, injected_status, hit_count, first_seen_at, last_seen_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+		req.WorkspaceSlug, req.StreamID, req.StreamMode, req.Kind, req.TargetURL, req.Status, req.DurationMS, req.Bytes, req.ClientIP, req.ActivePreset, req.ClientRange, req.ForwardedRange, req.UpstreamStatus, req.ContentRange, req.ContentLength, req.RangeResult, req.Diagnostic, req.Intervention, req.AddedLatencyMS, req.InjectedStatus, now, now,
 	)
 	if err != nil {
 		return fmt.Errorf("insert proxy request: %w", err)
@@ -87,7 +87,7 @@ func scanProxyRequests(rows *sql.Rows) ([]models.ProxyRequest, error) {
 	for rows.Next() {
 		var req models.ProxyRequest
 		var firstSeen, lastSeen string
-		if err := rows.Scan(&req.WorkspaceSlug, &req.StreamID, &req.StreamMode, &req.Kind, &req.TargetURL, &req.Status, &req.DurationMS, &req.Bytes, &req.ClientIP, &req.ActivePreset, &req.HitCount, &firstSeen, &lastSeen); err != nil {
+		if err := rows.Scan(&req.WorkspaceSlug, &req.StreamID, &req.StreamMode, &req.Kind, &req.TargetURL, &req.Status, &req.DurationMS, &req.Bytes, &req.ClientIP, &req.ActivePreset, &req.ClientRange, &req.ForwardedRange, &req.UpstreamStatus, &req.ContentRange, &req.ContentLength, &req.RangeResult, &req.Diagnostic, &req.Intervention, &req.AddedLatencyMS, &req.InjectedStatus, &req.HitCount, &firstSeen, &lastSeen); err != nil {
 			return nil, fmt.Errorf("scan proxy request: %w", err)
 		}
 		var err error
@@ -109,7 +109,7 @@ func (d *DB) ListProxyRequests(slug, mode, streamID string, limit int) ([]models
 		limit = 100
 	}
 	rows, err := d.conn.Query(
-		`SELECT workspace_slug, stream_id, stream_mode, kind, target_url, status, duration_ms, bytes, client_ip, active_preset, hit_count, first_seen_at, last_seen_at
+		`SELECT workspace_slug, stream_id, stream_mode, kind, target_url, status, duration_ms, bytes, client_ip, active_preset, client_range, forwarded_range, upstream_status, content_range, content_length, range_result, diagnostic, intervention, added_latency_ms, injected_status, hit_count, first_seen_at, last_seen_at
 		 FROM proxy_requests WHERE workspace_slug = ? AND stream_mode = ? AND (? = '' OR stream_id = ?) ORDER BY last_seen_at DESC, id DESC LIMIT ?`,
 		slug, mode, streamID, streamID, limit,
 	)
@@ -118,6 +118,14 @@ func (d *DB) ListProxyRequests(slug, mode, streamID string, limit int) ([]models
 	}
 	defer rows.Close()
 	return scanProxyRequests(rows)
+}
+
+func (d *DB) DeleteProxyRequests(slug, mode, streamID string) (int64, error) {
+	res, err := d.conn.Exec(`DELETE FROM proxy_requests WHERE workspace_slug = ? AND stream_mode = ? AND stream_id = ?`, slug, mode, streamID)
+	if err != nil {
+		return 0, fmt.Errorf("delete proxy requests: %w", err)
+	}
+	return res.RowsAffected()
 }
 
 // CountProxyRequests returns the number of distinct logged resources seen for

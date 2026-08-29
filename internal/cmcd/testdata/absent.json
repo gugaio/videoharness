@@ -1,0 +1,6 @@
+{
+  "name": "CMCD absent",
+  "url": "/s/stream/master.m3u8?cmcd=br%3D3200",
+  "want": { "present": false },
+  "issues": []
+}

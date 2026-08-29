@@ -5,6 +5,7 @@ import HomePage from "./pages/HomePage";
 import StreamingPage from "./pages/StreamingPage";
 import WorkspacePage from "./pages/WorkspacePage";
 import DashboardPage from "./pages/DashboardPage";
+import ProxyPreviewPage from "./pages/ProxyPreviewPage";
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
             <Route path="/workspace" element={<WorkspacePage />} />
             <Route path="/dashboard/stream/:id" element={<DashboardPage />} />
             <Route path="/dashboard/proxy" element={<DashboardPage />} />
+            <Route path="/preview/proxy" element={<ProxyPreviewPage />} />
           </Route>
         </Routes>
       </div>

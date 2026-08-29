@@ -81,6 +81,14 @@ export async function getWorkspaceRequests(
   return { requests: data.requests ?? [] };
 }
 
+export async function clearWorkspaceRequests(token: string, mode: "proxy" | "clone", streamId?: string, source?: string, preset?: string): Promise<void> {
+  const params = new URLSearchParams({ mode });
+  if (streamId) params.set("stream", streamId);
+  if (source) params.set("source", source);
+  if (preset) params.set("preset", preset);
+  await request<void>(`/api/workspace/requests?${params.toString()}`, { method: "DELETE" }, token);
+}
+
 export function withPresets(stream: Omit<Stream, "presets">): Stream {
   return { ...stream, presets: DEFAULT_PRESETS };
 }

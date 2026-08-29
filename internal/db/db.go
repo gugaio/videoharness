@@ -101,6 +101,13 @@ CREATE TABLE IF NOT EXISTS streams (
 	if err := d.migrateProxyRequests(); err != nil {
 		return err
 	}
+	for _, column := range []struct{ name, definition string }{
+		{"client_range", "TEXT NOT NULL DEFAULT ''"}, {"forwarded_range", "TEXT NOT NULL DEFAULT ''"}, {"upstream_status", "INTEGER NOT NULL DEFAULT 0"}, {"content_range", "TEXT NOT NULL DEFAULT ''"}, {"content_length", "INTEGER NOT NULL DEFAULT 0"}, {"range_result", "TEXT NOT NULL DEFAULT 'not_requested'"}, {"diagnostic", "TEXT NOT NULL DEFAULT ''"}, {"intervention", "TEXT NOT NULL DEFAULT ''"}, {"added_latency_ms", "INTEGER NOT NULL DEFAULT 0"}, {"injected_status", "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		if err := d.ensureProxyRequestColumn(column.name, column.definition); err != nil {
+			return err
+		}
+	}
 	if _, err := d.conn.Exec(`CREATE INDEX IF NOT EXISTS idx_proxy_requests_ws ON proxy_requests(workspace_slug, last_seen_at DESC)`); err != nil {
 		return fmt.Errorf("migrate proxy_requests index: %w", err)
 	}
@@ -118,7 +125,10 @@ const proxyRequestsSchema = `CREATE TABLE proxy_requests (
     duration_ms    INTEGER NOT NULL DEFAULT 0,
     bytes          INTEGER NOT NULL DEFAULT 0,
     client_ip      TEXT NOT NULL DEFAULT '',
-    active_preset  TEXT NOT NULL DEFAULT '',
+    active_preset   TEXT NOT NULL DEFAULT '',
+    intervention    TEXT NOT NULL DEFAULT '',
+    added_latency_ms INTEGER NOT NULL DEFAULT 0,
+    injected_status INTEGER NOT NULL DEFAULT 0,
     hit_count      INTEGER NOT NULL DEFAULT 1,
     first_seen_at  TEXT NOT NULL,
     last_seen_at   TEXT NOT NULL
@@ -182,6 +192,29 @@ func (d *DB) ensureColumn(name, definition string) error {
 	}
 	if _, err := d.conn.Exec(`ALTER TABLE streams ADD COLUMN ` + name + ` ` + definition); err != nil {
 		return fmt.Errorf("migrate add %s: %w", name, err)
+	}
+	return nil
+}
+
+func (d *DB) ensureProxyRequestColumn(name, definition string) error {
+	rows, err := d.conn.Query(`PRAGMA table_info(proxy_requests)`)
+	if err != nil {
+		return fmt.Errorf("migrate proxy_requests: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, pk int
+		var column, ctype string
+		var defaultValue any
+		if err := rows.Scan(&cid, &column, &ctype, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if column == name {
+			return nil
+		}
+	}
+	if _, err := d.conn.Exec(`ALTER TABLE proxy_requests ADD COLUMN ` + name + ` ` + definition); err != nil {
+		return fmt.Errorf("migrate proxy_requests add %s: %w", name, err)
 	}
 	return nil
 }

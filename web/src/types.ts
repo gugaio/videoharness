@@ -34,6 +34,16 @@ export interface ProxyRequest {
   bytes: number;
   client_ip: string;
   active_preset: string;
+  client_range?: string;
+  forwarded_range?: string;
+  upstream_status?: number;
+  content_range?: string;
+  content_length?: number;
+  range_result: "not_requested" | "satisfied" | "ignored" | "missing_content_range" | "failed";
+  diagnostic?: string;
+  intervention?: "latency" | "http_error" | "latency_and_http_error";
+  added_latency_ms?: number;
+  injected_status?: number;
   hit_count: number;
   first_seen_at: string;
   last_seen_at: string;

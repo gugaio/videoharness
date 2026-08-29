@@ -1,0 +1,12 @@
+{
+  "name": "duplicate CMCD key",
+  "url": "/s/stream/master.m3u8?CMCD=br%3D1000%2Cbr%3D2000%2Csid%3D%22session-3%22",
+  "want": {
+    "present": true,
+    "version": 1,
+    "raw_value": "br=1000,br=2000,sid=\"session-3\"",
+    "canonical_value": "br=1000,sid=\"session-3\"",
+    "sid": "session-3", "br_kbps": 1000
+  },
+  "issues": [{ "code": "duplicate_key", "key": "br" }]
+}

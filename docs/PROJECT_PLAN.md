@@ -60,6 +60,11 @@ Limitações deliberadas deste corte:
 
 ## Fase 3 — Operação do acervo de clones
 
+O programa detalhado de observabilidade de playback, com CMCD, diagnóstico
+causal e Observer HLS.js, está em
+[`PLAYBACK_INSPECTOR_PLAN.md`](PLAYBACK_INSPECTOR_PLAN.md). O escopo inicial
+aprovado cobre as fases 0 a 4 desse documento.
+
 - Listar tamanho, duração, data e estado de cada clone.
 - Permitir remover clones e recuperar espaço com segurança.
 - Aplicar quotas por usuário e políticas de expiração.
