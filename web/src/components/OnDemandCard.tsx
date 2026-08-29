@@ -1,11 +1,12 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { DEFAULT_PRESETS } from "../types";
 
 export default function OnDemandCard({ slug }: { slug?: string }) {
   const [url, setUrl] = useState("");
   const [preset, setPreset] = useState("clean");
-  const [duration, setDuration] = useState(60);
   const [copied, setCopied] = useState(false);
+  const selectedPreset = DEFAULT_PRESETS.find((item) => item.key === preset) ?? DEFAULT_PRESETS[0];
 
   const origin = window.location.origin;
   const target = url.trim();
@@ -14,7 +15,6 @@ export default function OnDemandCard({ slug }: { slug?: string }) {
   if (target) {
     const params = new URLSearchParams({ url: target });
     if (preset !== "clean") params.set("preset", preset);
-    if (duration !== 60) params.set("duration", String(duration));
     endpoint = `${endpointBase}?${params.toString()}`;
   }
 
@@ -34,13 +34,13 @@ export default function OnDemandCard({ slug }: { slug?: string }) {
         <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white/10 text-lg">⚡</div>
         <div>
           <h2 className="text-lg font-semibold text-white">
-            {slug ? "Your on-demand proxy link" : "On-demand proxy link"}
+            {slug ? "Your live proxy link" : "Live proxy link"}
           </h2>
           <p className="mt-1 max-w-2xl text-sm text-stone-300/70">
             {slug ? (
               <>
-                Point any HLS player at your private link and StreamMock proxies it live —
-                every request shows up in the activity board below. Nothing is recorded, capped at 300 seconds.
+                Paste the original HLS URL below, then copy the generated proxy URL into your player.
+                StreamMock serves it live and shows each request in the activity board below. Nothing is saved, and playback is capped at 300 seconds.
               </>
             ) : (
               <>
@@ -53,7 +53,12 @@ export default function OnDemandCard({ slug }: { slug?: string }) {
         </div>
       </div>
 
-      <div className="mt-5 flex flex-col gap-3 lg:flex-row">
+      <div className="mt-5">
+        <p className="text-xs font-medium uppercase tracking-[0.16em] text-stone-400">Playback condition</p>
+        <p className="mt-1 text-sm text-stone-300/70">Choose Clean for normal playback, or simulate a network or CDN issue in your player.</p>
+      </div>
+
+      <div className="mt-3 flex flex-col gap-3 lg:flex-row">
         <input
           type="url"
           value={url}
@@ -61,28 +66,20 @@ export default function OnDemandCard({ slug }: { slug?: string }) {
           placeholder="https://example.com/master.m3u8"
           className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/25 px-5 py-3 text-sm text-white outline-none transition placeholder:text-stone-500 focus:border-amber-100/60 focus:ring-2 focus:ring-amber-100/15"
         />
-        <select
-          value={preset}
-          onChange={(e) => setPreset(e.target.value)}
-          className="rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm text-stone-200 outline-none focus:border-amber-100/60"
-          aria-label="Playback preset"
-        >
-          {DEFAULT_PRESETS.map((p) => (
-            <option key={p.key} value={p.key} className="bg-zinc-900">
-              {p.label}
-            </option>
-          ))}
-        </select>
         <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-stone-300">
-          <span>Seconds</span>
-          <input
-            type="number"
-            min={1}
-            max={300}
-            value={duration}
-            onChange={(e) => setDuration(Math.max(1, Math.min(300, Number(e.target.value) || 60)))}
-            className="w-14 bg-transparent text-right text-white outline-none"
-          />
+          <span className="sr-only">Playback condition</span>
+          <select
+            value={preset}
+            onChange={(e) => setPreset(e.target.value)}
+            className="bg-transparent text-sm text-stone-200 outline-none"
+            aria-label="Playback condition"
+          >
+            {DEFAULT_PRESETS.map((p) => (
+              <option key={p.key} value={p.key} className="bg-zinc-900">
+                {p.label}
+              </option>
+            ))}
+          </select>
         </label>
         <button
           type="button"
@@ -94,10 +91,14 @@ export default function OnDemandCard({ slug }: { slug?: string }) {
         </button>
       </div>
 
+      <p className="mt-2 text-xs text-stone-400">
+        <span className="font-medium text-stone-300">{selectedPreset.label}:</span> {selectedPreset.description}
+      </p>
       {endpoint && (
-        <p className="mt-3 overflow-x-auto whitespace-nowrap rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-mono text-xs text-amber-100/80">
-          {endpoint}
-        </p>
+        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
+          <p className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-mono text-xs text-amber-100/80">{endpoint}</p>
+          {slug && <Link to={`/dashboard/proxy?source=${encodeURIComponent(target)}&preset=${encodeURIComponent(preset)}`} className="shrink-0 rounded-xl border border-white/15 px-4 py-3 text-center text-xs font-semibold text-stone-200 transition hover:bg-white/10 hover:text-white">Open dashboard</Link>}
+        </div>
       )}
     </section>
   );

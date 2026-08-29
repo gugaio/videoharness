@@ -65,23 +65,16 @@ func (d *DB) WorkspaceOwner(slug string) (string, bool) {
 	return owner, true
 }
 
-// InsertProxyRequest records a playback request. Repeated requests for the
-// same (workspace, stream, target) aggregate into one row: the hit count and
-// byte total grow, while status/duration/IP reflect the most recent hit.
+// InsertProxyRequest records each playback request as its own history row.
 func (d *DB) InsertProxyRequest(req models.ProxyRequest) error {
+	if req.StreamMode == "" {
+		req.StreamMode = models.ModeProxy
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := d.conn.Exec(
-		`INSERT INTO proxy_requests (workspace_slug, stream_id, kind, target_url, status, duration_ms, bytes, client_ip, active_preset, hit_count, first_seen_at, last_seen_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-		 ON CONFLICT(workspace_slug, stream_id, target_url) DO UPDATE SET
-		   status = excluded.status,
-		   duration_ms = excluded.duration_ms,
-		   bytes = proxy_requests.bytes + excluded.bytes,
-		   client_ip = excluded.client_ip,
-		   active_preset = excluded.active_preset,
-		   hit_count = proxy_requests.hit_count + 1,
-		   last_seen_at = excluded.last_seen_at`,
-		req.WorkspaceSlug, req.StreamID, req.Kind, req.TargetURL, req.Status, req.DurationMS, req.Bytes, req.ClientIP, req.ActivePreset, now, now,
+		`INSERT INTO proxy_requests (workspace_slug, stream_id, stream_mode, kind, target_url, status, duration_ms, bytes, client_ip, active_preset, hit_count, first_seen_at, last_seen_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+		req.WorkspaceSlug, req.StreamID, req.StreamMode, req.Kind, req.TargetURL, req.Status, req.DurationMS, req.Bytes, req.ClientIP, req.ActivePreset, now, now,
 	)
 	if err != nil {
 		return fmt.Errorf("insert proxy request: %w", err)
@@ -94,7 +87,7 @@ func scanProxyRequests(rows *sql.Rows) ([]models.ProxyRequest, error) {
 	for rows.Next() {
 		var req models.ProxyRequest
 		var firstSeen, lastSeen string
-		if err := rows.Scan(&req.WorkspaceSlug, &req.StreamID, &req.Kind, &req.TargetURL, &req.Status, &req.DurationMS, &req.Bytes, &req.ClientIP, &req.ActivePreset, &req.HitCount, &firstSeen, &lastSeen); err != nil {
+		if err := rows.Scan(&req.WorkspaceSlug, &req.StreamID, &req.StreamMode, &req.Kind, &req.TargetURL, &req.Status, &req.DurationMS, &req.Bytes, &req.ClientIP, &req.ActivePreset, &req.HitCount, &firstSeen, &lastSeen); err != nil {
 			return nil, fmt.Errorf("scan proxy request: %w", err)
 		}
 		var err error
@@ -111,14 +104,14 @@ func scanProxyRequests(rows *sql.Rows) ([]models.ProxyRequest, error) {
 
 // ListProxyRequests returns the most recent request rows for a workspace,
 // newest first.
-func (d *DB) ListProxyRequests(slug string, limit int) ([]models.ProxyRequest, error) {
+func (d *DB) ListProxyRequests(slug, mode, streamID string, limit int) ([]models.ProxyRequest, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	rows, err := d.conn.Query(
-		`SELECT workspace_slug, stream_id, kind, target_url, status, duration_ms, bytes, client_ip, active_preset, hit_count, first_seen_at, last_seen_at
-		 FROM proxy_requests WHERE workspace_slug = ? ORDER BY last_seen_at DESC, id DESC LIMIT ?`,
-		slug, limit,
+		`SELECT workspace_slug, stream_id, stream_mode, kind, target_url, status, duration_ms, bytes, client_ip, active_preset, hit_count, first_seen_at, last_seen_at
+		 FROM proxy_requests WHERE workspace_slug = ? AND stream_mode = ? AND (? = '' OR stream_id = ?) ORDER BY last_seen_at DESC, id DESC LIMIT ?`,
+		slug, mode, streamID, streamID, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list proxy requests: %w", err)

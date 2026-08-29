@@ -6,6 +6,7 @@ export interface Preset {
 
 export interface Stream {
   id: string;
+  label: string;
   original_url: string;
   proxy_path: string;
   active_preset: string;

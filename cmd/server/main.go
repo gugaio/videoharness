@@ -123,6 +123,7 @@ func main() {
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("GET /api/streams", srv.handleListStreams)
 	mux.HandleFunc("GET /api/streams/{id}", srv.handleGetStream)
+	mux.HandleFunc("DELETE /api/streams/{id}", srv.handleDeleteStream)
 	mux.HandleFunc("POST /api/streams", srv.handleAddStream)
 	mux.HandleFunc("POST /api/streams/{id}/preset", srv.handleSetPreset)
 	mux.HandleFunc("GET /api/workspace", srv.handleGetWorkspace)
@@ -206,9 +207,48 @@ func (s *Server) handleGetStream(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleDeleteStream(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	st, ok := s.store.Get(id)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if st.Mode != models.ModeClone {
+		http.Error(w, "only cloned streams can be deleted", http.StatusBadRequest)
+		return
+	}
+	userID, authed := s.authenticatedUserID(r)
+	if !authed || st.OwnerID == nil || *st.OwnerID != userID {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if st.CaptureStatus == models.CaptureQueued || st.CaptureStatus == models.CaptureCapturing {
+		http.Error(w, "cannot delete a clone while capture is in progress", http.StatusConflict)
+		return
+	}
+	cloneRoot := filepath.Join(s.cfg.StorageDir, "clones")
+	cloneDir := filepath.Join(cloneRoot, id)
+	if filepath.Dir(cloneDir) != filepath.Clean(cloneRoot) {
+		http.Error(w, "invalid clone path", http.StatusBadRequest)
+		return
+	}
+	if err := os.RemoveAll(cloneDir); err != nil {
+		log.Printf("remove clone files: %v", err)
+		http.Error(w, "failed to remove clone files", http.StatusInternalServerError)
+		return
+	}
+	if err := s.store.Delete(id); err != nil {
+		http.Error(w, "failed to delete clone", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		URL             string  `json:"url"`
+		Label           string  `json:"label"`
 		DurationSeconds float64 `json:"duration_seconds"`
 		Mode            string  `json:"mode"`
 	}
@@ -219,6 +259,11 @@ func (s *Server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 	rawURL := strings.TrimSpace(body.URL)
 	if err := validateURL(rawURL); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	label := strings.TrimSpace(body.Label)
+	if len(label) > 120 {
+		http.Error(w, "label must be 120 characters or fewer", http.StatusBadRequest)
 		return
 	}
 	mode := strings.TrimSpace(body.Mode)
@@ -247,6 +292,7 @@ func (s *Server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 	}
 	st := models.Stream{
 		ID:                       id,
+		Label:                    label,
 		OriginalURL:              rawURL,
 		ProxyPath:                fmt.Sprintf("/s/%s/master.m3u8", id),
 		ActivePreset:             "clean",
@@ -259,6 +305,13 @@ func (s *Server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 	userID, authed := s.authenticatedUserID(r)
 	if authed {
 		st.OwnerID = &userID
+		if slug, err := s.db.EnsureWorkspace(userID); err != nil {
+			log.Printf("ensure workspace for stream: %v", err)
+			http.Error(w, "failed to prepare workspace", http.StatusInternalServerError)
+			return
+		} else {
+			st.WorkspaceSlug = &slug
+		}
 	}
 	// Clone bytes live on disk, so every clone needs durable metadata even when
 	// created anonymously. Ownership still controls workspace listing and edits.
@@ -313,9 +366,9 @@ func (s *Server) handleSetPreset(w http.ResponseWriter, r *http.Request) {
 
 // handleOnDemand is the public no-signup entry point: /p.m3u8?url=<hls>&preset=&duration=
 // It proxies the given HLS stream on the fly (nothing is recorded), reusing a
-// deterministic stream ID per source URL so player refreshes keep working and
-// preset changes survive. These streams are anonymous, memory-only and never
-// appear in any workspace.
+// deterministic stream ID per playback configuration so player refreshes keep
+// working without mixing presets or duration limits. These streams are
+// anonymous, memory-only and never appear in any workspace.
 func (s *Server) handleOnDemand(w http.ResponseWriter, r *http.Request) {
 	s.serveOnDemand(w, r, nil)
 }
@@ -356,10 +409,9 @@ func (s *Server) serveOnDemand(w http.ResponseWriter, r *http.Request, slug *str
 
 // buildOnDemandStream validates the query parameters and returns the
 // memory-only stream for the request, reusing deterministic IDs so identical
-// URLs (and workspace scopes) share one stream instead of allocating
-// unbounded memory. When slug is nil the stream is public/anonymous; the
-// reused stream keeps its prior creation time and, unless a preset is
-// explicitly requested, its active preset.
+// playback configurations (including workspace scope, preset, and duration)
+// share one stream instead of allocating unbounded memory. When slug is nil
+// the stream is public/anonymous.
 func (s *Server) buildOnDemandStream(r *http.Request, slug *string) (*models.Stream, *handlerError) {
 	q := r.URL.Query()
 	rawURL := strings.TrimSpace(q.Get("url"))
@@ -374,8 +426,11 @@ func (s *Server) buildOnDemandStream(r *http.Request, slug *string) (*models.Str
 	if err != nil {
 		return nil, &handlerError{http.StatusBadRequest, err.Error()}
 	}
+	if preset == "" {
+		preset = models.Presets[0].Key
+	}
 
-	id := onDemandID(rawURL, slug)
+	id := onDemandID(rawURL, slug, preset, duration)
 	now := time.Now().UTC()
 	st := &models.Stream{
 		ID:                       id,
@@ -391,11 +446,6 @@ func (s *Server) buildOnDemandStream(r *http.Request, slug *string) (*models.Str
 	}
 	if existing, ok := s.store.Get(id); ok {
 		st.CreatedAt = existing.CreatedAt
-		if preset == "" {
-			st.ActivePreset = existing.ActivePreset
-		}
-	} else if preset == "" {
-		st.ActivePreset = models.Presets[0].Key
 	}
 	return st, nil
 }
@@ -418,14 +468,15 @@ func parseOnDemandDuration(raw string) (float64, error) {
 	return duration, nil
 }
 
-// onDemandID derives a stable stream ID from the source URL and, when the
-// stream belongs to a workspace, from the workspace slug — so two boards
-// proxying the same URL never collide.
-func onDemandID(rawURL string, slug *string) string {
+// onDemandID derives a stable stream ID from a full playback configuration, so
+// simultaneous presets or duration limits for one source cannot overwrite one
+// another in the in-memory store.
+func onDemandID(rawURL string, slug *string, preset string, duration float64) string {
 	key := strings.TrimSpace(rawURL)
 	if slug != nil && *slug != "" {
 		key = *slug + "\x00" + key
 	}
+	key += "\x00" + preset + "\x00" + strconv.FormatFloat(duration, 'f', -1, 64)
 	sum := sha256.Sum256([]byte(key))
 	return "od-" + hex.EncodeToString(sum[:8])
 }
@@ -499,7 +550,26 @@ func (s *Server) handleWorkspaceRequests(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	requests, err := s.db.ListProxyRequests(slug, 100)
+	mode := strings.TrimSpace(r.URL.Query().Get("mode"))
+	if mode == "" {
+		mode = models.ModeProxy
+	}
+	if mode != models.ModeProxy && mode != models.ModeClone {
+		http.Error(w, "invalid mode", http.StatusBadRequest)
+		return
+	}
+	streamID := strings.TrimSpace(r.URL.Query().Get("stream"))
+	if mode == models.ModeProxy && streamID == "" {
+		source := strings.TrimSpace(r.URL.Query().Get("source"))
+		if source != "" {
+			preset := strings.TrimSpace(r.URL.Query().Get("preset"))
+			if preset == "" {
+				preset = models.Presets[0].Key
+			}
+			streamID = onDemandID(source, &slug, preset, 60)
+		}
+	}
+	requests, err := s.db.ListProxyRequests(slug, mode, streamID, 20)
 	if err != nil {
 		log.Printf("list proxy requests: %v", err)
 		http.Error(w, "failed to load requests", http.StatusInternalServerError)
@@ -508,15 +578,8 @@ func (s *Server) handleWorkspaceRequests(w http.ResponseWriter, r *http.Request)
 	if requests == nil {
 		requests = []models.ProxyRequest{}
 	}
-	total, err := s.db.CountProxyRequests(slug, time.Now().Add(-24*time.Hour))
-	if err != nil {
-		log.Printf("count proxy requests: %v", err)
-		http.Error(w, "failed to count requests", http.StatusInternalServerError)
-		return
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"requests":  requests,
-		"total_24h": total,
+		"requests": requests,
 	})
 }
 

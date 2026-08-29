@@ -3,7 +3,7 @@ import { getWorkspaceRequests } from "../api";
 import type { ProxyRequest } from "../types";
 
 const POLL_INTERVAL_MS = 4000;
-const MAX_ROWS = 50;
+const MAX_ROWS = 20;
 
 function statusClass(status: number): string {
   if (status < 300) return "bg-emerald-400/15 text-emerald-300";
@@ -41,9 +41,8 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function RequestsPanel({ getToken }: { getToken: () => Promise<string | null> }) {
+export default function RequestsPanel({ getToken, mode, streamId, source, preset }: { getToken: () => Promise<string | null>; mode: "proxy" | "clone"; streamId?: string; source?: string; preset?: string }) {
   const [requests, setRequests] = useState<ProxyRequest[]>([]);
-  const [total24h, setTotal24h] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [, setTick] = useState(0); // re-render for relative timestamps
   const timer = useRef<number | null>(null);
@@ -58,10 +57,9 @@ export default function RequestsPanel({ getToken }: { getToken: () => Promise<st
         // of repeatedly using the token that was current when the page mounted.
         const token = await getToken();
         if (!token) return;
-        const data = await getWorkspaceRequests(token);
+        const data = await getWorkspaceRequests(token, mode, streamId, source, preset);
         if (!cancelled) {
           setRequests(data.requests);
-          setTotal24h(data.total_24h);
           setError(null);
         }
       } catch (err) {
@@ -78,20 +76,26 @@ export default function RequestsPanel({ getToken }: { getToken: () => Promise<st
       cancelled = true;
       if (timer.current !== null) window.clearInterval(timer.current);
     };
-  }, [getToken]);
+  }, [getToken, mode, preset, source, streamId]);
+
+  const title = mode === "clone" ? "Clone activity" : "Proxy activity";
+  const emptyTitle = mode === "clone" ? "No clone requests yet" : "No proxy requests yet";
+  const emptyDescription = mode === "clone"
+    ? "Play a cloned stream and its most recent requests will appear here."
+    : "Play something through your live proxy link above and its most recent requests will appear here.";
 
   return (
     <section className="mt-6 overflow-hidden rounded-3xl border border-white/10 bg-black/15">
       <div className="flex items-center justify-between border-b border-white/10 px-5 py-5 sm:px-7">
         <div>
-          <h2 className="font-semibold text-white">Proxy activity</h2>
+          <h2 className="font-semibold text-white">{title}</h2>
           <p className="mt-1 text-sm text-stone-400">
-            Requests served through your workspace link. Retained for 24 hours, capped at 1,000 rows.
+            The 20 most recent requests served through this workspace. Retained for 24 hours, capped at 1,000 rows.
           </p>
         </div>
         <div className="rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-right backdrop-blur-sm">
-          <p className="text-xs uppercase tracking-[0.16em] text-stone-400">Distinct URLs / 24h</p>
-          <p className="mt-1 text-2xl font-semibold text-white">{total24h}</p>
+          <p className="text-xs uppercase tracking-[0.16em] text-stone-400">Showing</p>
+          <p className="mt-1 text-2xl font-semibold text-white">{requests.length}</p>
         </div>
       </div>
 
@@ -104,15 +108,15 @@ export default function RequestsPanel({ getToken }: { getToken: () => Promise<st
       {requests.length === 0 ? (
         <div className="px-6 py-16 text-center">
           <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-white/8 text-xl">◌</div>
-          <p className="mt-4 font-medium text-stone-200">No proxy requests yet</p>
+          <p className="mt-4 font-medium text-stone-200">{emptyTitle}</p>
           <p className="mt-1 text-sm text-stone-400">
-            Play something through your on-demand link above and requests will show up here.
+            {emptyDescription}
           </p>
         </div>
       ) : (
         <ul className="divide-y divide-white/10">
-          {requests.slice(0, MAX_ROWS).map((req) => (
-            <li key={`${req.stream_id} ${req.target_url}`} className="flex items-center gap-4 px-5 py-3.5 transition hover:bg-white/[0.03] sm:px-7">
+          {requests.slice(0, MAX_ROWS).map((req, index) => (
+            <li key={`${req.stream_id} ${req.target_url} ${req.last_seen_at} ${index}`} className="flex items-center gap-4 px-5 py-3.5 transition hover:bg-white/[0.03] sm:px-7">
               <span className={`inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(req.status)}`}>
                 {req.status}
               </span>
@@ -122,11 +126,6 @@ export default function RequestsPanel({ getToken }: { getToken: () => Promise<st
               <span className="min-w-0 flex-1 truncate font-mono text-xs text-stone-300" title={req.target_url}>
                 {req.target_url}
               </span>
-              {req.hit_count > 1 && (
-                <span className="shrink-0 rounded-full bg-amber-100/10 px-2 py-0.5 text-[11px] font-medium text-amber-200">
-                  ×{req.hit_count}
-                </span>
-              )}
               <span className="hidden shrink-0 text-[11px] text-stone-500 md:inline">
                 {(req.duration_ms / 1000).toFixed(2)}s · {formatBytes(req.bytes)}
                 {req.active_preset !== "clean" && ` · ${req.active_preset}`}

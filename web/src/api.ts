@@ -15,6 +15,9 @@ async function request<T>(
     const body = await res.text().catch(() => "");
     throw new Error(body || `request to ${path} failed (${res.status})`);
   }
+  if (res.status === 204) {
+    return undefined as T;
+  }
   return res.json() as Promise<T>;
 }
 
@@ -28,10 +31,10 @@ export async function getStream(id: string): Promise<Stream> {
   return data.stream;
 }
 
-export async function addStream(url: string, durationSeconds = 60, mode: "proxy" | "clone" = "clone", token?: string): Promise<Stream> {
+export async function addStream(url: string, durationSeconds = 60, label = "", token?: string): Promise<Stream> {
   const data = await request<{ stream: Stream }>(
     "/api/streams",
-    { method: "POST", body: JSON.stringify({ url, duration_seconds: durationSeconds, mode }) },
+    { method: "POST", body: JSON.stringify({ url, label, duration_seconds: durationSeconds, mode: "clone" }) },
     token,
   );
   return data.stream;
@@ -50,21 +53,32 @@ export async function setPreset(
   return data.stream;
 }
 
+export async function deleteStream(id: string, token?: string): Promise<void> {
+  await request<void>(`/api/streams/${id}`, { method: "DELETE" }, token);
+}
+
 export async function getWorkspace(token?: string): Promise<{ slug: string; playback_url: string }> {
   return request<{ slug: string; playback_url: string }>("/api/workspace", {}, token);
 }
 
 export async function getWorkspaceRequests(
   token: string,
-  workspace?: string,
-): Promise<{ requests: ProxyRequest[]; total_24h: number }> {
-  const query = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
-  const data = await request<{ requests: ProxyRequest[]; total_24h: number }>(
+  mode: "proxy" | "clone" = "proxy",
+  streamId?: string,
+  source?: string,
+  preset?: string,
+): Promise<{ requests: ProxyRequest[] }> {
+  const params = new URLSearchParams({ mode });
+  if (streamId) params.set("stream", streamId);
+  if (source) params.set("source", source);
+  if (preset) params.set("preset", preset);
+  const query = `?${params.toString()}`;
+  const data = await request<{ requests: ProxyRequest[] }>(
     `/api/workspace/requests${query}`,
     {},
     token,
   );
-  return { requests: data.requests ?? [], total_24h: data.total_24h ?? 0 };
+  return { requests: data.requests ?? [] };
 }
 
 export function withPresets(stream: Omit<Stream, "presets">): Stream {

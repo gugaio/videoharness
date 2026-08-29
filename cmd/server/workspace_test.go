@@ -72,7 +72,7 @@ func TestWorkspaceProxyCreatesTaggedStreamAndLogsRequests(t *testing.T) {
 		t.Fatalf("workspace entry status %d: %s", resp.Code, resp.Body.String())
 	}
 	body := resp.Body.String()
-	id := onDemandID(upstream.URL+"/master.m3u8", &slug)
+	id := onDemandID(upstream.URL+"/master.m3u8", &slug, "clean", 60)
 	if !strings.Contains(body, "/s/"+id+"/r/") {
 		t.Fatalf("playlist not rewritten through the workspace stream:\n%s", body)
 	}

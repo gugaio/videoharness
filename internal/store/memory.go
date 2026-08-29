@@ -121,6 +121,15 @@ func (s *MemoryStore) Remove(id string) {
 	})
 }
 
+// Delete removes a persistent stream from both SQLite and memory.
+func (s *MemoryStore) Delete(id string) error {
+	if err := s.db.DeleteStream(id); err != nil {
+		return err
+	}
+	s.Remove(id)
+	return nil
+}
+
 // StartSweeper periodically removes ephemeral streams that have not been
 // accessed for ttl. It blocks until ctx is cancelled.
 func (s *MemoryStore) StartSweeper(ctx context.Context, ttl, interval time.Duration) {

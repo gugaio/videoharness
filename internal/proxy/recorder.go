@@ -61,6 +61,7 @@ func (e *Engine) track(w http.ResponseWriter, r *http.Request, st *models.Stream
 		e.sink(models.ProxyRequest{
 			WorkspaceSlug: *st.WorkspaceSlug,
 			StreamID:      st.ID,
+			StreamMode:    st.Mode,
 			Kind:          kind,
 			TargetURL:     targetURL,
 			Status:        sw.statusOrDefault(),

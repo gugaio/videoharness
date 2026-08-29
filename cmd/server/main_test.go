@@ -54,7 +54,7 @@ func TestOnDemandProxiesUpstreamPlaylist(t *testing.T) {
 		t.Fatalf("status %d: %s", resp.Code, resp.Body.String())
 	}
 	body := resp.Body.String()
-	wantPrefix := "/s/" + onDemandID(upstream.URL+"/master.m3u8", nil) + "/r/"
+	wantPrefix := "/s/" + onDemandID(upstream.URL+"/master.m3u8", nil, "clean", 60) + "/r/"
 	if !strings.HasPrefix(body, "#EXTM3U") {
 		t.Fatalf("body should be an m3u8 playlist:\n%s", body)
 	}
@@ -66,7 +66,7 @@ func TestOnDemandProxiesUpstreamPlaylist(t *testing.T) {
 	}
 }
 
-func TestOnDemandReusesDeterministicIDAndAppliesExplicitPreset(t *testing.T) {
+func TestOnDemandReusesDeterministicIDPerPlaybackConfiguration(t *testing.T) {
 	t.Setenv("STREAMMOCK_ALLOW_PRIVATE_TARGETS", "1")
 	var upstreamHandler http.HandlerFunc = func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("#EXTM3U\n#EXT-X-ENDLIST\n"))
@@ -97,7 +97,7 @@ func TestOnDemandReusesDeterministicIDAndAppliesExplicitPreset(t *testing.T) {
 	if first.Code != http.StatusOK {
 		t.Fatalf("first request status %d: %s", first.Code, first.Body.String())
 	}
-	id := onDemandID(upstream.URL+"/master.m3u8", nil)
+	id := onDemandID(upstream.URL+"/master.m3u8", nil, "clean", 60)
 	st, ok := mem.Get(id)
 	if !ok || st.ActivePreset != "clean" {
 		t.Fatalf("expected default clean preset on reused stream, got %+v", st)
@@ -110,7 +110,7 @@ func TestOnDemandReusesDeterministicIDAndAppliesExplicitPreset(t *testing.T) {
 	}
 	st, _ = mem.Get(id)
 	if st.ActivePreset != "clean" {
-		t.Fatalf("preset should be preserved when none is requested, got %q", st.ActivePreset)
+		t.Fatalf("clean configuration should be reused, got %q", st.ActivePreset)
 	}
 	if !st.CreatedAt.Equal(firstCreatedAt) {
 		t.Fatal("deterministic reuse must preserve CreatedAt")
@@ -120,9 +120,30 @@ func TestOnDemandReusesDeterministicIDAndAppliesExplicitPreset(t *testing.T) {
 	if explicit.Code != http.StatusOK {
 		t.Fatalf("explicit preset status %d", explicit.Code)
 	}
+	explicitID := onDemandID(upstream.URL+"/master.m3u8", nil, "subway_3g", 60)
+	if explicitID == id {
+		t.Fatal("different presets must not share a stream ID")
+	}
+	st, ok = mem.Get(explicitID)
+	if !ok || st.ActivePreset != "subway_3g" {
+		t.Fatalf("explicit preset must use an isolated stream, got %+v", st)
+	}
 	st, _ = mem.Get(id)
-	if st.ActivePreset != "subway_3g" {
-		t.Fatalf("explicit preset must override, got %q", st.ActivePreset)
+	if st.ActivePreset != "clean" {
+		t.Fatalf("clean stream must remain unchanged, got %q", st.ActivePreset)
+	}
+
+	differentDuration := do(target + "&duration=120")
+	if differentDuration.Code != http.StatusOK {
+		t.Fatalf("different duration status %d", differentDuration.Code)
+	}
+	durationID := onDemandID(upstream.URL+"/master.m3u8", nil, "clean", 120)
+	if durationID == id {
+		t.Fatal("different durations must not share a stream ID")
+	}
+	st, ok = mem.Get(durationID)
+	if !ok || st.RequestedDurationSeconds != 120 {
+		t.Fatalf("duration configuration must use an isolated stream, got %+v", st)
 	}
 }
 

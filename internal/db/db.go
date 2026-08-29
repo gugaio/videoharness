@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -58,6 +59,7 @@ CREATE TABLE IF NOT EXISTS streams (
 	}
 	for _, column := range []struct{ name, definition string }{
 		{"owner_id", "TEXT"},
+		{"label", "TEXT NOT NULL DEFAULT ''"},
 		{"workspace_slug", "TEXT"},
 		{"mode", "TEXT NOT NULL DEFAULT 'proxy'"},
 		{"capture_status", "TEXT NOT NULL DEFAULT 'ready'"},
@@ -96,26 +98,67 @@ CREATE TABLE IF NOT EXISTS streams (
     )`); err != nil {
 		return fmt.Errorf("migrate workspaces: %w", err)
 	}
-	if _, err := d.conn.Exec(`CREATE TABLE IF NOT EXISTS proxy_requests (
-        id             INTEGER PRIMARY KEY AUTOINCREMENT,
-        workspace_slug TEXT NOT NULL,
-        stream_id      TEXT NOT NULL,
-        kind           TEXT NOT NULL,
-        target_url     TEXT NOT NULL,
-        status         INTEGER NOT NULL,
-        duration_ms    INTEGER NOT NULL DEFAULT 0,
-        bytes          INTEGER NOT NULL DEFAULT 0,
-        client_ip      TEXT NOT NULL DEFAULT '',
-        active_preset  TEXT NOT NULL DEFAULT '',
-        hit_count      INTEGER NOT NULL DEFAULT 1,
-        first_seen_at  TEXT NOT NULL,
-        last_seen_at   TEXT NOT NULL,
-        UNIQUE(workspace_slug, stream_id, target_url)
-    )`); err != nil {
-		return fmt.Errorf("migrate proxy_requests: %w", err)
+	if err := d.migrateProxyRequests(); err != nil {
+		return err
 	}
 	if _, err := d.conn.Exec(`CREATE INDEX IF NOT EXISTS idx_proxy_requests_ws ON proxy_requests(workspace_slug, last_seen_at DESC)`); err != nil {
 		return fmt.Errorf("migrate proxy_requests index: %w", err)
+	}
+	return nil
+}
+
+const proxyRequestsSchema = `CREATE TABLE proxy_requests (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_slug TEXT NOT NULL,
+    stream_id      TEXT NOT NULL,
+    stream_mode    TEXT NOT NULL DEFAULT 'proxy',
+    kind           TEXT NOT NULL,
+    target_url     TEXT NOT NULL,
+    status         INTEGER NOT NULL,
+    duration_ms    INTEGER NOT NULL DEFAULT 0,
+    bytes          INTEGER NOT NULL DEFAULT 0,
+    client_ip      TEXT NOT NULL DEFAULT '',
+    active_preset  TEXT NOT NULL DEFAULT '',
+    hit_count      INTEGER NOT NULL DEFAULT 1,
+    first_seen_at  TEXT NOT NULL,
+    last_seen_at   TEXT NOT NULL
+)`
+
+func (d *DB) migrateProxyRequests() error {
+	var schema string
+	err := d.conn.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'proxy_requests'`).Scan(&schema)
+	if err == sql.ErrNoRows {
+		if _, err := d.conn.Exec(proxyRequestsSchema); err != nil {
+			return fmt.Errorf("migrate proxy_requests: %w", err)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect proxy_requests: %w", err)
+	}
+	if !strings.Contains(schema, "UNIQUE(workspace_slug, stream_id, target_url)") {
+		return nil
+	}
+	tx, err := d.conn.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate proxy_requests begin: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(strings.Replace(proxyRequestsSchema, "proxy_requests", "proxy_requests_new", 1)); err != nil {
+		return fmt.Errorf("create proxy request history: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO proxy_requests_new (id, workspace_slug, stream_id, stream_mode, kind, target_url, status, duration_ms, bytes, client_ip, active_preset, hit_count, first_seen_at, last_seen_at)
+        SELECT id, workspace_slug, stream_id, 'proxy', kind, target_url, status, duration_ms, bytes, client_ip, active_preset, hit_count, first_seen_at, last_seen_at FROM proxy_requests`); err != nil {
+		return fmt.Errorf("copy proxy request history: %w", err)
+	}
+	if _, err := tx.Exec(`DROP TABLE proxy_requests`); err != nil {
+		return fmt.Errorf("replace proxy request history: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE proxy_requests_new RENAME TO proxy_requests`); err != nil {
+		return fmt.Errorf("rename proxy request history: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit proxy request history: %w", err)
 	}
 	return nil
 }
@@ -145,8 +188,9 @@ func (d *DB) ensureColumn(name, definition string) error {
 
 func (d *DB) InsertStream(st models.Stream) error {
 	_, err := d.conn.Exec(
-		`INSERT INTO streams (id, original_url, proxy_path, active_preset, owner_id, workspace_slug, mode, capture_status, requested_duration_seconds, duration_seconds, total_bytes, resource_count, storage_key, error_code, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO streams (id, label, original_url, proxy_path, active_preset, owner_id, workspace_slug, mode, capture_status, requested_duration_seconds, duration_seconds, total_bytes, resource_count, storage_key, error_code, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		st.ID,
+		st.Label,
 		st.OriginalURL,
 		st.ProxyPath,
 		st.ActivePreset,
@@ -170,13 +214,20 @@ func (d *DB) InsertStream(st models.Stream) error {
 	return nil
 }
 
+func (d *DB) DeleteStream(id string) error {
+	if _, err := d.conn.Exec(`DELETE FROM streams WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("delete stream: %w", err)
+	}
+	return nil
+}
+
 func (d *DB) ListStreams() ([]models.Stream, error) {
-	return d.queryStreams(`SELECT id, original_url, proxy_path, active_preset, owner_id, workspace_slug, mode, capture_status, requested_duration_seconds, duration_seconds, total_bytes, resource_count, storage_key, error_code, error_message, created_at, updated_at FROM streams ORDER BY created_at ASC`)
+	return d.queryStreams(`SELECT id, label, original_url, proxy_path, active_preset, owner_id, workspace_slug, mode, capture_status, requested_duration_seconds, duration_seconds, total_bytes, resource_count, storage_key, error_code, error_message, created_at, updated_at FROM streams ORDER BY created_at ASC`)
 }
 
 func (d *DB) ListStreamsByOwner(ownerID string) ([]models.Stream, error) {
 	rows, err := d.conn.Query(
-		`SELECT id, original_url, proxy_path, active_preset, owner_id, workspace_slug, mode, capture_status, requested_duration_seconds, duration_seconds, total_bytes, resource_count, storage_key, error_code, error_message, created_at, updated_at FROM streams WHERE owner_id = ? ORDER BY created_at ASC`,
+		`SELECT id, label, original_url, proxy_path, active_preset, owner_id, workspace_slug, mode, capture_status, requested_duration_seconds, duration_seconds, total_bytes, resource_count, storage_key, error_code, error_message, created_at, updated_at FROM streams WHERE owner_id = ? ORDER BY created_at ASC`,
 		ownerID,
 	)
 	if err != nil {
@@ -200,7 +251,7 @@ func scanStreams(rows *sql.Rows) ([]models.Stream, error) {
 	for rows.Next() {
 		var st models.Stream
 		var createdAt, updatedAt string
-		if err := rows.Scan(&st.ID, &st.OriginalURL, &st.ProxyPath, &st.ActivePreset, &st.OwnerID, &st.WorkspaceSlug, &st.Mode, &st.CaptureStatus, &st.RequestedDurationSeconds, &st.DurationSeconds, &st.TotalBytes, &st.ResourceCount, &st.StorageKey, &st.ErrorCode, &st.ErrorMessage, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&st.ID, &st.Label, &st.OriginalURL, &st.ProxyPath, &st.ActivePreset, &st.OwnerID, &st.WorkspaceSlug, &st.Mode, &st.CaptureStatus, &st.RequestedDurationSeconds, &st.DurationSeconds, &st.TotalBytes, &st.ResourceCount, &st.StorageKey, &st.ErrorCode, &st.ErrorMessage, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan stream: %w", err)
 		}
 		ts, err := time.Parse(time.RFC3339, createdAt)

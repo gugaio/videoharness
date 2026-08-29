@@ -10,12 +10,11 @@ const (
 	KindAsset   = "asset"
 )
 
-// ProxyRequest is one aggregated playback request served for a workspace.
-// Repeated requests to the same (workspace, stream, target URL) collapse into
-// a single row whose HitCount grows.
+// ProxyRequest is one playback request served for a workspace.
 type ProxyRequest struct {
 	WorkspaceSlug string    `json:"workspace_slug"`
 	StreamID      string    `json:"stream_id"`
+	StreamMode    string    `json:"stream_mode"`
 	Kind          string    `json:"kind"`
 	TargetURL     string    `json:"target_url"`
 	Status        int       `json:"status"`

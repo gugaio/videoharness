@@ -52,7 +52,7 @@ func TestEnsureWorkspaceIsIdempotentPerOwner(t *testing.T) {
 	}
 }
 
-func TestInsertProxyRequestAggregatesRepeats(t *testing.T) {
+func TestInsertProxyRequestKeepsRepeats(t *testing.T) {
 	database := newWorkspaceDB(t)
 	req := models.ProxyRequest{
 		WorkspaceSlug: "ws-a", StreamID: "od-1", Kind: models.KindSegment,
@@ -71,19 +71,19 @@ func TestInsertProxyRequestAggregatesRepeats(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rows, err := database.ListProxyRequests("ws-a", 10)
+	rows, err := database.ListProxyRequests("ws-a", models.ModeProxy, "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 {
-		t.Fatalf("expected 1 aggregated row, got %d", len(rows))
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 history rows, got %d", len(rows))
 	}
 	got := rows[0]
-	if got.HitCount != 2 {
-		t.Errorf("hit_count = %d, want 2", got.HitCount)
+	if got.HitCount != 1 {
+		t.Errorf("hit_count = %d, want 1", got.HitCount)
 	}
-	if got.Bytes != 800 {
-		t.Errorf("bytes = %d, want summed 800", got.Bytes)
+	if got.Bytes != 300 {
+		t.Errorf("bytes = %d, want 300", got.Bytes)
 	}
 	if got.Status != 504 || got.DurationMS != 400 {
 		t.Errorf("latest hit should win: status %d duration %d", got.Status, got.DurationMS)
@@ -96,8 +96,8 @@ func TestInsertProxyRequestAggregatesRepeats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 1 {
-		t.Errorf("total_24h = %d, want 1", count)
+	if count != 2 {
+		t.Errorf("total_24h = %d, want 2", count)
 	}
 }
 
@@ -134,7 +134,7 @@ func TestPurgeAndTrimProxyRequests(t *testing.T) {
 	if _, err := database.TrimProxyRequests(3); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := database.ListProxyRequests("ws-trim", 100)
+	rows, err := database.ListProxyRequests("ws-trim", models.ModeProxy, "", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,14 +155,14 @@ func TestPurgeAndTrimProxyRequests(t *testing.T) {
 	if _, err := database.TrimProxyRequests(100); err != nil {
 		t.Fatal(err)
 	}
-	kept, err := database.ListProxyRequests("ws-trim", 100)
+	kept, err := database.ListProxyRequests("ws-trim", models.ModeProxy, "", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(kept) != 3 {
 		t.Fatalf("trim of another workspace touched ws-trim: %d rows", len(kept))
 	}
-	other, err := database.ListProxyRequests("ws-other", 100)
+	other, err := database.ListProxyRequests("ws-other", models.ModeProxy, "", 100)
 	if err != nil {
 		t.Fatal(err)
 	}

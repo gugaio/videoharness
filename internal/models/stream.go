@@ -4,6 +4,7 @@ import "time"
 
 type Stream struct {
 	ID                       string    `json:"id"`
+	Label                    string    `json:"label"`
 	OriginalURL              string    `json:"original_url"`
 	ProxyPath                string    `json:"proxy_path"`
 	ActivePreset             string    `json:"active_preset"`
