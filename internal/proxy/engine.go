@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"streammock/internal/cmcd"
 	"streammock/internal/config"
@@ -269,6 +270,7 @@ func (e *Engine) serveSegment(w http.ResponseWriter, r *http.Request, st *models
 		return
 	}
 	defer resp.Body.Close()
+	reader := &timedReadCloser{ReadCloser: resp.Body}
 	if sw, ok := w.(*statusWriter); ok {
 		sw.forwardedRange = req.Header.Get("Range")
 		sw.upstreamStatus = resp.StatusCode
@@ -295,7 +297,12 @@ func (e *Engine) serveSegment(w http.ResponseWriter, r *http.Request, st *models
 	setCORS(w.Header())
 	w.WriteHeader(resp.StatusCode)
 	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
-		_, _ = io.Copy(w, resp.Body)
+		_, _ = io.Copy(w, reader)
+	} else {
+		_, _ = io.Copy(io.Discard, reader)
+	}
+	if sw := statusWriterFrom(w); sw != nil {
+		sw.originBodyMS = durationPtr(reader.total)
 	}
 	if sw := statusWriterFrom(w); sw != nil {
 		sw.markRelayDone()
@@ -320,20 +327,41 @@ func (e *Engine) fetch(ctx context.Context, rawURL string, sw *statusWriter) ([]
 		return nil, err
 	}
 	defer resp.Body.Close()
+	reader := &timedReadCloser{ReadCloser: resp.Body}
 	if sw != nil {
 		sw.upstreamStatus = resp.StatusCode
 		sw.contentLength = resp.ContentLength
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, reader)
+		if sw != nil {
+			sw.originBodyMS = durationPtr(reader.total)
+			sw.markRelayDone()
+		}
 		return nil, fmt.Errorf("upstream returned %s", resp.Status)
 	}
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(reader)
 	if sw != nil {
+		sw.originBodyMS = durationPtr(reader.total)
 		sw.markRelayDone()
 	}
 	return body, err
+}
+
+// timedReadCloser measures time blocked while reading bytes from the origin.
+// It excludes downstream ResponseWriter backpressure, which remains in
+// relay_ms.
+type timedReadCloser struct {
+	io.ReadCloser
+	total time.Duration
+}
+
+func (r *timedReadCloser) Read(p []byte) (int, error) {
+	started := time.Now()
+	n, err := r.ReadCloser.Read(p)
+	r.total += time.Since(started)
+	return n, err
 }
 
 func statusWriterFrom(w http.ResponseWriter) *statusWriter {

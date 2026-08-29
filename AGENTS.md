@@ -10,10 +10,18 @@ Go backend + React/Vite frontend for recording, mocking, and playing HLS streams
 - `make dev` — backend + Vite dev server on `:5173`, proxying `/api` and `/s/` to `:8080`
 - `make build` — build frontend into `web/dist` (runs `tsc -b && vite build`, so it typechecks)
 - `make clean` — removes `web/dist` and `web/node_modules`
+- `npm run build` in `web/packages/playback-observer` — build the published library into `web/packages/playback-observer/dist` (not needed for `make dev`/`make build`, which read the source directly).
 - Run `go test ./...`, `go build ./...`, `go vet ./...`, and `make build` for the frontend.
 
 ## Frontend serving mode
 The server always serves the compiled React SPA from `web/dist` (`registerFrontend` in `cmd/server/main.go`). If `web/dist` is missing, `GET /` returns 503 — run `make build` or `make dev` first. There is no server-rendered fallback; the Go `html/template` UI was removed.
+
+## Frontend workspaces (npm)
+- `web/` is an npm workspace root (`"workspaces": ["packages/*"]`). The reusable telemetry lib lives in `web/packages/playback-observer`, published as `@streammock/playback-observer` (scoped package, public via `publishConfig`).
+- Subpaths: the root entry (player-agnostic core + `HTTPBatchTransport`) and `@streammock/playback-observer/hls` (the HLS.js adapter). `hls.js` is an **optional peer dependency** — only the `hls` subpath imports it, so non-HLS consumers don't pull it in.
+- The app imports the package by name (`@streammock/playback-observer`, `@streammock/playback-observer/hls`), resolved to the package **source** via `resolve.alias` in `web/vite.config.ts` and `paths` in `web/tsconfig.app.json` — no pre-build needed for `make dev`/`make build`. `npm run build` in the package produces the publishable `dist/` (tsup, ESM+CJS+`.d.ts`).
+- Publishing: `npm publish` inside `web/packages/playback-observer` (runs `prepublishOnly` → build + test). Verify the tarball with `npm pack --dry-run`.
+- Adding an export/subpath requires updating `exports` in the package's `package.json` **and** the vite alias + tsconfig paths. Vite does prefix matching (no `$` exact-match) — keep the more specific subpath (`/hls`) before the root in the alias object.
 
 ## Auth (Clerk)
 - Auth uses Clerk (`@clerk/react`, Core 2 SDK) in `web/`. The publishable key lives in `web/.env.local` (gitignored) and is auto-detected by `ClerkProvider` — do not commit or read it.

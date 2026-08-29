@@ -156,7 +156,7 @@ func TestOriginTraceSeparatesTTFBRelayAndConnectionReuse(t *testing.T) {
 		t.Fatalf("logged=%d", len(logged))
 	}
 	for _, req := range logged {
-		if req.TTFBMS == nil || *req.TTFBMS < 10 || req.RelayMS == nil || *req.RelayMS < 10 {
+		if req.TTFBMS == nil || *req.TTFBMS < 10 || req.RelayMS == nil || *req.RelayMS < 10 || req.OriginBodyMS == nil || *req.OriginBodyMS < 10 {
 			t.Fatalf("missing causal phases: %+v", req)
 		}
 	}

@@ -222,7 +222,7 @@ func (d *DB) PlaybackTimeline(workspaceSlug, sessionID string) (telemetry.Timeli
 
 func (d *DB) sessionRequestPoints(sessionID string) ([]telemetry.RequestPoint, error) {
 	rows, err := d.conn.Query(`SELECT p.id, COALESCE(p.started_at_ms, 0), COALESCE(p.completed_at_ms, 0), p.duration_ms, p.status, p.bytes, p.kind, p.target_url, p.active_preset,
-		p.intervention, p.added_latency_ms, p.injected_status, p.upstream_status, p.transport_error, p.dns_ms, p.connect_ms, p.tls_ms, p.ttfb_ms, p.relay_ms, p.local_serve_ms, p.connection_reused,
+		p.intervention, p.added_latency_ms, p.injected_status, p.upstream_status, p.transport_error, p.dns_ms, p.connect_ms, p.tls_ms, p.ttfb_ms, p.relay_ms, p.origin_body_ms, p.local_serve_ms, p.connection_reused,
 		c.valid, c.validation_errors_json, c.sid, c.cid, c.ot, c.sf, c.st, c.br_kbps, c.tb_kbps, c.bl_ms, c.mtp_kbps, c.rtp_kbps, c.dl_ms, c.object_duration_ms, c.playback_rate, c.startup, c.buffer_starvation, c.raw_value, c.canonical_value
 		FROM proxy_requests p JOIN request_cmcd c ON c.request_id = p.id WHERE c.session_id = ? ORDER BY p.started_at_ms, p.id`, sessionID)
 	if err != nil {
@@ -233,7 +233,7 @@ func (d *DB) sessionRequestPoints(sessionID string) ([]telemetry.RequestPoint, e
 	for rows.Next() {
 		var point telemetry.RequestPoint
 		var intervention, transport sql.NullString
-		var dns, connect, tls, ttfb, relay, local sql.NullInt64
+		var dns, connect, tls, ttfb, relay, originBody, local sql.NullInt64
 		var reused sql.NullBool
 		var cm telemetry.RequestCMCD
 		var issueJSON string
@@ -242,13 +242,13 @@ func (d *DB) sessionRequestPoints(sessionID string) ([]telemetry.RequestPoint, e
 		var pr sql.NullFloat64
 		var startup, starvation sql.NullBool
 		if err := rows.Scan(&point.RequestID, &point.StartedAtMS, &point.CompletedAtMS, &point.DurationMS, &point.Status, &point.Bytes, &point.Kind, &point.TargetURL, &point.ActivePreset,
-			&intervention, &point.AddedLatencyMS, &point.InjectedStatus, &point.UpstreamStatus, &transport, &dns, &connect, &tls, &ttfb, &relay, &local, &reused,
+			&intervention, &point.AddedLatencyMS, &point.InjectedStatus, &point.UpstreamStatus, &transport, &dns, &connect, &tls, &ttfb, &relay, &originBody, &local, &reused,
 			&cm.Valid, &issueJSON, &sid, &cid, &ot, &sf, &st, &br, &tb, &bl, &mtp, &rtp, &dl, &od, &pr, &startup, &starvation, &cm.RawValue, &cm.CanonicalValue); err != nil {
 			return nil, fmt.Errorf("scan session request: %w", err)
 		}
 		point.Intervention, point.TransportError = nullNonEmptyStringPtr(intervention), nullNonEmptyStringPtr(transport)
 		point.DNSMS, point.ConnectMS, point.TLSMS = nullInt64Ptr(dns), nullInt64Ptr(connect), nullInt64Ptr(tls)
-		point.TTFBMS, point.RelayMS, point.LocalServeMS = nullInt64Ptr(ttfb), nullInt64Ptr(relay), nullInt64Ptr(local)
+		point.TTFBMS, point.RelayMS, point.OriginBodyMS, point.LocalServeMS = nullInt64Ptr(ttfb), nullInt64Ptr(relay), nullInt64Ptr(originBody), nullInt64Ptr(local)
 		if reused.Valid {
 			value := reused.Bool
 			point.ConnectionReused = &value
@@ -300,11 +300,15 @@ func deriveRequestMetrics(point *telemetry.RequestPoint) {
 	if point.CMCD == nil {
 		return
 	}
-	if point.CMCD.DeadlineMS != nil && point.DurationMS > *point.CMCD.DeadlineMS {
+	// HLS.js emits dl=0 while startup has no buffered media. Zero is an
+	// explicit "no useful deadline yet" signal, not a deadline at t=0.
+	if point.CMCD.DeadlineMS != nil && *point.CMCD.DeadlineMS > 0 && point.DurationMS > *point.CMCD.DeadlineMS {
 		value := point.DurationMS - *point.CMCD.DeadlineMS
 		point.DeadlineMissMS = &value
 	}
-	if point.CMCD.BufferLengthMS != nil && point.DurationMS > *point.CMCD.BufferLengthMS {
+	// Likewise, bl=0 is expected for the first object before the first append;
+	// it cannot establish a buffer-exhaustion finding by itself.
+	if point.CMCD.BufferLengthMS != nil && *point.CMCD.BufferLengthMS > 0 && point.DurationMS > *point.CMCD.BufferLengthMS {
 		value := point.DurationMS - *point.CMCD.BufferLengthMS
 		point.BufferRiskMS = &value
 	}

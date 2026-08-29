@@ -3,7 +3,8 @@ import Hls from "hls.js";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { createPlaybackSession } from "../api";
-import { hlsJsAdapter, observePlayback } from "../lib/playback-observer";
+import { observePlayback } from "@streammock/playback-observer";
+import { hlsJsAdapter } from "@streammock/playback-observer/hls";
 import type { CreatedPlaybackSession } from "../types";
 
 export default function ProxyPreviewPage() {
@@ -56,24 +57,27 @@ export default function ProxyPreviewPage() {
     if (Hls.isSupported()) {
 	  const hls = new Hls({ cmcd: { sessionId: prepared.cmcd_session_id, contentId: prepared.content_id, useHeaders: false, version: 1 } });
 	  const observer = observePlayback({ media: video, adapter: hlsJsAdapter(hls), sessionId: prepared.cmcd_session_id, ingestUrl: prepared.ingest_url });
-	  hls.loadSource(prepared.playback_url);
-      hls.attachMedia(video);
+	  // Autoplay is the playback intent that starts this session. Record it
+	  // before HLS.js begins loading the manifest so startup includes manifest
+	  // loading and parsing.
+	  observer.playRequested();
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-		observer.playRequested();
         void video.play().catch(() => undefined);
       });
-      hls.on(Hls.Events.ERROR, (_event, data) => {
+	  hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) setError(`Playback failed: ${data.details}`);
       });
+	  hls.loadSource(prepared.playback_url);
+	  hls.attachMedia(video);
 	  return () => { observer.destroy(); hls.destroy(); };
     }
 
-    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+	if (video.canPlayType("application/vnd.apple.mpegurl")) {
 	  // Native HLS cannot be configured to emit CMCD, but the Observer remains
 	  // useful and stays fail-open.
 	  const observer = observePlayback({ media: video, sessionId: prepared.cmcd_session_id, ingestUrl: prepared.ingest_url });
-	  video.src = prepared.playback_url;
 	  observer.playRequested();
+	  video.src = prepared.playback_url;
       void video.play().catch(() => undefined);
       return () => {
 		observer.destroy();

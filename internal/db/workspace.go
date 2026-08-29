@@ -90,10 +90,10 @@ func (d *DB) InsertProxyRequest(req models.ProxyRequest) error {
 	}
 	defer tx.Rollback()
 	result, err := tx.Exec(
-		`INSERT INTO proxy_requests (workspace_slug, stream_id, stream_mode, kind, target_url, status, duration_ms, bytes, client_ip, active_preset, client_range, forwarded_range, upstream_status, content_range, content_length, range_result, diagnostic, intervention, added_latency_ms, injected_status, started_at_ms, completed_at_ms, user_agent, dns_ms, connect_ms, tls_ms, ttfb_ms, relay_ms, local_serve_ms, connection_reused, transport_error, hit_count, first_seen_at, last_seen_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+		`INSERT INTO proxy_requests (workspace_slug, stream_id, stream_mode, kind, target_url, status, duration_ms, bytes, client_ip, active_preset, client_range, forwarded_range, upstream_status, content_range, content_length, range_result, diagnostic, intervention, added_latency_ms, injected_status, started_at_ms, completed_at_ms, user_agent, dns_ms, connect_ms, tls_ms, ttfb_ms, relay_ms, origin_body_ms, local_serve_ms, connection_reused, transport_error, hit_count, first_seen_at, last_seen_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
 		req.WorkspaceSlug, req.StreamID, req.StreamMode, req.Kind, req.TargetURL, req.Status, req.DurationMS, req.Bytes, req.ClientIP, req.ActivePreset, req.ClientRange, req.ForwardedRange, req.UpstreamStatus, req.ContentRange, req.ContentLength, req.RangeResult, req.Diagnostic, req.Intervention, req.AddedLatencyMS, req.InjectedStatus,
-		req.StartedAtMS, req.CompletedAtMS, req.UserAgent, req.DNSMS, req.ConnectMS, req.TLSMS, req.TTFBMS, req.RelayMS, req.LocalServeMS, req.ConnectionReused, req.TransportError, seen, seen,
+		req.StartedAtMS, req.CompletedAtMS, req.UserAgent, req.DNSMS, req.ConnectMS, req.TLSMS, req.TTFBMS, req.RelayMS, req.OriginBodyMS, req.LocalServeMS, req.ConnectionReused, req.TransportError, seen, seen,
 	)
 	if err != nil {
 		return fmt.Errorf("insert proxy request: %w", err)
@@ -168,9 +168,9 @@ func scanProxyRequests(rows *sql.Rows) ([]models.ProxyRequest, error) {
 		var req models.ProxyRequest
 		var firstSeen, lastSeen string
 		var startedAt, completedAt sql.NullInt64
-		var dnsMS, connectMS, tlsMS, ttfbMS, relayMS, localMS sql.NullInt64
+		var dnsMS, connectMS, tlsMS, ttfbMS, relayMS, originBodyMS, localMS sql.NullInt64
 		var reused sql.NullBool
-		if err := rows.Scan(&req.ID, &req.WorkspaceSlug, &req.StreamID, &req.StreamMode, &req.Kind, &req.TargetURL, &req.Status, &req.DurationMS, &req.Bytes, &req.ClientIP, &req.ActivePreset, &req.ClientRange, &req.ForwardedRange, &req.UpstreamStatus, &req.ContentRange, &req.ContentLength, &req.RangeResult, &req.Diagnostic, &req.Intervention, &req.AddedLatencyMS, &req.InjectedStatus, &startedAt, &completedAt, &req.UserAgent, &dnsMS, &connectMS, &tlsMS, &ttfbMS, &relayMS, &localMS, &reused, &req.TransportError, &req.HitCount, &firstSeen, &lastSeen); err != nil {
+		if err := rows.Scan(&req.ID, &req.WorkspaceSlug, &req.StreamID, &req.StreamMode, &req.Kind, &req.TargetURL, &req.Status, &req.DurationMS, &req.Bytes, &req.ClientIP, &req.ActivePreset, &req.ClientRange, &req.ForwardedRange, &req.UpstreamStatus, &req.ContentRange, &req.ContentLength, &req.RangeResult, &req.Diagnostic, &req.Intervention, &req.AddedLatencyMS, &req.InjectedStatus, &startedAt, &completedAt, &req.UserAgent, &dnsMS, &connectMS, &tlsMS, &ttfbMS, &relayMS, &originBodyMS, &localMS, &reused, &req.TransportError, &req.HitCount, &firstSeen, &lastSeen); err != nil {
 			return nil, fmt.Errorf("scan proxy request: %w", err)
 		}
 		req.StartedAtMS, req.CompletedAtMS = startedAt.Int64, completedAt.Int64
@@ -179,6 +179,7 @@ func scanProxyRequests(rows *sql.Rows) ([]models.ProxyRequest, error) {
 		req.TLSMS = nullInt64Ptr(tlsMS)
 		req.TTFBMS = nullInt64Ptr(ttfbMS)
 		req.RelayMS = nullInt64Ptr(relayMS)
+		req.OriginBodyMS = nullInt64Ptr(originBodyMS)
 		req.LocalServeMS = nullInt64Ptr(localMS)
 		if reused.Valid {
 			value := reused.Bool
@@ -217,7 +218,7 @@ func (d *DB) ListProxyRequests(slug, mode, streamID string, limit int) ([]models
 		limit = 100
 	}
 	rows, err := d.conn.Query(
-		`SELECT id, workspace_slug, stream_id, stream_mode, kind, target_url, status, duration_ms, bytes, client_ip, active_preset, client_range, forwarded_range, upstream_status, content_range, content_length, range_result, diagnostic, intervention, added_latency_ms, injected_status, started_at_ms, completed_at_ms, user_agent, dns_ms, connect_ms, tls_ms, ttfb_ms, relay_ms, local_serve_ms, connection_reused, transport_error, hit_count, first_seen_at, last_seen_at
+		`SELECT id, workspace_slug, stream_id, stream_mode, kind, target_url, status, duration_ms, bytes, client_ip, active_preset, client_range, forwarded_range, upstream_status, content_range, content_length, range_result, diagnostic, intervention, added_latency_ms, injected_status, started_at_ms, completed_at_ms, user_agent, dns_ms, connect_ms, tls_ms, ttfb_ms, relay_ms, origin_body_ms, local_serve_ms, connection_reused, transport_error, hit_count, first_seen_at, last_seen_at
 		 FROM proxy_requests WHERE workspace_slug = ? AND stream_mode = ? AND (? = '' OR stream_id = ?) ORDER BY last_seen_at DESC, id DESC LIMIT ?`,
 		slug, mode, streamID, streamID, limit,
 	)

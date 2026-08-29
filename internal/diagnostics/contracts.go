@@ -51,6 +51,7 @@ type Measurement struct {
 type Finding struct {
 	RuleID       string              `json:"rule_id"`
 	RuleVersion  uint16              `json:"rule_version"`
+	Occurrences  int64               `json:"occurrences,omitempty"`
 	Severity     Severity            `json:"severity"`
 	Confidence   Confidence          `json:"confidence"`
 	Message      string              `json:"message"`

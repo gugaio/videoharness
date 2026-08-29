@@ -43,8 +43,8 @@ func Analyze(timeline telemetry.Timeline) []Finding {
 		if r.TTFBMS != nil && *r.TTFBMS >= 1000 && r.InjectedStatus == 0 {
 			findings = append(findings, Finding{RuleID: "high_origin_ttfb", RuleVersion: 1, Severity: SeverityWarning, Confidence: ConfidenceMedium, Message: "O tempo até o primeiro byte da origem foi alto; isto indica possível lentidão antes do relay do corpo.", Evidence: append([]EvidenceReference(nil), evidence...), Measurements: []Measurement{{Name: "origin_ttfb", Value: float64(*r.TTFBMS), Unit: UnitMilliseconds}}})
 		}
-		if r.RelayMS != nil && *r.RelayMS >= 1000 && r.AddedLatencyMS == 0 {
-			findings = append(findings, Finding{RuleID: "slow_origin_body", RuleVersion: 1, Severity: SeverityWarning, Confidence: ConfidenceMedium, Message: "Os headers chegaram antes, mas o relay do corpo foi lento; isto sugere entrega progressiva lenta da origem.", Evidence: append([]EvidenceReference(nil), evidence...), Measurements: []Measurement{{Name: "body_relay", Value: float64(*r.RelayMS), Unit: UnitMilliseconds}}})
+		if r.OriginBodyMS != nil && *r.OriginBodyMS >= 1000 && r.AddedLatencyMS == 0 {
+			findings = append(findings, Finding{RuleID: "slow_origin_body", RuleVersion: 1, Severity: SeverityWarning, Confidence: ConfidenceMedium, Message: "O primeiro byte chegou, mas a leitura do restante do corpo na origem foi lenta; isso pode reduzir a taxa de entrega.", Evidence: append([]EvidenceReference(nil), evidence...), Measurements: []Measurement{{Name: "origin_body_read", Value: float64(*r.OriginBodyMS), Unit: UnitMilliseconds}}})
 		}
 		if r.CMCD == nil {
 			continue
@@ -52,21 +52,20 @@ func Analyze(timeline telemetry.Timeline) []Finding {
 		if !r.CMCD.Valid {
 			findings = append(findings, Finding{RuleID: "invalid_cmcd", RuleVersion: 1, Severity: SeverityWarning, Confidence: ConfidenceHigh, Message: "O request foi servido normalmente, mas o CMCD recebido não está conforme e parte da telemetria pode estar ausente.", Evidence: append([]EvidenceReference(nil), evidence...), Measurements: []Measurement{{Name: "validation_errors", Value: float64(len(r.CMCD.ValidationErrors)), Unit: UnitCount}}})
 		}
-		if r.BitrateThroughputRatio != nil && *r.BitrateThroughputRatio > 1 {
+		// Small estimator differences are normal. Keep a 10% tolerance so the
+		// Inspector does not turn every adaptive decision into an alert.
+		if r.BitrateThroughputRatio != nil && *r.BitrateThroughputRatio > 1.1 {
 			severity := SeverityWarning
-			if *r.BitrateThroughputRatio >= 1.2 {
-				severity = SeverityError
-			}
 			confidence := ConfidenceMedium
-			message := "O bitrate solicitado ficou acima do throughput estimado pelo player, criando risco de esgotar o buffer."
+			message := "O player pediu um bitrate acima da estimativa de throughput; isso é uma diferença de estimativas, não uma falha de playback por si só."
 			if rebuffer != nil {
 				confidence = ConfidenceHigh
-				message = "O bitrate solicitado ficou acima do throughput estimado e o Observer registrou rebuffer logo depois."
+				message = "O bitrate pedido ficou acima da estimativa de throughput e foi seguido por rebuffer; essa combinação pode ter contribuído para o impacto."
 				evidence = append(evidence, EvidenceReference{Kind: EvidenceEvent, ID: rebuffer.ID})
 			}
 			findings = append(findings, Finding{RuleID: "bitrate_above_throughput", RuleVersion: 1, Severity: severity, Confidence: confidence, Message: message, Evidence: append([]EvidenceReference(nil), evidence...), Measurements: []Measurement{{Name: "bitrate_to_throughput", Value: *r.BitrateThroughputRatio, Unit: UnitRatio}, {Name: "bitrate", Value: float64(*r.CMCD.BitrateKbps), Unit: UnitKbps}, {Name: "player_throughput", Value: float64(*r.CMCD.MeasuredThroughputKbps), Unit: UnitKbps}}})
 		}
-		if r.DeadlineMissMS != nil {
+		if r.DeadlineMissMS != nil && r.CMCD.DeadlineMS != nil && *r.CMCD.DeadlineMS > 0 {
 			confidence := ConfidenceMedium
 			message := "O request terminou depois do deadline CMCD; isto é risco inferido, não confirmação de stall."
 			if rebuffer != nil {
@@ -76,7 +75,7 @@ func Analyze(timeline telemetry.Timeline) []Finding {
 			}
 			findings = append(findings, Finding{RuleID: "deadline_miss", RuleVersion: 1, Severity: SeverityWarning, Confidence: confidence, Message: message, Evidence: append([]EvidenceReference(nil), evidence...), Measurements: []Measurement{{Name: "deadline_miss", Value: float64(*r.DeadlineMissMS), Unit: UnitMilliseconds}, {Name: "request_total", Value: float64(r.DurationMS), Unit: UnitMilliseconds}}})
 		}
-		if r.BufferRiskMS != nil {
+		if r.BufferRiskMS != nil && r.CMCD.BufferLengthMS != nil && *r.CMCD.BufferLengthMS > 0 {
 			confidence := ConfidenceLow
 			message := "A duração do request excedeu o buffer informado pelo player; há risco inferido de esgotamento."
 			if rebuffer != nil {
@@ -107,7 +106,78 @@ func Analyze(timeline telemetry.Timeline) []Finding {
 		}
 	}
 	findings = append(findings, observerFindings(timeline)...)
-	return findings
+	return aggregateFindings(findings)
+}
+
+// aggregateFindings turns request-level signals into causal findings. A long
+// playback naturally produces many segment requests, but repeated evidence for
+// one rule is one explanation with a count, not dozens of indistinguishable
+// cards in the Inspector.
+func aggregateFindings(findings []Finding) []Finding {
+	if len(findings) < 2 {
+		for i := range findings {
+			if findings[i].Occurrences == 0 {
+				findings[i].Occurrences = 1
+			}
+		}
+		return findings
+	}
+	grouped := make(map[string]int)
+	out := make([]Finding, 0, len(findings))
+	severityRank := func(value Severity) int {
+		switch value {
+		case SeverityError:
+			return 3
+		case SeverityWarning:
+			return 2
+		default:
+			return 1
+		}
+	}
+	confidenceRank := func(value Confidence) int {
+		switch value {
+		case ConfidenceHigh:
+			return 3
+		case ConfidenceMedium:
+			return 2
+		default:
+			return 1
+		}
+	}
+	for _, finding := range findings {
+		key := fmt.Sprintf("%s:%d", finding.RuleID, finding.RuleVersion)
+		index, exists := grouped[key]
+		if !exists {
+			finding.Occurrences = 1
+			grouped[key] = len(out)
+			out = append(out, finding)
+			continue
+		}
+		current := &out[index]
+		current.Occurrences++
+		if severityRank(finding.Severity) > severityRank(current.Severity) ||
+			(severityRank(finding.Severity) == severityRank(current.Severity) && confidenceRank(finding.Confidence) > confidenceRank(current.Confidence)) {
+			// Keep the most informative (strongest) explanation while retaining
+			// the aggregate count and all useful evidence below.
+			occurrences := current.Occurrences
+			mergedEvidence := append([]EvidenceReference(nil), current.Evidence...)
+			*current = finding
+			current.Occurrences = occurrences
+			current.Evidence = mergedEvidence
+		}
+		seenEvidence := make(map[string]bool, len(current.Evidence))
+		for _, evidence := range current.Evidence {
+			seenEvidence[string(evidence.Kind)+":"+evidence.ID] = true
+		}
+		for _, evidence := range finding.Evidence {
+			key := string(evidence.Kind) + ":" + evidence.ID
+			if !seenEvidence[key] && len(current.Evidence) < 12 {
+				current.Evidence = append(current.Evidence, evidence)
+				seenEvidence[key] = true
+			}
+		}
+	}
+	return out
 }
 
 func observerFindings(timeline telemetry.Timeline) []Finding {

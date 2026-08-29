@@ -81,6 +81,7 @@ type RequestPoint struct {
 	TLSMS                  *int64       `json:"tls_ms,omitempty"`
 	TTFBMS                 *int64       `json:"ttfb_ms,omitempty"`
 	RelayMS                *int64       `json:"relay_ms,omitempty"`
+	OriginBodyMS           *int64       `json:"origin_body_ms,omitempty"`
 	LocalServeMS           *int64       `json:"local_serve_ms,omitempty"`
 	ConnectionReused       *bool        `json:"connection_reused,omitempty"`
 	EffectiveDeliveryKbps  *float64     `json:"effective_delivery_kbps,omitempty"`

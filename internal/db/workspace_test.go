@@ -334,3 +334,12 @@ func TestExplicitObserverSessionLinksLaterCMCDRequests(t *testing.T) {
 		t.Fatalf("explicit session did not unify telemetry: %+v", timeline)
 	}
 }
+
+func TestZeroInitialBufferAndDeadlineDoNotCreateFalseMisses(t *testing.T) {
+	zero := int64(0)
+	point := telemetry.RequestPoint{DurationMS: 400, CMCD: &telemetry.RequestCMCD{Valid: true, BufferLengthMS: &zero, DeadlineMS: &zero}}
+	deriveRequestMetrics(&point)
+	if point.DeadlineMissMS != nil || point.BufferRiskMS != nil {
+		t.Fatalf("zero startup metrics must remain non-diagnostic: %+v", point)
+	}
+}

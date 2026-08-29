@@ -2,7 +2,7 @@
 import Hls from "hls.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { observePlayback } from "./core";
-import { hlsJsAdapter } from "./hlsjs";
+import { hlsJsAdapter } from "./hls/hlsjs";
 import type { ObserverEvent } from "./types";
 
 function mediaFixture() {

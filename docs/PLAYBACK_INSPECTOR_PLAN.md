@@ -52,6 +52,13 @@ O primeiro corte não terá um score proprietário de QoE. Findings determiníst
 com evidências e grau de confiança, são mais úteis para investigação e mais
 alinhados ao propósito do StreamMock.
 
+Na interface, findings repetidos por segmento são consolidados por regra e
+sessão: cada cartão mostra ocorrências e mantém evidências navegáveis. Sinais
+de contexto (por exemplo `su`, divergência de throughput e conformidade CMCD)
+ficam separados das causas principais. Eventos técnicos de alta cardinalidade
+(`buffer_appended`, snapshots e etapas intermediárias de fragmento) são
+agrupados ou recolhidos, com opção de expandir os detalhes.
+
 ### 3.2 Três planos de verdade
 
 | Plano | Fonte | O que informa |
@@ -340,7 +347,7 @@ bitrate_to_throughput_ratio = cmcd_br_kbps / cmcd_mtp_kbps
 
 | Regra | Finding | Confiança sem Observer | Confiança com Observer |
 | --- | --- | --- | --- |
-| `br > mtp` | Bitrate acima do throughput estimado | Média | Alta se seguido de downswitch/rebuffer |
+| `br > mtp` (com tolerância) | Diferença entre bitrate pedido e throughput estimado | Contexto | Alta se seguido de downswitch/rebuffer |
 | `request_total > dl` | Deadline perdido | Média | Alta se seguido de starvation/rebuffer |
 | `request_total > bl` | Risco de esgotar o buffer | Baixa/média | Alta se buffer chegar a zero |
 | `bs=true` | Player reportou starvation | Média | Alta com evento de rebuffer |
@@ -554,7 +561,8 @@ transformar os sinais em explicações reproduzíveis.
   - TLS;
   - conexão nova ou reutilizada;
   - tempo até headers/primeiro byte da origem;
-  - tempo de relay do body;
+  - tempo bloqueado lendo o body na origem, separado do intervalo total de
+    relay (que pode incluir backpressure do cliente);
   - duração total;
   - latência artificial;
   - bytes e status da origem e do StreamMock.

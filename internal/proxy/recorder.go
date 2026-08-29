@@ -51,6 +51,7 @@ type statusWriter struct {
 	local          bool
 	transportError string
 	trace          originTrace
+	originBodyMS   *int64
 }
 
 type originTrace struct {
@@ -199,6 +200,7 @@ func (e *Engine) track(w http.ResponseWriter, r *http.Request, st *models.Stream
 			TLSMS:            tlsMS,
 			TTFBMS:           ttfbMS,
 			RelayMS:          relayMS,
+			OriginBodyMS:     sw.originBodyMS,
 			LocalServeMS:     localMS,
 			ConnectionReused: reused,
 			TransportError:   sw.transportError,

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { exportPlaybackSession, getPlaybackTimeline, listPlaybackSessions } from "../api";
-import type { Finding, PlaybackTimeline, RequestPoint, SessionListItem } from "../types";
+import type { Finding, PlaybackEvent, PlaybackTimeline, RequestPoint, SessionListItem } from "../types";
 
 const POLL_MS = 4000;
 
@@ -12,12 +12,96 @@ function severityClass(value: Finding["severity"]): string {
 	return "border-sky-300/20 bg-sky-400/10 text-sky-100";
 }
 
+const hiddenObserverTypes = new Set(["media_snapshot", "visibility_changed", "buffer_appended", "fragment_parsed"]);
+const fragmentLifecycleTypes = new Set(["fragment_loading", "fragment_loaded", "fragment_parsed", "fragment_buffered"]);
+
+interface DisplayEvent extends PlaybackEvent {
+	count?: number;
+	stages?: string[];
+}
+
+function fragmentKey(event: PlaybackEvent): string | null {
+	if (!fragmentLifecycleTypes.has(event.event_type) || !event.payload_json) return null;
+	try {
+		const payload = JSON.parse(event.payload_json) as { frag?: { sn?: number; level?: number } };
+		if (payload.frag?.sn == null) return null;
+		return `${payload.frag.level ?? "?"}:${payload.frag.sn}`;
+	} catch {
+		return null;
+	}
+}
+
+function compactObserverEvents(events: PlaybackEvent[], showTechnical: boolean): { visible: DisplayEvent[]; hidden: number } {
+	const visible: DisplayEvent[] = [];
+	const fragments = new Map<string, DisplayEvent>();
+	let hidden = 0;
+	for (const event of events) {
+		if (!showTechnical && hiddenObserverTypes.has(event.event_type) && !fragmentLifecycleTypes.has(event.event_type)) {
+			hidden += 1;
+			continue;
+		}
+		const key = fragmentKey(event);
+		if (key) {
+			const existing = fragments.get(key);
+			if (existing) {
+				existing.stages = [...(existing.stages ?? []), event.event_type.replace("fragment_", "")];
+				existing.wall_time_ms = event.wall_time_ms;
+				existing.buffer_ahead_ms = event.buffer_ahead_ms;
+				continue;
+			}
+			const lifecycle: DisplayEvent = { ...event, event_type: "fragment_lifecycle", stages: [event.event_type.replace("fragment_", "")] };
+			fragments.set(key, lifecycle);
+			visible.push(lifecycle);
+			continue;
+		}
+		const previous = visible[visible.length - 1];
+		if (previous && previous.event_type === event.event_type && event.wall_time_ms - previous.wall_time_ms < 1000 && ["fragment_loading", "fragment_loaded", "level_switching"].includes(event.event_type)) {
+			previous.count = (previous.count ?? 1) + 1;
+			previous.wall_time_ms = event.wall_time_ms;
+			previous.buffer_ahead_ms = event.buffer_ahead_ms;
+			continue;
+		}
+		visible.push({ ...event });
+	}
+	return { visible, hidden };
+}
+
+function eventLabel(event: DisplayEvent): string {
+	if (event.event_type === "fragment_lifecycle") return `fragment ${event.stages?.join(" → ") ?? "lifecycle"}`;
+	return event.event_type.replaceAll("_", " ");
+}
+
+function findingGroups(findings: Finding[]): Finding[] {
+	const groups = new Map<string, Finding>();
+	for (const finding of findings) {
+		const key = `${finding.rule_id}:${finding.rule_version}`;
+		const current = groups.get(key);
+		if (!current) {
+			groups.set(key, { ...finding, occurrences: finding.occurrences ?? 1, evidence: [...(finding.evidence ?? [])] });
+			continue;
+		}
+		current.occurrences = (current.occurrences ?? 1) + (finding.occurrences ?? 1);
+		const evidence = new Map((current.evidence ?? []).map((item) => [`${item.kind}:${item.id}`, item]));
+		for (const item of finding.evidence ?? []) evidence.set(`${item.kind}:${item.id}`, item);
+		current.evidence = [...evidence.values()].slice(0, 12);
+	}
+	return [...groups.values()];
+}
+
+function isContextFinding(finding: Finding): boolean {
+	return finding.rule_id === "urgent_request" || finding.rule_id === "throughput_perception_divergence" ||
+		(finding.rule_id === "buffer_exhaustion_risk" && finding.confidence !== "high") ||
+		(finding.rule_id === "bitrate_above_throughput" && finding.confidence !== "high") ||
+		(finding.rule_id === "deadline_miss" && finding.confidence !== "high") || finding.rule_id === "invalid_cmcd";
+}
+
 export default function PlaybackInspector({ getToken, streamId, source, preset }: { getToken: () => Promise<string | null>; streamId?: string; source?: string; preset?: string }) {
 	const [sessions, setSessions] = useState<SessionListItem[]>([]);
 	const [selectedID, setSelectedID] = useState<string>("");
 	const [timeline, setTimeline] = useState<PlaybackTimeline | null>(null);
 	const [findings, setFindings] = useState<Finding[]>([]);
 	const [selectedRequest, setSelectedRequest] = useState<number | null>(null);
+	const [showTechnicalEvents, setShowTechnicalEvents] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const timer = useRef<number | null>(null);
 
@@ -54,7 +138,12 @@ export default function PlaybackInspector({ getToken, streamId, source, preset }
 
 	const requests = useMemo(() => timeline?.entries.flatMap((entry) => entry.kind === "request" ? [entry.request] : []) ?? [], [timeline]);
 	const events = useMemo(() => timeline?.entries.flatMap((entry) => entry.kind === "event" ? [entry.event] : []) ?? [], [timeline]);
+	const compactedEvents = useMemo(() => compactObserverEvents(events, showTechnicalEvents), [events, showTechnicalEvents]);
+	const groupedFindings = useMemo(() => findingGroups(findings), [findings]);
+	const primaryFindings = useMemo(() => groupedFindings.filter((finding) => !isContextFinding(finding)), [groupedFindings]);
+	const contextFindings = useMemo(() => groupedFindings.filter(isContextFinding), [groupedFindings]);
 	const detail = requests.find((request) => request.request_id === selectedRequest) ?? null;
+	const hasObservedImpact = timeline != null && (timeline.summary.error_count > 0 || timeline.summary.rebuffer_count > 0 || primaryFindings.length > 0);
 
 	async function exportSession() {
 		if (!selectedID) return;
@@ -92,14 +181,22 @@ export default function PlaybackInspector({ getToken, streamId, source, preset }
 			</div></div>
 
 			<div className="grid gap-6 lg:grid-cols-2">
-				<div><h3 className="text-sm font-semibold text-white">Why was playback bad?</h3><div className="mt-3 space-y-2">{findings.length === 0 ? <p className="rounded-xl border border-emerald-300/15 bg-emerald-400/5 px-4 py-3 text-sm text-emerald-200">No deterministic finding for the current data.</p> : findings.map((finding, index) => <button key={`${finding.rule_id}-${index}`} type="button" onClick={() => { const request = finding.evidence?.find((item) => item.kind === "request"); if (request) setSelectedRequest(Number(request.id)); }} className={`block w-full rounded-xl border px-4 py-3 text-left ${severityClass(finding.severity)}`}><span className="text-[10px] font-semibold uppercase tracking-wider">{finding.rule_id} · {finding.confidence} confidence</span><p className="mt-1 text-xs leading-5">{finding.message}</p></button>)}</div></div>
-				<div><h3 className="text-sm font-semibold text-white">Observer events</h3><div className="mt-3 max-h-80 space-y-1 overflow-auto rounded-2xl border border-white/10 p-3">{events.length === 0 ? <p className="p-3 text-xs text-stone-500">Observer not connected or no events ingested.</p> : events.map((event) => <div key={event.id} className="flex items-center justify-between rounded-lg bg-white/[0.03] px-3 py-2 text-xs"><span className="text-stone-200">{event.event_type}</span><span className="font-mono text-stone-500">+{formatMS(event.wall_time_ms - timeline.session.started_at_ms)} · buffer {formatMS(event.buffer_ahead_ms)}</span></div>)}</div></div>
+				<div><div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-white">{hasObservedImpact ? "Why did playback degrade?" : "Playback diagnosis"}</h3><p className="mt-1 text-xs text-stone-500">{hasObservedImpact ? "Causas agrupadas por regra; cada cartão representa um padrão, não um request." : "Nenhuma regra conhecida detectou degradação observada nesta sessão."}</p></div><span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-medium ${hasObservedImpact ? "bg-amber-400/15 text-amber-200" : "bg-emerald-400/15 text-emerald-200"}`}>{hasObservedImpact ? "Impact detected" : "No degradation detected"}</span></div><div className="mt-3 space-y-2">{primaryFindings.length === 0 ? <p className="rounded-xl border border-emerald-300/15 bg-emerald-400/5 px-4 py-3 text-sm text-emerald-200">Playback appears healthy for the signals currently available. This is not a guarantee beyond the observed data.</p> : primaryFindings.map((finding) => <FindingCard key={`${finding.rule_id}-${finding.rule_version}`} finding={finding} onRequest={setSelectedRequest} />)}</div>{contextFindings.length > 0 && <details className="mt-3 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2"><summary className="cursor-pointer text-[11px] text-stone-400">Context signals ({contextFindings.length})</summary><div className="mt-2 space-y-2">{contextFindings.map((finding) => <FindingCard key={`${finding.rule_id}-${finding.rule_version}`} finding={finding} onRequest={setSelectedRequest} compact />)}</div></details>}</div>
+				<div><div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-white">Observer events</h3><p className="mt-1 text-xs text-stone-500">Ciclos de fragmento agrupados; sinais técnicos repetitivos ficam recolhidos.</p></div><button type="button" onClick={() => setShowTechnicalEvents((current) => !current)} className="shrink-0 rounded-lg border border-white/10 px-2.5 py-1.5 text-[10px] text-stone-300">{showTechnicalEvents ? "Hide technical" : "Show technical"}</button></div><div className="mt-3 max-h-80 space-y-1 overflow-auto rounded-2xl border border-white/10 p-3">{events.length === 0 ? <p className="p-3 text-xs text-stone-500">Observer not connected or no events ingested.</p> : <>{compactedEvents.visible.slice(-100).map((event) => <div key={`${event.id}-${event.event_type}`} className="flex items-center justify-between gap-3 rounded-lg bg-white/[0.03] px-3 py-2 text-xs"><span className="text-stone-200">{eventLabel(event)}{event.count && event.count > 1 ? ` ×${event.count}` : ""}</span><span className="shrink-0 font-mono text-stone-500">+{formatMS(event.wall_time_ms - timeline.session.started_at_ms)} · buffer {formatMS(event.buffer_ahead_ms)}</span></div>)}{compactedEvents.hidden > 0 && <p className="px-3 py-2 text-[10px] text-stone-500">{compactedEvents.hidden} technical signals collapsed.</p>}</>}</div></div>
 			</div>
 
 			<div><h3 className="text-sm font-semibold text-white">Delivery waterfall</h3><div className="mt-3 space-y-2">{requests.map((request) => <WaterfallRow key={request.request_id} request={request} maxDuration={Math.max(1, ...requests.map((item) => item.duration_ms))} selected={selectedRequest === request.request_id} onSelect={() => setSelectedRequest(request.request_id)} />)}</div></div>
 			{detail && <RequestDetail request={detail} />}
 		</div>}
 	</section>;
+}
+
+function FindingCard({ finding, onRequest, compact = false }: { finding: Finding; onRequest: (requestID: number) => void; compact?: boolean }) {
+	return <button type="button" onClick={() => { const request = finding.evidence?.find((item) => item.kind === "request"); if (request) onRequest(Number(request.id)); }} className={`block w-full rounded-xl border ${compact ? "px-3 py-2" : "px-4 py-3"} text-left ${severityClass(finding.severity)}`}>
+		<div className="flex items-center justify-between gap-3"><span className="text-[10px] font-semibold uppercase tracking-wider">{finding.rule_id} · {finding.confidence} confidence</span><span className="rounded-full bg-black/20 px-2 py-0.5 text-[10px]">{finding.occurrences ?? 1} request{(finding.occurrences ?? 1) === 1 ? "" : "s"}</span></div>
+		<p className="mt-1 text-xs leading-5">{finding.message}</p>
+		{(finding.evidence?.length ?? 0) > 1 && <p className="mt-2 text-[10px] text-white/50">Evidence: {finding.evidence?.filter((item) => item.kind === "request").map((item) => `#${item.id}`).join(", ")}</p>}
+	</button>;
 }
 
 function SummaryCard({ label, value, hint }: { label: string; value: string; hint: string }) { return <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><p className="text-[10px] uppercase tracking-wider text-stone-500">{label}</p><p className="mt-2 text-xl font-semibold text-white">{value}</p><p className="mt-1 truncate text-[10px] text-stone-500">{hint}</p></div>; }
@@ -114,4 +211,4 @@ function WaterfallRow({ request, maxDuration, selected, onSelect }: { request: R
 	return <button type="button" onClick={onSelect} className={`grid w-full grid-cols-[5rem_1fr_5rem] items-center gap-3 rounded-xl border px-3 py-2 text-left ${selected ? "border-sky-300/40 bg-sky-400/5" : "border-white/10 bg-white/[0.02]"}`}><span className="text-[10px] text-stone-400">#{request.request_id} {request.kind}</span><span className="flex h-3 overflow-hidden rounded-full bg-white/5" style={{ width: `${Math.max(8, request.duration_ms / maxDuration * 100)}%` }}>{phases.map((phase) => phase.value == null ? null : <span key={phase.label} title={`${phase.label}: ${phase.value} ms`} className={phase.color} style={{ width: `${Math.max(2, phase.value / Math.max(1, request.duration_ms) * 100)}%` }} />)}</span><span className="text-right font-mono text-[10px] text-stone-500">{formatMS(request.duration_ms)}</span></button>;
 }
 
-function RequestDetail({ request }: { request: RequestPoint }) { return <div className="rounded-2xl border border-sky-300/20 bg-sky-400/5 p-5"><h3 className="text-sm font-semibold text-white">Request #{request.request_id}</h3><p className="mt-2 break-all font-mono text-xs text-stone-400">{request.target_url}</p><div className="mt-4 grid gap-3 sm:grid-cols-3"><SummaryCard label="CMCD" value={request.cmcd ? request.cmcd.valid ? "valid" : "invalid" : "absent"} hint={request.cmcd?.canonical_value ?? "No CMCD payload"} /><SummaryCard label="Deadline" value={formatMS(request.cmcd?.dl_ms)} hint={request.deadline_miss_ms != null ? `missed by ${formatMS(request.deadline_miss_ms)}` : "not missed / unknown"} /><SummaryCard label="Delivery" value={formatKbps(request.effective_delivery_kbps)} hint={`total ${formatMS(request.duration_ms)}`} /></div><pre className="mt-4 max-h-72 overflow-auto rounded-xl bg-black/30 p-4 text-[11px] text-stone-300">{JSON.stringify(request, null, 2)}</pre></div>; }
+function RequestDetail({ request }: { request: RequestPoint }) { return <div className="rounded-2xl border border-sky-300/20 bg-sky-400/5 p-5"><h3 className="text-sm font-semibold text-white">Request #{request.request_id}</h3><p className="mt-2 break-all font-mono text-xs text-stone-400">{request.target_url}</p><div className="mt-4 grid gap-3 sm:grid-cols-4"><SummaryCard label="CMCD" value={request.cmcd ? request.cmcd.valid ? "valid" : "invalid" : "absent"} hint={request.cmcd?.canonical_value ?? "No CMCD payload"} /><SummaryCard label="Deadline" value={formatMS(request.cmcd?.dl_ms)} hint={request.deadline_miss_ms != null ? `missed by ${formatMS(request.deadline_miss_ms)}` : "not missed / unknown"} /><SummaryCard label="Origin body" value={formatMS(request.origin_body_ms)} hint="time blocked on upstream reads" /><SummaryCard label="Delivery" value={formatKbps(request.effective_delivery_kbps)} hint={`total ${formatMS(request.duration_ms)}`} /></div><pre className="mt-4 max-h-72 overflow-auto rounded-xl bg-black/30 p-4 text-[11px] text-stone-300">{JSON.stringify(request, null, 2)}</pre></div>; }

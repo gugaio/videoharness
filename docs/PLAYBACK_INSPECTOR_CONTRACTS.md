@@ -16,8 +16,18 @@ em `internal/cmcd`, `internal/telemetry` e `internal/diagnostics`.
 - Métricas possuem nome com unidade: `*_ms` ou `*_kbps`.
 - Métricas ausentes são `nil`; `0` só existe quando foi explicitamente enviado
   e permitido para aquela chave.
+- Na instrumentação de rede, `ttfb_ms` mede até o primeiro byte,
+  `origin_body_ms` mede o tempo bloqueado lendo o corpo da origem e `relay_ms`
+  mede o intervalo entre o primeiro byte e o fim da entrega ao cliente. O
+  último pode incluir backpressure do cliente; por isso `slow_origin_body` usa
+  `origin_body_ms`, não `relay_ms`.
 - `ObjectValues[T]` permite representar valores scalar v1 e valores por tipo
   de objeto no CMCD v2 sem quebrar o contrato.
+- Para diagnóstico, `bl=0` e `dl=0` significam “sem buffer/deadline útil
+  disponível ainda” (comum no primeiro objeto do HLS.js), e não buffer ou
+  deadline de duração zero.
+- A comparação `br/mtp` usa uma tolerância de 10%. Uma diferença sem
+  rebuffer/downswitch é sinal contextual, não diagnóstico de playback ruim.
 
 Limites iniciais:
 

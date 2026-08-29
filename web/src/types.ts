@@ -52,6 +52,7 @@ export interface ProxyRequest {
 	tls_ms?: number;
 	ttfb_ms?: number;
 	relay_ms?: number;
+	origin_body_ms?: number;
 	local_serve_ms?: number;
 	connection_reused?: boolean;
 	transport_error?: string;
@@ -146,6 +147,7 @@ export interface RequestPoint {
 	tls_ms?: number;
 	ttfb_ms?: number;
 	relay_ms?: number;
+	origin_body_ms?: number;
 	local_serve_ms?: number;
 	connection_reused?: boolean;
 	effective_delivery_kbps?: number;
@@ -175,6 +177,7 @@ export type TimelineEntry =
 export interface Finding {
 	rule_id: string;
 	rule_version: number;
+	occurrences?: number;
 	severity: "info" | "warning" | "error";
 	confidence: "low" | "medium" | "high";
 	message: string;

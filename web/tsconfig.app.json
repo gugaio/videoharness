@@ -15,7 +15,12 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@streammock/playback-observer": ["./packages/playback-observer/src/index.ts"],
+      "@streammock/playback-observer/hls": ["./packages/playback-observer/src/hls/index.ts"]
+    }
   },
   "include": ["src"]
 }

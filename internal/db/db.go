@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS streams (
 	for _, column := range []struct{ name, definition string }{
 		{"client_range", "TEXT NOT NULL DEFAULT ''"}, {"forwarded_range", "TEXT NOT NULL DEFAULT ''"}, {"upstream_status", "INTEGER NOT NULL DEFAULT 0"}, {"content_range", "TEXT NOT NULL DEFAULT ''"}, {"content_length", "INTEGER NOT NULL DEFAULT 0"}, {"range_result", "TEXT NOT NULL DEFAULT 'not_requested'"}, {"diagnostic", "TEXT NOT NULL DEFAULT ''"}, {"intervention", "TEXT NOT NULL DEFAULT ''"}, {"added_latency_ms", "INTEGER NOT NULL DEFAULT 0"}, {"injected_status", "INTEGER NOT NULL DEFAULT 0"},
 		{"started_at_ms", "INTEGER"}, {"completed_at_ms", "INTEGER"}, {"user_agent", "TEXT NOT NULL DEFAULT ''"},
-		{"dns_ms", "INTEGER"}, {"connect_ms", "INTEGER"}, {"tls_ms", "INTEGER"}, {"ttfb_ms", "INTEGER"}, {"relay_ms", "INTEGER"}, {"local_serve_ms", "INTEGER"},
+		{"dns_ms", "INTEGER"}, {"connect_ms", "INTEGER"}, {"tls_ms", "INTEGER"}, {"ttfb_ms", "INTEGER"}, {"relay_ms", "INTEGER"}, {"origin_body_ms", "INTEGER"}, {"local_serve_ms", "INTEGER"},
 		{"connection_reused", "INTEGER"}, {"transport_error", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := d.ensureProxyRequestColumn(column.name, column.definition); err != nil {
@@ -226,6 +226,7 @@ const proxyRequestsSchema = `CREATE TABLE proxy_requests (
 	tls_ms INTEGER,
 	ttfb_ms INTEGER,
 	relay_ms INTEGER,
+	origin_body_ms INTEGER,
 	local_serve_ms INTEGER,
 	connection_reused INTEGER,
 	transport_error TEXT NOT NULL DEFAULT '',

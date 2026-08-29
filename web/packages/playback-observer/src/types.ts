@@ -26,6 +26,12 @@ export interface PlaybackAdapter {
   attach(emit: EmitObserverEvent): () => void;
 }
 
+export interface Transport {
+  enqueue(event: ObserverEvent): void;
+  flush(): Promise<void>;
+  closeWithBeacon(): void;
+}
+
 export interface PlaybackObserver {
   playRequested(): void;
   flush(): Promise<void>;

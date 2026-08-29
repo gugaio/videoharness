@@ -60,3 +60,39 @@ func TestDeadlineWithoutObserverIsExplicitlyRisk(t *testing.T) {
 	}
 	t.Fatal("deadline finding missing")
 }
+
+func TestSlowOriginBodyUsesOriginReadTime(t *testing.T) {
+	body := int64(1200)
+	relay := int64(80)
+	point := telemetry.RequestPoint{RequestID: 8, DurationMS: 1300, OriginBodyMS: &body, RelayMS: &relay}
+	findings := Analyze(telemetry.Timeline{Entries: []telemetry.TimelineEntry{{Kind: telemetry.TimelineEntryRequest, Request: &point}}})
+	for _, finding := range findings {
+		if finding.RuleID == "slow_origin_body" {
+			if !strings.Contains(finding.Message, "leitura do restante do corpo na origem") || len(finding.Measurements) != 1 || finding.Measurements[0].Name != "origin_body_read" || finding.Measurements[0].Value != float64(body) {
+				t.Fatalf("slow body attribution: %+v", finding)
+			}
+			return
+		}
+	}
+	t.Fatal("slow origin body finding missing")
+}
+
+func TestAnalyzeAggregatesRepeatedRequestRules(t *testing.T) {
+	br, mtp := int64(1800), int64(900)
+	first := telemetry.RequestPoint{RequestID: 1, DurationMS: 300, BitrateThroughputRatio: func() *float64 { value := 2.0; return &value }(), CMCD: &telemetry.RequestCMCD{Valid: true, BitrateKbps: &br, MeasuredThroughputKbps: &mtp}}
+	second := first
+	second.RequestID = 2
+	findings := Analyze(telemetry.Timeline{Entries: []telemetry.TimelineEntry{
+		{Kind: telemetry.TimelineEntryRequest, Request: &first},
+		{Kind: telemetry.TimelineEntryRequest, Request: &second},
+	}})
+	for _, finding := range findings {
+		if finding.RuleID == "bitrate_above_throughput" {
+			if finding.Occurrences != 2 || len(finding.Evidence) != 2 {
+				t.Fatalf("repeated finding was not consolidated: %+v", finding)
+			}
+			return
+		}
+	}
+	t.Fatal("aggregated bitrate finding missing")
+}

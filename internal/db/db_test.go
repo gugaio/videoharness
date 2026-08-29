@@ -87,7 +87,7 @@ func TestPlaybackInspectorMigrationPreservesLegacyRequestHistory(t *testing.T) {
 		columns[name] = true
 	}
 	pragma.Close()
-	for _, name := range []string{"started_at_ms", "completed_at_ms", "ttfb_ms", "relay_ms", "connection_reused"} {
+	for _, name := range []string{"started_at_ms", "completed_at_ms", "ttfb_ms", "relay_ms", "origin_body_ms", "connection_reused"} {
 		if !columns[name] {
 			t.Errorf("column %s missing", name)
 		}

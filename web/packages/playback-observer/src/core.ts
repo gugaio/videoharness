@@ -1,11 +1,16 @@
 import { HTTPBatchTransport } from "./transport";
-import type { EmitObserverEvent, PlaybackAdapter, PlaybackObserver } from "./types";
+import type { EmitObserverEvent, PlaybackAdapter, PlaybackObserver, Transport } from "./types";
 
-interface ObservePlaybackOptions {
+export const DEFAULT_OBSERVER_NAME = "@streammock/playback-observer";
+
+export interface ObservePlaybackOptions {
   media: HTMLMediaElement;
   adapter?: PlaybackAdapter;
-  sessionId: string;
-  ingestUrl: string;
+  sessionId?: string;
+  ingestUrl?: string;
+  transport?: Transport;
+  context?: Record<string, unknown>;
+  observerName?: string;
 }
 
 function bufferAheadMS(media: HTMLMediaElement): number {
@@ -18,8 +23,12 @@ function bufferAheadMS(media: HTMLMediaElement): number {
   return 0;
 }
 
-export function observePlayback({ media, adapter, sessionId, ingestUrl }: ObservePlaybackOptions): PlaybackObserver {
-  const transport = new HTTPBatchTransport(ingestUrl);
+export function observePlayback(options: ObservePlaybackOptions): PlaybackObserver {
+  const { media, adapter, ingestUrl, sessionId } = options;
+  const transport = options.transport ?? (ingestUrl ? new HTTPBatchTransport(ingestUrl) : undefined);
+  if (!transport) throw new Error("observePlayback requires either ingestUrl or a custom transport");
+  const context = { session_id: sessionId, ...options.context };
+  const observerName = options.observerName ?? DEFAULT_OBSERVER_NAME;
   const removers: Array<() => void> = [];
   let sequence = 0;
   let destroyed = false;
@@ -38,7 +47,7 @@ export function observePlayback({ media, adapter, sessionId, ingestUrl }: Observ
       media_time_ms: Number.isFinite(media.currentTime) ? Math.round(media.currentTime * 1000) : undefined,
       buffer_ahead_ms: bufferAheadMS(media),
       bitrate_kbps: metrics?.bitrate_kbps, throughput_kbps: metrics?.throughput_kbps,
-      payload_json: payload ? JSON.stringify({ session_id: sessionId, ...payload }) : undefined,
+      payload_json: payload ? JSON.stringify({ ...context, ...payload }) : undefined,
     });
   };
 
@@ -75,9 +84,9 @@ export function observePlayback({ media, adapter, sessionId, ingestUrl }: Observ
     intentionalPause = false;
     firstFramePending = !playbackStarted;
     emit("play_requested");
-	const frameMedia = media as HTMLMediaElement & { requestVideoFrameCallback?: (callback: () => void) => number };
+    const frameMedia = media as HTMLMediaElement & { requestVideoFrameCallback?: (callback: () => void) => number };
     if (firstFramePending && typeof frameMedia.requestVideoFrameCallback === "function") {
-	  frameMedia.requestVideoFrameCallback(() => firstFrame("requestVideoFrameCallback"));
+      frameMedia.requestVideoFrameCallback(() => firstFrame("requestVideoFrameCallback"));
     }
   };
 
@@ -100,7 +109,7 @@ export function observePlayback({ media, adapter, sessionId, ingestUrl }: Observ
   }), 2000);
   removers.push(() => window.clearInterval(snapshotTimer));
   if (adapter) removers.push(adapter.attach(emit));
-  emit("session_started", { observer: "@streammock/playback-observer", version: 1 });
+  emit("session_started", { observer: observerName, version: 1 });
 
   return {
     playRequested,
