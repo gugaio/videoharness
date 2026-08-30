@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
+import shaka from "shaka-player";
 import { Link, useParams } from "react-router-dom";
 import { useAuth } from "@clerk/react";
 import { getStream } from "../api";
@@ -40,8 +41,12 @@ export default function StreamingPage() {
 
     const url = stream.proxy_path;
     let hls: Hls | null = null;
+    let shakaPlayer: InstanceType<typeof shaka.Player> | null = null;
 
-    if (Hls.isSupported()) {
+    if (stream.format === "dash") {
+      shakaPlayer = new shaka.Player();
+      void shakaPlayer.attach(video).then(() => shakaPlayer?.load(url)).then(() => video.play()).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Could not play DASH stream."));
+    } else if (Hls.isSupported()) {
       hls = new Hls();
       hls.loadSource(url);
       hls.attachMedia(video);
@@ -54,6 +59,7 @@ export default function StreamingPage() {
 
     return () => {
       if (hls) hls.destroy();
+      if (shakaPlayer) void shakaPlayer.destroy();
     };
   }, [stream]);
 

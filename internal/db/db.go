@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS streams (
     storage_key                TEXT,
     error_code                 TEXT,
     error_message              TEXT,
+    format                     TEXT NOT NULL DEFAULT 'hls',
     created_at                 TEXT NOT NULL,
     updated_at                 TEXT NOT NULL
 );`
@@ -70,6 +71,7 @@ CREATE TABLE IF NOT EXISTS streams (
 		{"storage_key", "TEXT"},
 		{"error_code", "TEXT"},
 		{"error_message", "TEXT"},
+		{"format", "TEXT NOT NULL DEFAULT 'hls'"},
 		{"updated_at", "TEXT"},
 	} {
 		if err := d.ensureColumn(column.name, column.definition); err != nil {
@@ -322,7 +324,7 @@ func (d *DB) ensureProxyRequestColumn(name, definition string) error {
 
 func (d *DB) InsertStream(st models.Stream) error {
 	_, err := d.conn.Exec(
-		`INSERT INTO streams (id, label, original_url, proxy_path, active_preset, owner_id, workspace_slug, mode, capture_status, requested_duration_seconds, duration_seconds, total_bytes, resource_count, storage_key, error_code, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO streams (id, label, original_url, proxy_path, active_preset, owner_id, workspace_slug, mode, capture_status, requested_duration_seconds, duration_seconds, total_bytes, resource_count, storage_key, error_code, error_message, format, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		st.ID,
 		st.Label,
 		st.OriginalURL,
@@ -339,6 +341,7 @@ func (d *DB) InsertStream(st models.Stream) error {
 		st.StorageKey,
 		st.ErrorCode,
 		st.ErrorMessage,
+		st.Format,
 		st.CreatedAt.UTC().Format(time.RFC3339),
 		st.UpdatedAt.UTC().Format(time.RFC3339),
 	)
@@ -356,12 +359,12 @@ func (d *DB) DeleteStream(id string) error {
 }
 
 func (d *DB) ListStreams() ([]models.Stream, error) {
-	return d.queryStreams(`SELECT id, label, original_url, proxy_path, active_preset, owner_id, workspace_slug, mode, capture_status, requested_duration_seconds, duration_seconds, total_bytes, resource_count, storage_key, error_code, error_message, created_at, updated_at FROM streams ORDER BY created_at ASC`)
+	return d.queryStreams(`SELECT id, label, original_url, proxy_path, active_preset, owner_id, workspace_slug, mode, capture_status, requested_duration_seconds, duration_seconds, total_bytes, resource_count, storage_key, error_code, error_message, format, created_at, updated_at FROM streams ORDER BY created_at ASC`)
 }
 
 func (d *DB) ListStreamsByOwner(ownerID string) ([]models.Stream, error) {
 	rows, err := d.conn.Query(
-		`SELECT id, label, original_url, proxy_path, active_preset, owner_id, workspace_slug, mode, capture_status, requested_duration_seconds, duration_seconds, total_bytes, resource_count, storage_key, error_code, error_message, created_at, updated_at FROM streams WHERE owner_id = ? ORDER BY created_at ASC`,
+		`SELECT id, label, original_url, proxy_path, active_preset, owner_id, workspace_slug, mode, capture_status, requested_duration_seconds, duration_seconds, total_bytes, resource_count, storage_key, error_code, error_message, format, created_at, updated_at FROM streams WHERE owner_id = ? ORDER BY created_at ASC`,
 		ownerID,
 	)
 	if err != nil {
@@ -385,7 +388,7 @@ func scanStreams(rows *sql.Rows) ([]models.Stream, error) {
 	for rows.Next() {
 		var st models.Stream
 		var createdAt, updatedAt string
-		if err := rows.Scan(&st.ID, &st.Label, &st.OriginalURL, &st.ProxyPath, &st.ActivePreset, &st.OwnerID, &st.WorkspaceSlug, &st.Mode, &st.CaptureStatus, &st.RequestedDurationSeconds, &st.DurationSeconds, &st.TotalBytes, &st.ResourceCount, &st.StorageKey, &st.ErrorCode, &st.ErrorMessage, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&st.ID, &st.Label, &st.OriginalURL, &st.ProxyPath, &st.ActivePreset, &st.OwnerID, &st.WorkspaceSlug, &st.Mode, &st.CaptureStatus, &st.RequestedDurationSeconds, &st.DurationSeconds, &st.TotalBytes, &st.ResourceCount, &st.StorageKey, &st.ErrorCode, &st.ErrorMessage, &st.Format, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan stream: %w", err)
 		}
 		ts, err := time.Parse(time.RFC3339, createdAt)
@@ -396,6 +399,9 @@ func scanStreams(rows *sql.Rows) ([]models.Stream, error) {
 		st.UpdatedAt, err = time.Parse(time.RFC3339, updatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("parse updated_at %q: %w", updatedAt, err)
+		}
+		if st.Format == "" {
+			st.Format = models.FormatHLS
 		}
 		out = append(out, st)
 	}

@@ -14,6 +14,7 @@ export default function WorkspacePage() {
   const [url, setUrl] = useState("");
   const [label, setLabel] = useState("");
   const [duration, setDuration] = useState(60);
+  const [format, setFormat] = useState<"hls" | "dash">("hls");
   const [mode, setMode] = useState<"clone" | "proxy">("proxy");
   const [isCreatingClone, setIsCreatingClone] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,7 +37,7 @@ export default function WorkspacePage() {
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     try {
-      const created = await addStream(url.trim(), duration, label.trim(), token);
+      const created = await addStream(url.trim(), duration, label.trim(), token, format);
       setStreams((prev) => [...prev, withPresets(created)]);
       setUrl("");
       setLabel("");
@@ -133,7 +134,7 @@ export default function WorkspacePage() {
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   required
-                  placeholder="https://example.com/master.m3u8"
+                  placeholder="https://example.com/manifest.mpd"
                   className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/25 px-5 py-4 text-sm text-white outline-none transition placeholder:text-stone-500 focus:border-amber-100/60 focus:ring-2 focus:ring-amber-100/15"
                 />
                 <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-stone-300">
@@ -146,6 +147,13 @@ export default function WorkspacePage() {
                     onChange={(e) => setDuration(Math.max(1, Math.min(300, Number(e.target.value) || 60)))}
                     className="w-14 bg-transparent text-right text-white outline-none"
                   />
+                </label>
+                <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-stone-300">
+                  <span>Format</span>
+                  <select value={format} onChange={(e) => setFormat(e.target.value as "hls" | "dash")} className="bg-transparent text-white outline-none">
+                    <option value="hls" className="bg-zinc-900">HLS</option>
+                    <option value="dash" className="bg-zinc-900">DASH</option>
+                  </select>
                 </label>
                 <button
                   type="submit"
@@ -208,6 +216,7 @@ export default function WorkspacePage() {
                       </td>
                       <td className="px-4 py-5 text-xs text-stone-300 sm:px-5">
                         {stream.label && <span className="mb-1 block truncate text-sm font-medium text-white md:hidden">{stream.label}</span>}
+                        <span className="mb-1 block uppercase tracking-wide text-amber-100/80">{stream.format}</span>
                         <span className="mt-1 block capitalize">{stream.capture_status}</span>
                         {stream.duration_seconds !== undefined && <span className="mt-1 block text-stone-500">{stream.duration_seconds.toFixed(1)} s</span>}
                         {stream.error_message && <span className="mt-1 block max-w-40 text-red-300">{stream.error_message}</span>}

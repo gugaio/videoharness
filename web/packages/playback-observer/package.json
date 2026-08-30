@@ -4,7 +4,9 @@
   "description": "Browser playback telemetry observer for HTML5 media and HLS.js.",
   "license": "MIT",
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "sideEffects": false,
   "publishConfig": {
     "access": "public"
@@ -22,6 +24,11 @@
       "types": "./dist/hls/index.d.ts",
       "import": "./dist/hls/index.js",
       "require": "./dist/hls/index.cjs"
+    },
+    "./shaka": {
+      "types": "./dist/shaka/index.d.ts",
+      "import": "./dist/shaka/index.js",
+      "require": "./dist/shaka/index.cjs"
     }
   },
   "scripts": {
@@ -31,13 +38,20 @@
     "prepublishOnly": "npm run build && npm test"
   },
   "peerDependencies": {
-    "hls.js": ">=1.0.0"
+    "hls.js": ">=1.0.0",
+    "shaka-player": ">=4.0.0"
   },
   "peerDependenciesMeta": {
-    "hls.js": { "optional": true }
+    "hls.js": {
+      "optional": true
+    },
+    "shaka-player": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "hls.js": "1.7.1",
+    "shaka-player": "5.2.7",
     "jsdom": "26.1.0",
     "tsup": "^8.0.0",
     "typescript": "~5.6.2",

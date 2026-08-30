@@ -144,12 +144,16 @@ func main() {
 	mux.HandleFunc("POST /i/{token}/events", srv.handlePlaybackEvents)
 	mux.HandleFunc("OPTIONS /i/{token}/events", srv.handlePlaybackEventsPreflight)
 	mux.HandleFunc("GET /p.m3u8", srv.handleOnDemand)
+	mux.HandleFunc("GET /p.mpd", srv.handleOnDemand)
 	mux.HandleFunc("GET /p", srv.handleOnDemand)
 	mux.HandleFunc("OPTIONS /p.m3u8", handlePreflight)
+	mux.HandleFunc("OPTIONS /p.mpd", handlePreflight)
 	mux.HandleFunc("OPTIONS /p", handlePreflight)
 	mux.HandleFunc("GET /ws/{slug}/p.m3u8", srv.handleWorkspaceOnDemand)
+	mux.HandleFunc("GET /ws/{slug}/p.mpd", srv.handleWorkspaceOnDemand)
 	mux.HandleFunc("GET /ws/{slug}/p", srv.handleWorkspaceOnDemand)
 	mux.HandleFunc("OPTIONS /ws/{slug}/p.m3u8", handlePreflight)
+	mux.HandleFunc("OPTIONS /ws/{slug}/p.mpd", handlePreflight)
 	mux.HandleFunc("OPTIONS /ws/{slug}/p", handlePreflight)
 	srv.engine.Register(mux)
 
@@ -194,6 +198,7 @@ func seedBBBDemo(mem *store.MemoryStore, cfg config.Config) error {
 		ActivePreset:             "clean",
 		Mode:                     models.ModeProxy,
 		CaptureStatus:            models.CaptureReady,
+		Format:                   models.FormatHLS,
 		RequestedDurationSeconds: 60,
 		CreatedAt:                time.Now().UTC(),
 		UpdatedAt:                time.Now().UTC(),
@@ -266,6 +271,7 @@ func (s *Server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 		Label           string  `json:"label"`
 		DurationSeconds float64 `json:"duration_seconds"`
 		Mode            string  `json:"mode"`
+		Format          string  `json:"format"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -289,6 +295,14 @@ func (s *Server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `mode must be "proxy" or "clone"`, http.StatusBadRequest)
 		return
 	}
+	format := strings.ToLower(strings.TrimSpace(body.Format))
+	if format == "" {
+		format = formatFromURL(rawURL)
+	}
+	if !models.ValidFormat(format) {
+		http.Error(w, `format must be "hls" or "dash"`, http.StatusBadRequest)
+		return
+	}
 	duration, err := capture.ValidateDuration(body.DurationSeconds)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -309,11 +323,12 @@ func (s *Server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 		ID:                       id,
 		Label:                    label,
 		OriginalURL:              rawURL,
-		ProxyPath:                fmt.Sprintf("/s/%s/master.m3u8", id),
+		ProxyPath:                streamProxyPath(id, format),
 		ActivePreset:             "clean",
 		Mode:                     mode,
 		CaptureStatus:            captureStatus,
 		RequestedDurationSeconds: duration,
+		Format:                   format,
 		CreatedAt:                time.Now().UTC(),
 		UpdatedAt:                time.Now().UTC(),
 	}
@@ -445,12 +460,16 @@ func (s *Server) buildOnDemandStream(r *http.Request, slug *string) (*models.Str
 		preset = models.Presets[0].Key
 	}
 
-	id := onDemandID(rawURL, slug, preset, duration)
+	format := formatForRequest(r, rawURL)
+	if !models.ValidFormat(format) {
+		return nil, &handlerError{http.StatusBadRequest, `format must be "hls" or "dash"`}
+	}
+	id := onDemandIDForFormat(rawURL, slug, preset, duration, format)
 	now := time.Now().UTC()
 	st := &models.Stream{
 		ID:                       id,
 		OriginalURL:              rawURL,
-		ProxyPath:                fmt.Sprintf("/s/%s/master.m3u8", id),
+		ProxyPath:                streamProxyPath(id, format),
 		ActivePreset:             preset,
 		Mode:                     models.ModeProxy,
 		CaptureStatus:            models.CaptureReady,
@@ -458,6 +477,7 @@ func (s *Server) buildOnDemandStream(r *http.Request, slug *string) (*models.Str
 		WorkspaceSlug:            slug,
 		CreatedAt:                now,
 		UpdatedAt:                now,
+		Format:                   format,
 	}
 	if existing, ok := s.store.Get(id); ok {
 		st.CreatedAt = existing.CreatedAt
@@ -487,13 +507,41 @@ func parseOnDemandDuration(raw string) (float64, error) {
 // simultaneous presets or duration limits for one source cannot overwrite one
 // another in the in-memory store.
 func onDemandID(rawURL string, slug *string, preset string, duration float64) string {
+	return onDemandIDForFormat(rawURL, slug, preset, duration, formatFromURL(rawURL))
+}
+
+func onDemandIDForFormat(rawURL string, slug *string, preset string, duration float64, format string) string {
 	key := strings.TrimSpace(rawURL)
 	if slug != nil && *slug != "" {
 		key = *slug + "\x00" + key
 	}
-	key += "\x00" + preset + "\x00" + strconv.FormatFloat(duration, 'f', -1, 64)
+	key += "\x00" + preset + "\x00" + strconv.FormatFloat(duration, 'f', -1, 64) + "\x00" + format
 	sum := sha256.Sum256([]byte(key))
 	return "od-" + hex.EncodeToString(sum[:8])
+}
+
+func formatForRequest(r *http.Request, rawURL string) string {
+	if strings.HasSuffix(strings.ToLower(r.URL.Path), ".mpd") {
+		return models.FormatDASH
+	}
+	if value := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format"))); value != "" {
+		return value
+	}
+	return formatFromURL(rawURL)
+}
+
+func formatFromURL(rawURL string) string {
+	if strings.HasSuffix(strings.ToLower(strings.Split(rawURL, "?")[0]), ".mpd") {
+		return models.FormatDASH
+	}
+	return models.FormatHLS
+}
+
+func streamProxyPath(id, format string) string {
+	if format == models.FormatDASH {
+		return fmt.Sprintf("/s/%s/manifest.mpd", id)
+	}
+	return fmt.Sprintf("/s/%s/master.m3u8", id)
 }
 
 func presetKeys() string {
@@ -587,6 +635,8 @@ func (s *Server) handleCreatePlaybackSession(w http.ResponseWriter, r *http.Requ
 		Source          string  `json:"source"`
 		StreamID        string  `json:"stream_id"`
 		Preset          string  `json:"preset"`
+		Format          string  `json:"format"`
+		PlayerName      string  `json:"player_name"`
 		ContentID       string  `json:"content_id"`
 		AllowedOrigin   string  `json:"allowed_origin"`
 		DurationSeconds float64 `json:"duration_seconds"`
@@ -599,6 +649,7 @@ func (s *Server) handleCreatePlaybackSession(w http.ResponseWriter, r *http.Requ
 	body.Source = strings.TrimSpace(body.Source)
 	body.StreamID = strings.TrimSpace(body.StreamID)
 	body.Preset = strings.TrimSpace(body.Preset)
+	body.Format = strings.ToLower(strings.TrimSpace(body.Format))
 	if body.Preset == "" {
 		body.Preset = "clean"
 	}
@@ -613,12 +664,20 @@ func (s *Server) handleCreatePlaybackSession(w http.ResponseWriter, r *http.Requ
 	}
 	streamID := body.StreamID
 	playbackURL := ""
+	format := body.Format
 	if body.Source != "" {
 		if err := pubnet.ValidateURL(body.Source); err != nil {
 			http.Error(w, "invalid url: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		streamID = onDemandID(body.Source, &slug, body.Preset, duration)
+		if format == "" {
+			format = formatFromURL(body.Source)
+		}
+		if !models.ValidFormat(format) {
+			http.Error(w, "invalid format", http.StatusBadRequest)
+			return
+		}
+		streamID = onDemandIDForFormat(body.Source, &slug, body.Preset, duration, format)
 		params := url.Values{"url": {body.Source}}
 		if body.Preset != "clean" {
 			params.Set("preset", body.Preset)
@@ -626,7 +685,11 @@ func (s *Server) handleCreatePlaybackSession(w http.ResponseWriter, r *http.Requ
 		if duration != 60 {
 			params.Set("duration", strconv.FormatFloat(duration, 'f', -1, 64))
 		}
-		playbackURL = "/ws/" + slug + "/p.m3u8?" + params.Encode()
+		if format == models.FormatDASH {
+			playbackURL = "/ws/" + slug + "/p.mpd?" + params.Encode()
+		} else {
+			playbackURL = "/ws/" + slug + "/p.m3u8?" + params.Encode()
+		}
 	} else if streamID != "" {
 		stream, exists := s.store.Get(streamID)
 		if !exists || stream.WorkspaceSlug == nil || *stream.WorkspaceSlug != slug {
@@ -634,6 +697,7 @@ func (s *Server) handleCreatePlaybackSession(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		playbackURL = stream.ProxyPath
+		format = stream.Format
 	} else {
 		http.Error(w, "source or stream_id is required", http.StatusBadRequest)
 		return
@@ -792,6 +856,8 @@ var playbackEventTypes = map[string]bool{
 	"fragment_parsed": true, "fragment_buffered": true, "buffer_appended": true, "buffer_append_error": true,
 	"level_switching": true, "level_switched": true, "emergency_downswitch": true, "fps_drop": true,
 	"stall_detected": true, "stall_resolved": true, "hls_error": true,
+	"adaptation": true, "quality_changed": true, "gap_jumped": true,
+	"segment_downloaded": true, "segment_download_failed": true, "shaka_error": true,
 }
 
 func validatePlaybackEvent(event telemetry.PlaybackEvent) error {

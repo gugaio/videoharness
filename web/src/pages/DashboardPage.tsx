@@ -12,6 +12,7 @@ export default function DashboardPage() {
   const query = new URLSearchParams(useLocation().search);
   const source = query.get("source") ?? undefined;
   const preset = query.get("preset") ?? undefined;
+  const format = query.get("format") ?? undefined;
   const isProxy = !id;
   const [stream, setStream] = useState<Stream | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
@@ -19,9 +20,10 @@ export default function DashboardPage() {
   const previewParams = new URLSearchParams();
   if (source) previewParams.set("source", source);
   if (preset) previewParams.set("preset", preset);
+  if (format) previewParams.set("format", format);
   const previewPath = isProxy
     ? source ? `/preview/proxy?${previewParams.toString()}` : null
-    : `/preview/stream/${id}`;
+    : `/preview/stream/${id}${stream ? `?format=${stream.format}` : ""}`;
 
   useEffect(() => {
     if (!id) {

@@ -3,6 +3,7 @@ import Hls from "hls.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { observePlayback } from "./core";
 import { hlsJsAdapter } from "./hls/hlsjs";
+import { shakaAdapter } from "./shaka/shaka";
 import type { ObserverEvent } from "./types";
 
 function mediaFixture() {
@@ -79,5 +80,22 @@ describe("HLS.js adapter", () => {
 		expect(emitted).toEqual(expect.arrayContaining(["stall_detected", "buffer_append_error"]));
 		detach();
 		expect(listeners.get(Hls.Events.ERROR)).toHaveLength(0);
+	});
+});
+
+describe("Shaka adapter", () => {
+	it("normalizes download, adaptation, buffering and error events", () => {
+		const player = new EventTarget() as EventTarget & { getStats: () => Record<string, unknown> };
+		player.getStats = () => ({ estimatedBandwidth: 1_000_000 });
+		const emitted: string[] = [];
+		const detach = shakaAdapter(player).attach((type) => emitted.push(type));
+		player.dispatchEvent(new Event("downloadcompleted"));
+		player.dispatchEvent(new Event("adaptation"));
+		player.dispatchEvent(new Event("buffering"));
+		player.dispatchEvent(new Event("error"));
+		expect(emitted).toEqual(expect.arrayContaining(["segment_downloaded", "adaptation", "stall_detected", "shaka_error"]));
+		detach();
+		player.dispatchEvent(new Event("error"));
+		expect(emitted.filter((type) => type === "shaka_error")).toHaveLength(1);
 	});
 });

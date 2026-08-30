@@ -31,10 +31,10 @@ export async function getStream(id: string): Promise<Stream> {
   return data.stream;
 }
 
-export async function addStream(url: string, durationSeconds = 60, label = "", token?: string): Promise<Stream> {
+export async function addStream(url: string, durationSeconds = 60, label = "", token?: string, format?: "hls" | "dash"): Promise<Stream> {
   const data = await request<{ stream: Stream }>(
     "/api/streams",
-    { method: "POST", body: JSON.stringify({ url, label, duration_seconds: durationSeconds, mode: "clone" }) },
+    { method: "POST", body: JSON.stringify({ url, label, duration_seconds: durationSeconds, mode: "clone", format }) },
     token,
   );
   return data.stream;
@@ -93,7 +93,7 @@ export function withPresets(stream: Omit<Stream, "presets">): Stream {
   return { ...stream, presets: DEFAULT_PRESETS };
 }
 
-export async function createPlaybackSession(token: string, input: { source?: string; stream_id?: string; preset?: string; content_id?: string; duration_seconds?: number; allowed_origin?: string }): Promise<CreatedPlaybackSession> {
+export async function createPlaybackSession(token: string, input: { source?: string; stream_id?: string; preset?: string; format?: "hls" | "dash"; content_id?: string; duration_seconds?: number; allowed_origin?: string }): Promise<CreatedPlaybackSession> {
 	return request<CreatedPlaybackSession>("/api/playback/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }, token);
 }
 

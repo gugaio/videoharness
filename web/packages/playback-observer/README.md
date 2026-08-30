@@ -1,5 +1,10 @@
 # @streammock/playback-observer
 
+Includes optional adapters for HLS.js (/hls) and Shaka Player (/shaka). The
+Shaka adapter observes DASH or HLS player downloads, buffering, adaptations,
+quality changes, gaps and errors without adding a runtime dependency to the
+core entry point.
+
 Browser playback telemetry observer for HTML5 media and HLS.js. Listens to native `<video>` events and (optionally) HLS.js events, normalizes everything into structured `ObserverEvent`s, and ships them in batches to your backend via a pluggable transport.
 
 - Player-agnostic core (works with any `<video>` / `HTMLMediaElement`, including native Safari HLS).

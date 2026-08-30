@@ -50,10 +50,14 @@ func NewEngine(cfg config.Config, st *store.MemoryStore, chaos *Chaos) *Engine {
 
 func (e *Engine) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /s/{id}/master.m3u8", e.serveMaster)
+	mux.HandleFunc("GET /s/{id}/manifest.mpd", e.serveMaster)
 	mux.HandleFunc("GET /s/{id}/r/{encoded}", e.serveProxied)
+	mux.HandleFunc("GET /s/{id}/d/{base}/{resource...}", e.serveDASHResource)
 	mux.HandleFunc("GET /s/{id}/{resource...}", e.serveLocal)
 	mux.HandleFunc("OPTIONS /s/{id}/master.m3u8", handlePreflight)
+	mux.HandleFunc("OPTIONS /s/{id}/manifest.mpd", handlePreflight)
 	mux.HandleFunc("OPTIONS /s/{id}/r/{encoded}", handlePreflight)
+	mux.HandleFunc("OPTIONS /s/{id}/d/{base}/{resource...}", handlePreflight)
 	mux.HandleFunc("OPTIONS /s/{id}/{resource...}", handlePreflight)
 }
 
@@ -64,13 +68,24 @@ func (e *Engine) ServeMasterStream(w http.ResponseWriter, r *http.Request, st *m
 	sw, done := e.track(w, r, st, models.KindMaster, st.OriginalURL)
 	defer done()
 	if st.Mode == models.ModeClone {
-		e.serveLocalResource(sw, r, st, "master.m3u8")
+		e.serveLocalResource(sw, r, st, manifestName(st))
 		return
 	}
 	if e.applyChaos(sw, r, true, st.ActivePreset) {
 		return
 	}
+	if st.Format == models.FormatDASH {
+		e.serveDASHManifest(sw, r, st, st.OriginalURL)
+		return
+	}
 	e.servePlaylist(sw, r, st, st.OriginalURL)
+}
+
+func manifestName(st *models.Stream) string {
+	if st.Format == models.FormatDASH {
+		return "manifest.mpd"
+	}
+	return "master.m3u8"
 }
 
 // handlePreflight answers CORS preflight requests for all playback routes so
@@ -144,6 +159,43 @@ func (e *Engine) serveProxied(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	e.serveSegment(sw, r, st, targetURL)
+}
+
+// serveDASHResource resolves a resource below a proxied DASH BaseURL. Keeping
+// the resource path outside the encoded origin base is deliberate: Shaka can
+// substitute $Number$, $Time$, and related SegmentTemplate tokens normally.
+func (e *Engine) serveDASHResource(w http.ResponseWriter, r *http.Request) {
+	st, ok := e.store.Get(r.PathValue("id"))
+	if !ok || st.Mode == models.ModeClone || st.Format != models.FormatDASH {
+		http.NotFound(w, r)
+		return
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(r.PathValue("base"))
+	if err != nil {
+		http.Error(w, "invalid DASH resource base", http.StatusBadRequest)
+		return
+	}
+	base, err := url.Parse(string(decoded))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		http.Error(w, "invalid DASH resource base", http.StatusBadRequest)
+		return
+	}
+	resource := r.PathValue("resource")
+	if !validLogicalPath(resource) {
+		http.NotFound(w, r)
+		return
+	}
+	target := base.ResolveReference(&url.URL{Path: resource}).String()
+	kind := models.KindSegment
+	if strings.Contains(strings.ToLower(resource), "init") {
+		kind = models.KindAsset
+	}
+	sw, done := e.track(w, r, st, kind, target)
+	defer done()
+	if e.applyChaos(sw, r, false, st.ActivePreset) {
+		return
+	}
+	e.serveSegment(sw, r, st, target)
 }
 
 func (e *Engine) serveLocal(w http.ResponseWriter, r *http.Request) {
@@ -240,6 +292,29 @@ func (e *Engine) servePlaylist(w http.ResponseWriter, r *http.Request, st *model
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	transformed := e.transformPlaylist(body, base, st.ID, e.playlistTruncateSeconds(st))
+	_, _ = w.Write(transformed)
+}
+
+func (e *Engine) serveDASHManifest(w http.ResponseWriter, r *http.Request, st *models.Stream, rawURL string) {
+	base, err := url.Parse(rawURL)
+	if err != nil {
+		http.Error(w, "invalid DASH manifest url", http.StatusBadRequest)
+		return
+	}
+	body, err := e.fetch(r.Context(), rawURL, statusWriterFrom(w))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to fetch upstream DASH manifest: %v", err), http.StatusBadGateway)
+		return
+	}
+	transformed, err := e.transformDASHManifest(body, base, st.ID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to transform DASH manifest: %v", err), http.StatusBadGateway)
+		return
+	}
+	setCORS(w.Header())
+	w.Header().Set("Content-Type", "application/dash+xml")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(transformed)
 }
 

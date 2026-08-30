@@ -226,7 +226,8 @@ func rangeResult(clientRange string, sw *statusWriter) string {
 }
 
 func kindForPlaylistPath(name string) string {
-	if strings.HasSuffix(strings.ToLower(name), ".m3u8") {
+	lower := strings.ToLower(name)
+	if strings.HasSuffix(lower, ".m3u8") || strings.HasSuffix(lower, ".mpd") {
 		return models.KindVariant
 	}
 	return models.KindAsset

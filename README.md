@@ -2,6 +2,22 @@
 
 Clone, mock and test HLS/DASH streams.
 
+## Streaming formats
+
+StreamMock proxies HLS (.m3u8) and DASH (.mpd) through public or
+workspace-scoped endpoints. DASH clones support clear, static MPDs with one
+Period, SegmentTemplate/SegmentTimeline, a highest-bandwidth video
+representation and an optional audio representation. DRM, dynamic MPDs,
+multiple Periods and SegmentBase-only clones are rejected explicitly rather
+than producing an incomplete local copy.
+
+- Public: /p.m3u8?url=… and /p.mpd?url=…
+- Workspace: /ws/{slug}/p.m3u8?url=… and /ws/{slug}/p.mpd?url=…
+- Local clones: /s/{id}/master.m3u8 or /s/{id}/manifest.mpd
+
+The built-in preview uses HLS.js for HLS and Shaka Player for DASH. Both use
+CMCD query parameters and feed the Playback Inspector.
+
 ## Deploy with Docker Compose
 
 1. Create your deployment environment file: `cp .env.example .env`.

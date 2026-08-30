@@ -140,6 +140,9 @@ type target struct {
 }
 
 func (m *Manager) materialize(ctx context.Context, stream models.Stream, workspace string) (materialized, error) {
+	if stream.Format == models.FormatDASH {
+		return m.materializeDASH(ctx, stream, workspace)
+	}
 	rootBytes, rootURL, err := m.source.text(ctx, stream.OriginalURL, maxManifestBytes)
 	if err != nil {
 		return materialized{}, err

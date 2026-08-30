@@ -10,6 +10,7 @@ export interface Stream {
   original_url: string;
   proxy_path: string;
   active_preset: string;
+  format: "hls" | "dash";
   owner_id: string | null;
   mode: "proxy" | "clone";
   capture_status: "queued" | "capturing" | "ready" | "failed";

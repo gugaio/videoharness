@@ -19,7 +19,8 @@
     "baseUrl": ".",
     "paths": {
       "@streammock/playback-observer": ["./packages/playback-observer/src/index.ts"],
-      "@streammock/playback-observer/hls": ["./packages/playback-observer/src/hls/index.ts"]
+      "@streammock/playback-observer/hls": ["./packages/playback-observer/src/hls/index.ts"],
+      "@streammock/playback-observer/shaka": ["./packages/playback-observer/src/shaka/index.ts"]
     }
   },
   "include": ["src"]

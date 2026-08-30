@@ -5,7 +5,8 @@ export type ObserverEventType =
   | "manifest_loading" | "manifest_loaded" | "manifest_parsed"
   | "fragment_loading" | "fragment_loaded" | "fragment_parsed" | "fragment_buffered"
   | "buffer_appended" | "buffer_append_error" | "level_switching" | "level_switched"
-  | "emergency_downswitch" | "fps_drop" | "stall_detected" | "stall_resolved" | "hls_error";
+  | "emergency_downswitch" | "fps_drop" | "stall_detected" | "stall_resolved" | "hls_error"
+  | "adaptation" | "quality_changed" | "gap_jumped" | "segment_downloaded" | "segment_download_failed" | "shaka_error";
 
 export interface ObserverEvent {
   id: string;

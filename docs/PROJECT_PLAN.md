@@ -72,8 +72,9 @@ aprovado cobre as fases 0 a 4 desse documento.
 
 ## Fase 4 — Formatos e cenários avançados
 
-- Suporte real a DASH, com parsing e reescrita próprios; não tratar manifests
-  DASH como segmentos binários.
+- Suporte real a DASH, com parsing XML, reescrita de BaseURL e
+  SegmentTemplate/SegmentTimeline, proxy .mpd e clone VOD local.
+- Preview DASH com Shaka Player e adapter playback-observer/shaka.
 - Captura de múltiplas variantes, faixas de áudio e legendas.
 - Controles de captura, como duração, qualidade e ponto inicial para conteúdo
   live.

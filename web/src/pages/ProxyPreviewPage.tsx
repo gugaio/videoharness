@@ -1,10 +1,12 @@
 import { useAuth } from "@clerk/react";
 import Hls from "hls.js";
+import shaka from "shaka-player";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { createPlaybackSession } from "../api";
 import { observePlayback } from "@streammock/playback-observer";
 import { hlsJsAdapter } from "@streammock/playback-observer/hls";
+import { shakaAdapter } from "@streammock/playback-observer/shaka";
 import type { CreatedPlaybackSession } from "../types";
 
 export default function ProxyPreviewPage() {
@@ -13,6 +15,7 @@ export default function ProxyPreviewPage() {
   const query = new URLSearchParams(useLocation().search);
   const source = query.get("source")?.trim() ?? "";
   const preset = query.get("preset") ?? "clean";
+  const format = (query.get("format") ?? (source.toLowerCase().split("?")[0].endsWith(".mpd") ? "dash" : "hls")) as "hls" | "dash";
   const isClone = Boolean(id);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [prepared, setPrepared] = useState<CreatedPlaybackSession | null>(null);
@@ -21,6 +24,7 @@ export default function ProxyPreviewPage() {
   const dashboardParams = new URLSearchParams();
   if (source) dashboardParams.set("source", source);
   if (preset) dashboardParams.set("preset", preset);
+  if (format) dashboardParams.set("format", format);
   const dashboardPath = isClone ? `/dashboard/stream/${id}` : `/dashboard/proxy?${dashboardParams.toString()}`;
 
   useEffect(() => {
@@ -40,7 +44,7 @@ export default function ProxyPreviewPage() {
         if (!token) throw new Error("Authentication is required to create an Inspector session.");
         const session = await createPlaybackSession(token, isClone
           ? { stream_id: id, allowed_origin: window.location.origin }
-          : { source, preset, allowed_origin: window.location.origin });
+          : { source, preset, format, allowed_origin: window.location.origin });
         if (!cancelled) setPrepared(session);
       })
       .catch((reason: unknown) => {
@@ -52,11 +56,27 @@ export default function ProxyPreviewPage() {
     return () => {
       cancelled = true;
     };
-  }, [getToken, id, isClone, preset, source]);
+  }, [format, getToken, id, isClone, preset, source]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !prepared) return;
+
+	if (format === "dash") {
+	  let cancelled = false;
+	  const player = new shaka.Player();
+	  const observer = observePlayback({ media: video, adapter: shakaAdapter(player), sessionId: prepared.cmcd_session_id, ingestUrl: prepared.ingest_url });
+	  observer.playRequested();
+	  player.configure({ cmcd: { enabled: true, useHeaders: false, sessionId: prepared.cmcd_session_id, contentId: prepared.content_id, version: 1 } });
+	  player.addEventListener("error", ((event: Event) => {
+	    const detail = (event as Event & { detail?: { code?: number; message?: string } }).detail;
+	    if (!cancelled) setError(`Playback failed${detail?.code ? ` (Shaka ${detail.code})` : ""}: ${detail?.message ?? "an unrecoverable player error"}`);
+	  }) as EventListener);
+	  void player.attach(video).then(() => player.load(prepared.playback_url)).then(() => video.play()).catch((reason: unknown) => {
+	    if (!cancelled) setError(reason instanceof Error ? `Playback failed: ${reason.message}` : "Playback failed to start.");
+	  });
+	  return () => { cancelled = true; observer.destroy(); void player.destroy(); };
+	}
 
     if (Hls.isSupported()) {
 	  const hls = new Hls({ cmcd: { sessionId: prepared.cmcd_session_id, contentId: prepared.content_id, useHeaders: false, version: 1 } });
@@ -91,8 +111,8 @@ export default function ProxyPreviewPage() {
       };
     }
 
-    setError("This browser cannot play HLS streams.");
-  }, [prepared]);
+    setError(`This browser cannot play ${format.toUpperCase()} streams.`);
+  }, [format, prepared]);
 
   return (
     <main className="min-h-screen bg-[#11100f] text-stone-100">

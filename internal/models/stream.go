@@ -19,6 +19,7 @@ type Stream struct {
 	StorageKey               *string   `json:"storage_key,omitempty"`
 	ErrorCode                *string   `json:"error_code,omitempty"`
 	ErrorMessage             *string   `json:"error_message,omitempty"`
+	Format                   string    `json:"format"`
 	CreatedAt                time.Time `json:"created_at"`
 	UpdatedAt                time.Time `json:"updated_at"`
 }
@@ -32,6 +33,15 @@ const (
 	CaptureReady     = "ready"
 	CaptureFailed    = "failed"
 )
+
+const (
+	FormatHLS  = "hls"
+	FormatDASH = "dash"
+)
+
+func ValidFormat(value string) bool {
+	return value == FormatHLS || value == FormatDASH
+}
 
 type Resource struct {
 	StreamID    string

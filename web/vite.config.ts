@@ -10,6 +10,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@streammock/playback-observer/hls": playbackObserver("hls/index.ts"),
+      "@streammock/playback-observer/shaka": playbackObserver("shaka/index.ts"),
       "@streammock/playback-observer": playbackObserver("index.ts"),
     },
   },
