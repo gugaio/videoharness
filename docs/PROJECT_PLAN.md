@@ -25,6 +25,9 @@ demanda sem armazenar o conteúdo.
   segmentos completos.
 - HLS VOD MPEG-TS e fMP4 (`EXT-X-MAP`), inclusive recursos compartilhados por
   `EXT-X-BYTERANGE`.
+- Snapshot de HLS live usando os segmentos completos mais recentes, alinhamento
+  por Program Date Time/sequência, normalização de LL-HLS e fechamento local
+  com `EXT-X-ENDLIST`.
 - Seleção da variante mais alta ou preservação da ladder completa, áudios
   alternativos e legendas WebVTT.
 - Clone DASH clear e estático para o subconjunto suportado de
@@ -32,8 +35,9 @@ demanda sem armazenar o conteúdo.
 - Inventário de arquivos, hashes, bytes, contagem de faixas, progresso e erros
   estruturados no SQLite e na interface.
 
-Entradas já criptografadas, playlists live/LL-HLS, múltiplos Periods e DASH
-`SegmentBase` continuam sendo rejeitados explicitamente.
+Entradas já criptografadas, segmentos HLS marcados como gap, DASH dinâmico,
+múltiplos Periods e DASH `SegmentBase` continuam sendo rejeitados
+explicitamente.
 
 ## Fase 3 — Operação e Playback Inspector (concluída)
 
@@ -73,9 +77,10 @@ Ordem sugerida para a próxima rodada:
 1. **Compatibilidade de ingestão:** detectar áudio muxado na variante quando
    não há `EXT-X-MEDIA`, suportar mais layouts fMP4/DASH e produzir uma matriz
    automatizada de compatibilidade com Shaka Player, Safari e players móveis.
-2. **Captura de live:** selecionar um ponto inicial, congelar uma janela de live
-   de forma determinística e tratar descontinuidades; LL-HLS deve ser
-   normalizado para VOD, não reproduzido parcialmente.
+2. **Controles avançados de live:** configurar atraso em relação ao live edge,
+   selecionar um horário inicial e opcionalmente aguardar novos segmentos até
+   preencher toda a duração pedida. O snapshot imediato e a normalização
+   LL-HLS já estão implementados.
 3. **Hardening das chaves de teste:** criptografia dos valores em repouso,
    chave-mestra externa, auditoria e rotação/expiração opcional da licença.
 4. **Operação em escala:** fila de workers persistente, cancelamento/retry de

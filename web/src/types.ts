@@ -18,6 +18,7 @@ export interface Stream {
 	video_track_count: number;
 	audio_track_count: number;
 	subtitle_track_count: number;
+	source_live: boolean;
 	expires_at?: string;
   owner_id: string | null;
   mode: "proxy" | "clone";

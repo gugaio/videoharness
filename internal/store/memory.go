@@ -188,6 +188,14 @@ func (s *MemoryStore) MarkCapturing(id string) error {
 }
 
 func (s *MemoryStore) CompleteClone(id string, duration float64, totalBytes int64, storageKey string, resources []models.Resource, trackCounts ...int) error {
+	return s.completeClone(id, duration, totalBytes, storageKey, resources, false, trackCounts...)
+}
+
+func (s *MemoryStore) CompleteCloneWithMetadata(id string, duration float64, totalBytes int64, storageKey string, resources []models.Resource, sourceLive bool, trackCounts ...int) error {
+	return s.completeClone(id, duration, totalBytes, storageKey, resources, sourceLive, trackCounts...)
+}
+
+func (s *MemoryStore) completeClone(id string, duration float64, totalBytes int64, storageKey string, resources []models.Resource, sourceLive bool, trackCounts ...int) error {
 	videoTracks, audioTracks, subtitleTracks := 1, 0, 0
 	if len(trackCounts) > 0 {
 		videoTracks = trackCounts[0]
@@ -198,7 +206,7 @@ func (s *MemoryStore) CompleteClone(id string, duration float64, totalBytes int6
 	if len(trackCounts) > 2 {
 		subtitleTracks = trackCounts[2]
 	}
-	if err := s.db.CompleteClone(id, duration, totalBytes, storageKey, resources, videoTracks, audioTracks, subtitleTracks); err != nil {
+	if err := s.db.CompleteClone(id, duration, totalBytes, storageKey, resources, sourceLive, videoTracks, audioTracks, subtitleTracks); err != nil {
 		return err
 	}
 	for _, resource := range resources {
@@ -214,6 +222,7 @@ func (s *MemoryStore) CompleteClone(id string, duration float64, totalBytes int6
 		st.VideoTrackCount = videoTracks
 		st.AudioTrackCount = audioTracks
 		st.SubtitleTrackCount = subtitleTracks
+		st.SourceLive = sourceLive
 		st.StorageKey = &storageKey
 		st.ErrorCode = nil
 		st.ErrorMessage = nil

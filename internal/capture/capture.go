@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"streammock/internal/config"
 	"streammock/internal/models"
@@ -139,7 +140,7 @@ func (m *Manager) capture(ctx context.Context, id string) {
 		_ = m.store.FailClone(id, "STORAGE_FAILED", err.Error())
 		return
 	}
-	if err := m.store.CompleteClone(id, result.duration, result.totalBytes, filepath.ToSlash(filepath.Join("clones", id)), result.resources, result.videoTracks, result.audioTracks, result.subtitleTracks); err != nil {
+	if err := m.store.CompleteCloneWithMetadata(id, result.duration, result.totalBytes, filepath.ToSlash(filepath.Join("clones", id)), result.resources, result.sourceLive, result.videoTracks, result.audioTracks, result.subtitleTracks); err != nil {
 		_ = os.RemoveAll(final)
 		_ = m.store.FailClone(id, "DATABASE_FAILED", err.Error())
 	}
@@ -152,6 +153,7 @@ type materialized struct {
 	videoTracks    int
 	audioTracks    int
 	subtitleTracks int
+	sourceLive     bool
 }
 type target struct {
 	id, kind string
@@ -198,8 +200,6 @@ func (m *Manager) materialize(ctx context.Context, stream models.Stream, workspa
 		selectedVariants = []variant{{url: rootURL.String()}}
 	}
 	var targets []target
-	selectedByTarget := make(map[string][]segment)
-	actualDuration := duration
 	for index := range selectedVariants {
 		selected := selectedVariants[index]
 		videoBytes, videoURLBase, err := m.source.text(ctx, selected.url, maxManifestBytes)
@@ -213,16 +213,8 @@ func (m *Manager) materialize(ctx context.Context, stream models.Stream, workspa
 		if video.master {
 			return materialized{}, unsupported("nested HLS master playlists are not supported")
 		}
-		segments, selectedDuration, err := selectSegments(video, duration)
-		if err != nil {
-			return materialized{}, err
-		}
-		if index == 0 || selectedDuration < actualDuration {
-			actualDuration = selectedDuration
-		}
 		id := fmt.Sprintf("video-%d", index)
 		targets = append(targets, target{id: id, kind: "video", media: video, variant: &selectedVariants[index]})
-		selectedByTarget[id] = segments
 	}
 
 	selectedAudio := selectAudioRenditions(root, selectedVariants, stream.TrackSelection)
@@ -239,13 +231,8 @@ func (m *Manager) materialize(ctx context.Context, stream models.Stream, workspa
 		if media.master {
 			return materialized{}, unsupported("audio rendition must be an HLS media playlist")
 		}
-		segments, _, err := selectSegments(media, actualDuration)
-		if err != nil {
-			return materialized{}, err
-		}
 		id := fmt.Sprintf("audio-%d", index)
 		targets = append(targets, target{id: id, kind: "audio", media: media, audio: &selectedAudio[index]})
-		selectedByTarget[id] = segments
 	}
 	selectedSubtitles := selectSubtitleRenditions(root, selectedVariants, stream.TrackSelection)
 	for index := range selectedSubtitles {
@@ -261,13 +248,12 @@ func (m *Manager) materialize(ctx context.Context, stream models.Stream, workspa
 		if media.master {
 			return materialized{}, unsupported("subtitle rendition must be an HLS media playlist")
 		}
-		segments, _, err := selectSegments(media, actualDuration)
-		if err != nil {
-			return materialized{}, err
-		}
 		id := fmt.Sprintf("subtitle-%d", index)
 		targets = append(targets, target{id: id, kind: "subtitle", media: media, subtitle: &selectedSubtitles[index]})
-		selectedByTarget[id] = segments
+	}
+	selectedByTarget, actualDuration, sourceLive, err := selectTargetSegments(targets, duration)
+	if err != nil {
+		return materialized{}, err
 	}
 
 	var result materialized
@@ -304,8 +290,113 @@ func (m *Manager) materialize(ctx context.Context, stream models.Stream, workspa
 	result.videoTracks = len(selectedVariants)
 	result.audioTracks = len(selectedAudio)
 	result.subtitleTracks = len(selectedSubtitles)
+	result.sourceLive = sourceLive
 	sort.Slice(result.resources, func(i, j int) bool { return result.resources[i].LogicalPath < result.resources[j].LogicalPath })
 	return result, nil
+}
+
+func selectTargetSegments(targets []target, capSeconds float64) (map[string][]segment, float64, bool, error) {
+	if len(targets) == 0 {
+		return nil, 0, false, unsupported("HLS source has no captureable tracks")
+	}
+	sourceLive := !targets[0].media.hasEndList
+	available := make(map[string][]segment, len(targets))
+	for _, current := range targets {
+		if (!current.media.hasEndList) != sourceLive {
+			return nil, 0, false, unsupported("HLS master mixes live and VOD renditions")
+		}
+		if len(current.media.segments) == 0 {
+			return nil, 0, false, unsupported("HLS rendition has no complete segments")
+		}
+		available[current.id] = append([]segment(nil), current.media.segments...)
+	}
+	if sourceLive {
+		alignLiveAvailableSegments(targets, available)
+	}
+
+	selected := make(map[string][]segment, len(targets))
+	actualDuration := capSeconds
+	for index, current := range targets {
+		media := current.media
+		media.segments = available[current.id]
+		segments, duration, err := selectSegments(media, capSeconds)
+		if err != nil {
+			return nil, 0, sourceLive, err
+		}
+		selected[current.id] = segments
+		if index == 0 || duration < actualDuration {
+			actualDuration = duration
+		}
+	}
+	return selected, actualDuration, sourceLive, nil
+}
+
+func alignLiveAvailableSegments(targets []target, available map[string][]segment) {
+	if len(targets) < 2 {
+		return
+	}
+	allProgramTime := true
+	var commonEnd time.Time
+	for index, current := range targets {
+		segments := available[current.id]
+		last := segments[len(segments)-1]
+		if last.programTime == nil {
+			allProgramTime = false
+			break
+		}
+		end := last.programTime.Add(time.Duration(last.duration * float64(time.Second)))
+		if index == 0 || end.Before(commonEnd) {
+			commonEnd = end
+		}
+	}
+	if allProgramTime {
+		for _, current := range targets {
+			segments := available[current.id]
+			endIndex := len(segments)
+			for endIndex > 0 {
+				item := segments[endIndex-1]
+				if item.programTime == nil || !item.programTime.Add(time.Duration(item.duration*float64(time.Second))).After(commonEnd.Add(100*time.Millisecond)) {
+					break
+				}
+				endIndex--
+			}
+			if endIndex > 0 {
+				available[current.id] = segments[:endIndex]
+			}
+		}
+		return
+	}
+
+	// Media sequence numbers should be aligned across renditions. When they
+	// overlap, constrain every track to the common snapshot. If an origin uses
+	// independent numbering, retain each rendition's latest complete window.
+	commonStart, commonSequenceEnd := 0, 0
+	for index, current := range targets {
+		segments := available[current.id]
+		start, end := segments[0].sequence, segments[len(segments)-1].sequence
+		if index == 0 || start > commonStart {
+			commonStart = start
+		}
+		if index == 0 || end < commonSequenceEnd {
+			commonSequenceEnd = end
+		}
+	}
+	if commonStart > commonSequenceEnd {
+		return
+	}
+	for _, current := range targets {
+		segments := available[current.id]
+		start, end := 0, len(segments)
+		for start < end && segments[start].sequence < commonStart {
+			start++
+		}
+		for end > start && segments[end-1].sequence > commonSequenceEnd {
+			end--
+		}
+		if start < end {
+			available[current.id] = segments[start:end]
+		}
+	}
 }
 
 func (m *Manager) downloadTarget(ctx context.Context, workspace, streamID string, current target, segments []segment, remaining int64) (string, []models.Resource, int64, error) {
@@ -464,6 +555,9 @@ func buildMediaPlaylistForKind(media playlist, segments []segment, kind string) 
 	for _, segment := range segments {
 		if segment.discontinuity {
 			lines = append(lines, "#EXT-X-DISCONTINUITY")
+		}
+		if segment.programTime != nil {
+			lines = append(lines, "#EXT-X-PROGRAM-DATE-TIME:"+segment.programTime.UTC().Format(time.RFC3339Nano))
 		}
 		lines = append(lines, fmt.Sprintf("#EXTINF:%.3f,", segment.duration), fmt.Sprintf("segments/%d%s", segment.sequence, extension))
 	}

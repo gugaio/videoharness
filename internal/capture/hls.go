@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type playlist struct {
@@ -56,6 +57,7 @@ type segment struct {
 	discontinuity bool
 	rangeHeader   string
 	rangeBytes    int64
+	programTime   *time.Time
 }
 
 func parsePlaylist(text string, base *url.URL) (playlist, error) {
@@ -67,9 +69,11 @@ func parsePlaylist(text string, base *url.URL) (playlist, error) {
 	var pendingVariant map[string]string
 	var pendingDuration *float64
 	var pendingByteRange string
+	var nextProgramTime *time.Time
 	pendingDiscontinuity := false
 	previousMapRangeEnd := make(map[string]int64)
 	previousSegmentRangeEnd := make(map[string]int64)
+	skippedSegments := 0
 	nextSequence := 0
 	for _, raw := range lines[1:] {
 		line := strings.TrimSpace(raw)
@@ -116,7 +120,14 @@ func parsePlaylist(text string, base *url.URL) (playlist, error) {
 			if err != nil || value < 0 {
 				return out, unsupported("invalid media sequence")
 			}
-			nextSequence, out.mediaSequence = value, value
+			nextSequence, out.mediaSequence = value+skippedSegments, value+skippedSegments
+		case strings.HasPrefix(line, "#EXT-X-PROGRAM-DATE-TIME:"):
+			value, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(strings.TrimPrefix(line, "#EXT-X-PROGRAM-DATE-TIME:")))
+			if err != nil {
+				return out, unsupported("invalid EXT-X-PROGRAM-DATE-TIME")
+			}
+			value = value.UTC()
+			nextProgramTime = &value
 		case line == "#EXT-X-DISCONTINUITY":
 			pendingDiscontinuity = true
 		case line == "#EXT-X-ENDLIST":
@@ -154,8 +165,21 @@ func parsePlaylist(text string, base *url.URL) (playlist, error) {
 			if pendingByteRange == "" {
 				return out, unsupported("invalid EXT-X-BYTERANGE")
 			}
-		case strings.HasPrefix(line, "#EXT-X-PART:"), strings.HasPrefix(line, "#EXT-X-SKIP:"), strings.HasPrefix(line, "#EXT-X-RENDITION-REPORT:"):
-			return out, unsupported("low-latency HLS is not supported yet")
+		case strings.HasPrefix(line, "#EXT-X-SKIP:"):
+			attrs := parseAttributes(strings.TrimPrefix(line, "#EXT-X-SKIP:"))
+			value, err := strconv.Atoi(attrs["SKIPPED-SEGMENTS"])
+			if err != nil || value < 0 || len(out.segments) > 0 {
+				return out, unsupported("invalid EXT-X-SKIP")
+			}
+			skippedSegments += value
+			nextSequence += value
+			out.mediaSequence += value
+		case strings.HasPrefix(line, "#EXT-X-PART:"), strings.HasPrefix(line, "#EXT-X-RENDITION-REPORT:"), strings.HasPrefix(line, "#EXT-X-PRELOAD-HINT:"):
+			// LL-HLS parts are incomplete by definition. Capture only the complete
+			// EXTINF segments and normalize the snapshot into a regular VOD.
+			continue
+		case line == "#EXT-X-GAP":
+			return out, unsupported("HLS gap segments cannot be cloned")
 		case strings.HasPrefix(line, "#"):
 			continue
 		default:
@@ -176,7 +200,14 @@ func parsePlaylist(text string, base *url.URL) (playlist, error) {
 			if err != nil {
 				return out, err
 			}
-			out.segments = append(out.segments, segment{url: resolved, duration: *pendingDuration, sequence: nextSequence, discontinuity: pendingDiscontinuity, rangeHeader: rangeHeader, rangeBytes: rangeBytes})
+			item := segment{url: resolved, duration: *pendingDuration, sequence: nextSequence, discontinuity: pendingDiscontinuity, rangeHeader: rangeHeader, rangeBytes: rangeBytes}
+			if nextProgramTime != nil {
+				value := *nextProgramTime
+				item.programTime = &value
+				next := value.Add(time.Duration(*pendingDuration * float64(time.Second)))
+				nextProgramTime = &next
+			}
+			out.segments = append(out.segments, item)
 			nextSequence++
 			pendingDuration = nil
 			pendingByteRange = ""
@@ -276,7 +307,7 @@ func resolve(base *url.URL, ref string) (string, error) {
 
 func selectSegments(media playlist, capSeconds float64) ([]segment, float64, error) {
 	if !media.hasEndList {
-		return nil, 0, unsupported("live HLS is not supported yet")
+		return selectLiveSegments(media.segments, capSeconds)
 	}
 	var selected []segment
 	var duration float64
@@ -291,6 +322,33 @@ func selectSegments(media playlist, capSeconds float64) ([]segment, float64, err
 		return nil, 0, unsupported("requested duration is shorter than the first segment")
 	}
 	return selected, duration, nil
+}
+
+func selectLiveSegments(available []segment, capSeconds float64) ([]segment, float64, error) {
+	if len(available) == 0 {
+		return nil, 0, unsupported("live HLS playlist has no complete segments")
+	}
+	// Do not concatenate timestamp epochs across the most recent
+	// discontinuity. The selected epoch is still marked in the generated VOD.
+	for index := len(available) - 1; index > 0; index-- {
+		if available[index].discontinuity {
+			available = available[index:]
+			break
+		}
+	}
+	start := len(available)
+	var duration float64
+	for index := len(available) - 1; index >= 0; index-- {
+		if duration+available[index].duration > capSeconds+0.000001 {
+			break
+		}
+		start = index
+		duration += available[index].duration
+	}
+	if start == len(available) {
+		return nil, 0, unsupported("requested duration is shorter than the latest complete live segment")
+	}
+	return append([]segment(nil), available[start:]...), duration, nil
 }
 
 func chooseAudio(items []audioRendition, groupID string) *audioRendition {

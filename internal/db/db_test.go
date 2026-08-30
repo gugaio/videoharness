@@ -18,7 +18,7 @@ func TestStreamCloneFieldsSurviveRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	stream := models.Stream{ID: "clone", OriginalURL: "https://origin.example/master.m3u8", ProxyPath: "/s/clone/master.m3u8", ActivePreset: "clean", Mode: models.ModeClone, CaptureStatus: models.CaptureQueued, RequestedDurationSeconds: 60, CreatedAt: now, UpdatedAt: now}
+	stream := models.Stream{ID: "clone", OriginalURL: "https://origin.example/master.m3u8", ProxyPath: "/s/clone/master.m3u8", ActivePreset: "clean", Mode: models.ModeClone, CaptureStatus: models.CaptureQueued, RequestedDurationSeconds: 60, SourceLive: true, CreatedAt: now, UpdatedAt: now}
 	if err := database.InsertStream(stream); err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestStreamCloneFieldsSurviveRoundTrip(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("got %d streams", len(rows))
 	}
-	if got := rows[0]; got.Mode != models.ModeClone || got.CaptureStatus != models.CaptureQueued || got.RequestedDurationSeconds != 60 {
+	if got := rows[0]; got.Mode != models.ModeClone || got.CaptureStatus != models.CaptureQueued || got.RequestedDurationSeconds != 60 || !got.SourceLive {
 		t.Fatalf("unexpected stream: %#v", got)
 	}
 }

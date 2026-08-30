@@ -114,6 +114,7 @@ func (m *Manager) materializeClearKeyHLS(ctx context.Context, stream models.Stre
 	result.videoTracks = clearResult.videoTracks
 	result.audioTracks = clearResult.audioTracks
 	result.subtitleTracks = clearResult.subtitleTracks
+	result.sourceLive = clearResult.sourceLive
 	return result, nil
 }
 

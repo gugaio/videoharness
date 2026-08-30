@@ -23,7 +23,7 @@ func (f fakePackager) Run(ctx context.Context, request mediapackager.Request) er
 	return f(ctx, request)
 }
 
-func TestMaterializeClearKeyPackagesAndInventoriesClone(t *testing.T) {
+func TestMaterializeClearKeyPackagesLiveMultitrackClone(t *testing.T) {
 	database, err := db.Open(filepath.Join(t.TempDir(), "drm.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +53,7 @@ high.m3u8
 `,
 	}
 	media := func(prefix, extension string) string {
-		return "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,\n" + prefix + "0." + extension + "\n#EXTINF:6,\n" + prefix + "1." + extension + "\n#EXT-X-ENDLIST\n"
+		return "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,\n" + prefix + "0." + extension + "\n#EXTINF:6,\n" + prefix + "1." + extension + "\n"
 	}
 	for _, name := range []string{"low", "high", "pt", "en"} {
 		responses["https://origin.example/"+name+".m3u8"] = media(name, "ts")
@@ -96,7 +96,7 @@ high.m3u8
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.videoTracks != 2 || result.audioTracks != 2 || result.subtitleTracks != 1 || result.duration != 12 || len(result.resources) < 15 {
+	if !result.sourceLive || result.videoTracks != 2 || result.audioTracks != 2 || result.subtitleTracks != 1 || result.duration != 12 || len(result.resources) < 15 {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 	if _, err := os.Stat(filepath.Join(workspace, ".inputs")); !os.IsNotExist(err) {

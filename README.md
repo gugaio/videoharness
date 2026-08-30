@@ -10,10 +10,19 @@ highest-bandwidth rendition or the complete VOD ladder, including alternate
 audio and WebVTT subtitles. MPEG-TS, fragmented MP4 (`EXT-X-MAP`) and HLS byte
 ranges are materialized into self-contained local files.
 
+Live HLS inputs are frozen as ordinary local VODs: StreamMock selects the most
+recent complete segments that fit the requested duration, aligns renditions by
+`EXT-X-PROGRAM-DATE-TIME` or media sequence when possible, stays inside the
+latest discontinuity epoch, and writes `#EXT-X-ENDLIST`. LL-HLS parts and
+preload hints are intentionally ignored; delta-playlist `EXT-X-SKIP` sequence
+offsets are applied to the complete segments that remain. Capture does not wait
+for future segments, so the result may be shorter than requested when the
+origin's current window is shorter.
+
 DASH clones support clear, static MPDs with one Period and
 `SegmentTemplate`/`SegmentTimeline`. Dynamic MPDs, multiple Periods,
-`SegmentBase`-only clones, encrypted inputs and LL-HLS fail explicitly instead
-of publishing a partial clone.
+`SegmentBase`-only clones, encrypted inputs and unavailable HLS gap segments
+fail explicitly instead of publishing a partial clone.
 
 - Public: /p.m3u8?url=… and /p.mpd?url=…
 - Workspace: /ws/{slug}/p.m3u8?url=… and /ws/{slug}/p.mpd?url=…

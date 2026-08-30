@@ -134,6 +134,7 @@ export default function StreamingPage() {
               Stored locally: {stream.duration_seconds.toFixed(1)} seconds
               {stream.total_bytes !== undefined ? ` · ${(stream.total_bytes / 1024 / 1024).toFixed(1)} MiB` : ""}
 			  {` · ${stream.video_track_count} video / ${stream.audio_track_count} audio / ${stream.subtitle_track_count} subtitle tracks`}
+			  {stream.source_live ? " · captured from the latest complete live window" : ""}
             </p>
           )}
 		  {stream.protection_mode === "clearkey" && <p className="mt-2 text-xs text-amber-300">ClearKey/CENC test clone · license requests use {stream.license_path}</p>}

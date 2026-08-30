@@ -142,7 +142,7 @@ export default function WorkspacePage() {
             {isCreatingClone && <section className="mt-6 rounded-3xl border border-white/10 bg-white/[0.07] p-5 shadow-2xl shadow-black/20 backdrop-blur-md sm:p-7">
               <h2 className="text-lg font-semibold text-white">Clone a new stream</h2>
               <p className="mt-2 text-sm text-stone-300/70">
-                StreamMock downloads a self-contained copy and serves it locally, so you can replay exactly what the CDN returned.
+                StreamMock downloads a self-contained VOD or freezes the latest complete window of a live stream, so playback no longer depends on the origin.
               </p>
 			  <form onSubmit={handleSubmit} className="mt-6 grid gap-3 lg:grid-cols-2 xl:grid-cols-[12rem_minmax(16rem,1fr)_auto_auto_auto_auto]">
                 <input
@@ -259,7 +259,7 @@ export default function WorkspacePage() {
 						{stream.capture_status === "capturing" && <span className="mt-1 block text-amber-200">{stream.capture_progress}%</span>}
                         {stream.duration_seconds !== undefined && <span className="mt-1 block text-stone-500">{stream.duration_seconds.toFixed(1)} s</span>}
 						{stream.total_bytes !== undefined && <span className="mt-1 block text-stone-500">{(stream.total_bytes / 1024 / 1024).toFixed(1)} MiB</span>}
-						<span className="mt-1 block text-stone-500">{stream.protection_mode === "clearkey" ? "ClearKey/CENC" : "Clear"} · {stream.video_track_count}V/{stream.audio_track_count}A/{stream.subtitle_track_count}S</span>
+						<span className="mt-1 block text-stone-500">{stream.source_live ? "Live snapshot" : "VOD"} · {stream.protection_mode === "clearkey" ? "ClearKey/CENC" : "Clear"} · {stream.video_track_count}V/{stream.audio_track_count}A/{stream.subtitle_track_count}S</span>
 						<span className="mt-1 block text-stone-600">Created {new Date(stream.created_at).toLocaleDateString()}</span>
 						{stream.expires_at && <span className="mt-1 block text-stone-600">Expires {new Date(stream.expires_at).toLocaleDateString()}</span>}
                         {stream.error_message && <span className="mt-1 block max-w-40 text-red-300">{stream.error_message}</span>}

@@ -27,6 +27,7 @@ type Stream struct {
 	VideoTrackCount          int        `json:"video_track_count"`
 	AudioTrackCount          int        `json:"audio_track_count"`
 	SubtitleTrackCount       int        `json:"subtitle_track_count"`
+	SourceLive               bool       `json:"source_live"`
 	ExpiresAt                *time.Time `json:"expires_at,omitempty"`
 	CreatedAt                time.Time  `json:"created_at"`
 	UpdatedAt                time.Time  `json:"updated_at"`

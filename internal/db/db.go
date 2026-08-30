@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS streams (
 	video_track_count          INTEGER NOT NULL DEFAULT 0,
 	audio_track_count          INTEGER NOT NULL DEFAULT 0,
 	subtitle_track_count       INTEGER NOT NULL DEFAULT 0,
+	source_live                INTEGER NOT NULL DEFAULT 0,
 	expires_at                 TEXT,
     created_at                 TEXT NOT NULL,
     updated_at                 TEXT NOT NULL
@@ -87,6 +88,7 @@ CREATE TABLE IF NOT EXISTS streams (
 		{"video_track_count", "INTEGER NOT NULL DEFAULT 0"},
 		{"audio_track_count", "INTEGER NOT NULL DEFAULT 0"},
 		{"subtitle_track_count", "INTEGER NOT NULL DEFAULT 0"},
+		{"source_live", "INTEGER NOT NULL DEFAULT 0"},
 		{"expires_at", "TEXT"},
 		{"updated_at", "TEXT"},
 	} {
@@ -348,11 +350,11 @@ func (d *DB) ensureProxyRequestColumn(name, definition string) error {
 	return nil
 }
 
-const streamColumns = `id, label, original_url, proxy_path, active_preset, owner_id, workspace_slug, mode, capture_status, requested_duration_seconds, duration_seconds, total_bytes, resource_count, storage_key, error_code, error_message, format, protection_mode, track_selection, license_path, capture_progress, video_track_count, audio_track_count, subtitle_track_count, expires_at, created_at, updated_at`
+const streamColumns = `id, label, original_url, proxy_path, active_preset, owner_id, workspace_slug, mode, capture_status, requested_duration_seconds, duration_seconds, total_bytes, resource_count, storage_key, error_code, error_message, format, protection_mode, track_selection, license_path, capture_progress, video_track_count, audio_track_count, subtitle_track_count, source_live, expires_at, created_at, updated_at`
 
 func (d *DB) InsertStream(st models.Stream) error {
 	_, err := d.conn.Exec(
-		`INSERT INTO streams (`+streamColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO streams (`+streamColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		st.ID,
 		st.Label,
 		st.OriginalURL,
@@ -377,6 +379,7 @@ func (d *DB) InsertStream(st models.Stream) error {
 		st.VideoTrackCount,
 		st.AudioTrackCount,
 		st.SubtitleTrackCount,
+		st.SourceLive,
 		timeString(st.ExpiresAt),
 		st.CreatedAt.UTC().Format(time.RFC3339),
 		st.UpdatedAt.UTC().Format(time.RFC3339),
@@ -443,7 +446,7 @@ func scanStreams(rows *sql.Rows) ([]models.Stream, error) {
 		var st models.Stream
 		var createdAt, updatedAt string
 		var expiresAt sql.NullString
-		if err := rows.Scan(&st.ID, &st.Label, &st.OriginalURL, &st.ProxyPath, &st.ActivePreset, &st.OwnerID, &st.WorkspaceSlug, &st.Mode, &st.CaptureStatus, &st.RequestedDurationSeconds, &st.DurationSeconds, &st.TotalBytes, &st.ResourceCount, &st.StorageKey, &st.ErrorCode, &st.ErrorMessage, &st.Format, &st.ProtectionMode, &st.TrackSelection, &st.LicensePath, &st.CaptureProgress, &st.VideoTrackCount, &st.AudioTrackCount, &st.SubtitleTrackCount, &expiresAt, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&st.ID, &st.Label, &st.OriginalURL, &st.ProxyPath, &st.ActivePreset, &st.OwnerID, &st.WorkspaceSlug, &st.Mode, &st.CaptureStatus, &st.RequestedDurationSeconds, &st.DurationSeconds, &st.TotalBytes, &st.ResourceCount, &st.StorageKey, &st.ErrorCode, &st.ErrorMessage, &st.Format, &st.ProtectionMode, &st.TrackSelection, &st.LicensePath, &st.CaptureProgress, &st.VideoTrackCount, &st.AudioTrackCount, &st.SubtitleTrackCount, &st.SourceLive, &expiresAt, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan stream: %w", err)
 		}
 		ts, err := time.Parse(time.RFC3339, createdAt)
@@ -489,7 +492,7 @@ func (d *DB) UpdateCaptureProgress(id string, progress int) error {
 	return err
 }
 
-func (d *DB) CompleteClone(id string, duration float64, totalBytes int64, storageKey string, resources []models.Resource, videoTracks, audioTracks, subtitleTracks int) error {
+func (d *DB) CompleteClone(id string, duration float64, totalBytes int64, storageKey string, resources []models.Resource, sourceLive bool, videoTracks, audioTracks, subtitleTracks int) error {
 	tx, err := d.conn.Begin()
 	if err != nil {
 		return err
@@ -503,7 +506,7 @@ func (d *DB) CompleteClone(id string, duration float64, totalBytes int64, storag
 			return err
 		}
 	}
-	if _, err := tx.Exec(`UPDATE streams SET capture_status = ?, capture_progress = 100, duration_seconds = ?, total_bytes = ?, resource_count = ?, storage_key = ?, video_track_count = ?, audio_track_count = ?, subtitle_track_count = ?, error_code = NULL, error_message = NULL, updated_at = ? WHERE id = ?`, models.CaptureReady, duration, totalBytes, len(resources), storageKey, videoTracks, audioTracks, subtitleTracks, time.Now().UTC().Format(time.RFC3339), id); err != nil {
+	if _, err := tx.Exec(`UPDATE streams SET capture_status = ?, capture_progress = 100, duration_seconds = ?, total_bytes = ?, resource_count = ?, storage_key = ?, source_live = ?, video_track_count = ?, audio_track_count = ?, subtitle_track_count = ?, error_code = NULL, error_message = NULL, updated_at = ? WHERE id = ?`, models.CaptureReady, duration, totalBytes, len(resources), storageKey, sourceLive, videoTracks, audioTracks, subtitleTracks, time.Now().UTC().Format(time.RFC3339), id); err != nil {
 		return err
 	}
 	return tx.Commit()
