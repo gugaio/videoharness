@@ -22,6 +22,7 @@ export default function App() {
             <Route path="/dashboard/stream/:id" element={<DashboardPage />} />
             <Route path="/dashboard/proxy" element={<DashboardPage />} />
             <Route path="/preview/proxy" element={<ProxyPreviewPage />} />
+            <Route path="/preview/stream/:id" element={<ProxyPreviewPage />} />
           </Route>
         </Routes>
       </div>

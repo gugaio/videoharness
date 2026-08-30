@@ -75,8 +75,8 @@ export default function HomePage() {
             Clone &amp; Test Video<br className="hidden md:block" /> Streams in Seconds
           </h1>
           <p className="mt-6 max-w-3xl text-base leading-[1.35] text-white/90 sm:text-lg md:text-2xl">
-            The all-in-one HLS and DASH player simulator. Empowers Devs, QA, and
-            teams to test playback behavior under any condition.
+            Stream Mock proxies, clones, and replays HLS streams so developers and
+            QA teams can test playback under controlled conditions.
           </p>
         </div>
 

@@ -31,16 +31,11 @@ export default function OnDemandCard({ slug }: { slug?: string }) {
   return (
     <section className="mt-6 rounded-3xl border border-white/10 bg-white/[0.04] p-5 backdrop-blur-md sm:p-7">
       <div className="flex items-start gap-4">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white/10 text-lg">⚡</div>
         <div>
-          <h2 className="text-lg font-semibold text-white">
-            {slug ? "Your live proxy link" : "Live proxy link"}
-          </h2>
           <p className="mt-1 max-w-2xl text-sm text-stone-300/70">
             {slug ? (
               <>
-                Paste the original HLS URL below, then copy the generated proxy URL into your player.
-                StreamMock serves it live and shows each request in the activity board below. Nothing is saved, and playback is capped at 300 seconds.
+                Paste an HLS URL, optionally choose a playback preset, then copy the proxy URL into your player.
               </>
             ) : (
               <>
@@ -51,11 +46,6 @@ export default function OnDemandCard({ slug }: { slug?: string }) {
             )}
           </p>
         </div>
-      </div>
-
-      <div className="mt-5">
-        <p className="text-xs font-medium uppercase tracking-[0.16em] text-stone-400">Playback condition</p>
-        <p className="mt-1 text-sm text-stone-300/70">Choose Clean for normal playback, or simulate a network or CDN issue in your player.</p>
       </div>
 
       <div className="mt-3 flex flex-col gap-3 lg:flex-row">

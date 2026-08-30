@@ -14,10 +14,9 @@ export default function WorkspacePage() {
   const [url, setUrl] = useState("");
   const [label, setLabel] = useState("");
   const [duration, setDuration] = useState(60);
-  const [mode, setMode] = useState<"clone" | "proxy">("clone");
+  const [mode, setMode] = useState<"clone" | "proxy">("proxy");
   const [isCreatingClone, setIsCreatingClone] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copiedStreamId, setCopiedStreamId] = useState<string | null>(null);
   const clones = streams.filter((stream) => stream.mode === "clone");
 
   useEffect(() => {
@@ -49,17 +48,6 @@ export default function WorkspacePage() {
 
   function replaceStream(updated: Stream) {
     setStreams((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-  }
-
-  async function copyProxyUrl(stream: Stream) {
-    try {
-      const playerUrl = new URL(stream.proxy_path, window.location.origin).toString();
-      await navigator.clipboard.writeText(playerUrl);
-      setCopiedStreamId(stream.id);
-      window.setTimeout(() => setCopiedStreamId(null), 2000);
-    } catch {
-      setError("Could not copy the player URL. Please copy it manually from the stream details.");
-    }
   }
 
   async function removeClone(stream: Stream) {
@@ -98,19 +86,6 @@ export default function WorkspacePage() {
         <section className="mt-12 grid gap-4 md:grid-cols-2">
           <button
             type="button"
-            aria-pressed={mode === "clone"}
-            onClick={() => setMode("clone")}
-            className={`rounded-3xl border p-6 text-left transition focus:outline-none focus:ring-2 focus:ring-amber-100/60 ${
-              mode === "clone" ? "border-amber-100/70 bg-amber-100/10" : "border-white/10 bg-white/[0.04] hover:bg-white/[0.07]"
-            }`}
-          >
-            <span className="text-sm font-semibold text-white">Clone a stream</span>
-            <span className="mt-2 block text-sm leading-relaxed text-stone-300/75">
-              Download a self-contained copy to replay later, even if the origin is unavailable.
-            </span>
-          </button>
-          <button
-            type="button"
             aria-pressed={mode === "proxy"}
             onClick={() => setMode("proxy")}
             className={`rounded-3xl border p-6 text-left transition focus:outline-none focus:ring-2 focus:ring-amber-100/60 ${
@@ -120,6 +95,19 @@ export default function WorkspacePage() {
             <span className="text-sm font-semibold text-white">Live proxy</span>
             <span className="mt-2 block text-sm leading-relaxed text-stone-300/75">
               Test what the origin returns right now, without creating or saving a copy.
+            </span>
+          </button>
+          <button
+            type="button"
+            aria-pressed={mode === "clone"}
+            onClick={() => setMode("clone")}
+            className={`rounded-3xl border p-6 text-left transition focus:outline-none focus:ring-2 focus:ring-amber-100/60 ${
+              mode === "clone" ? "border-amber-100/70 bg-amber-100/10" : "border-white/10 bg-white/[0.04] hover:bg-white/[0.07]"
+            }`}
+          >
+            <span className="text-sm font-semibold text-white">Clone a stream</span>
+            <span className="mt-2 block text-sm leading-relaxed text-stone-300/75">
+              Clone a self-contained copy to replay later, even if the origin is unavailable.
             </span>
           </button>
         </section>
@@ -206,7 +194,7 @@ export default function WorkspacePage() {
                     <th className="hidden px-5 py-4 font-medium md:table-cell">Source URL</th>
                     <th className="px-4 py-4 font-medium sm:px-5">Status</th>
                     <th className="hidden px-5 py-4 font-medium lg:table-cell">Playback preset</th>
-                    <th className="px-4 py-4 text-right font-medium sm:px-5">Use in your player</th>
+                    <th className="px-4 py-4 text-right font-medium sm:px-5">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/10">
@@ -216,9 +204,6 @@ export default function WorkspacePage() {
                         {stream.label && <span className="mb-1 block truncate text-sm font-medium text-white">{stream.label}</span>}
                         <a href={stream.original_url} className="block truncate font-mono text-xs text-stone-300 transition hover:text-white hover:underline">
                           {stream.original_url}
-                        </a>
-                        <a href={stream.proxy_path} className="mt-1 block truncate font-mono text-[11px] text-amber-100/60 transition hover:text-amber-100 hover:underline">
-                          Playback: {stream.proxy_path}
                         </a>
                       </td>
                       <td className="px-4 py-5 text-xs text-stone-300 sm:px-5">
@@ -232,22 +217,9 @@ export default function WorkspacePage() {
                       </td>
                       <td className="px-4 py-5 text-right sm:px-5">
                         <div className="flex flex-nowrap items-center justify-end gap-2">
-                          <Link to={`/stream/${stream.id}`} title="Preview" aria-label="Preview" className="hidden size-9 items-center justify-center rounded-lg border border-sky-300/20 bg-sky-300/5 text-sky-200 transition hover:border-sky-300/45 hover:bg-sky-300/15 sm:inline-flex">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="size-4" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" /><circle cx="12" cy="12" r="2.5" /></svg>
+                          <Link to={`/dashboard/stream/${stream.id}`} className="inline-flex items-center justify-center rounded-lg bg-white px-3 py-2 text-xs font-semibold text-stone-950 transition hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-white/60">
+                            Dashboard
                           </Link>
-                          <Link to={`/dashboard/stream/${stream.id}`} title="Open dashboard" aria-label="Open dashboard" className="inline-flex size-9 items-center justify-center rounded-lg border border-amber-200/25 bg-amber-100/10 text-amber-100 transition hover:border-amber-100/55 hover:bg-amber-100/20">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="size-4" aria-hidden="true"><path d="M4 19V5m0 14h16" /><path d="m7 15 4-4 3 2 5-6" /><path d="M16 7h3v3" /></svg>
-                          </Link>
-                          <button
-                            type="button"
-                            disabled={stream.capture_status !== "ready"}
-                            onClick={() => void copyProxyUrl(stream)}
-                            title={copiedStreamId === stream.id ? "Copied" : "Copy playback URL"}
-                            aria-label={copiedStreamId === stream.id ? "Copied" : "Copy playback URL"}
-                            className="inline-flex size-9 items-center justify-center rounded-lg bg-white text-stone-950 transition hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-white/60 disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            {copiedStreamId === stream.id ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="size-4" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg> : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="size-4" aria-hidden="true"><rect x="9" y="9" width="10" height="10" rx="2" /><path d="M15 9V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" /></svg>}
-                          </button>
                           <button
                             type="button"
                             disabled={stream.capture_status === "queued" || stream.capture_status === "capturing"}

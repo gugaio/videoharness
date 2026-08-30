@@ -1,7 +1,7 @@
 import { useAuth } from "@clerk/react";
 import Hls from "hls.js";
 import { useEffect, useRef, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { createPlaybackSession } from "../api";
 import { observePlayback } from "@streammock/playback-observer";
 import { hlsJsAdapter } from "@streammock/playback-observer/hls";
@@ -9,9 +9,11 @@ import type { CreatedPlaybackSession } from "../types";
 
 export default function ProxyPreviewPage() {
   const { getToken } = useAuth();
+  const { id } = useParams();
   const query = new URLSearchParams(useLocation().search);
   const source = query.get("source")?.trim() ?? "";
   const preset = query.get("preset") ?? "clean";
+  const isClone = Boolean(id);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [prepared, setPrepared] = useState<CreatedPlaybackSession | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -19,14 +21,14 @@ export default function ProxyPreviewPage() {
   const dashboardParams = new URLSearchParams();
   if (source) dashboardParams.set("source", source);
   if (preset) dashboardParams.set("preset", preset);
-  const dashboardPath = `/dashboard/proxy?${dashboardParams.toString()}`;
+  const dashboardPath = isClone ? `/dashboard/stream/${id}` : `/dashboard/proxy?${dashboardParams.toString()}`;
 
   useEffect(() => {
     let cancelled = false;
     setPrepared(null);
     setError(null);
 
-    if (!source) {
+    if (!source && !id) {
       setError("No source URL was provided for this preview.");
       return () => {
         cancelled = true;
@@ -36,7 +38,9 @@ export default function ProxyPreviewPage() {
     getToken()
       .then(async (token) => {
         if (!token) throw new Error("Authentication is required to create an Inspector session.");
-        const session = await createPlaybackSession(token, { source, preset, allowed_origin: window.location.origin });
+        const session = await createPlaybackSession(token, isClone
+          ? { stream_id: id, allowed_origin: window.location.origin }
+          : { source, preset, allowed_origin: window.location.origin });
         if (!cancelled) setPrepared(session);
       })
       .catch((reason: unknown) => {
@@ -48,7 +52,7 @@ export default function ProxyPreviewPage() {
     return () => {
       cancelled = true;
     };
-  }, [getToken, preset, source]);
+  }, [getToken, id, isClone, preset, source]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -97,7 +101,7 @@ export default function ProxyPreviewPage() {
           <Link to={dashboardPath} className="text-sm font-medium text-white/65 transition hover:text-white">
             ← Back to dashboard
           </Link>
-          <span className="text-sm font-medium text-white">Proxy player preview</span>
+          <span className="text-sm font-medium text-white">{isClone ? "Clone" : "Proxy"} player preview</span>
         </div>
       </header>
 
@@ -106,12 +110,12 @@ export default function ProxyPreviewPage() {
           <div>
             <h1 className="text-4xl font-semibold tracking-[-0.04em] text-white">Player preview</h1>
             <p className="mt-3 text-sm text-stone-400">
-              Playback requests from this tab will appear in the proxy dashboard.
+              Playback requests from this tab will appear in the {isClone ? "clone" : "proxy"} dashboard.
             </p>
           </div>
-          <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-stone-300">
+          {!isClone && <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-stone-300">
             Preset: {preset}
-          </span>
+          </span>}
         </div>
 
         <section className="mt-8 overflow-hidden rounded-3xl border border-white/10 bg-black/30">
