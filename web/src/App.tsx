@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
 import AboutPage from "./pages/AboutPage";
+import PlaybackObserverPage from "./pages/PlaybackObserverPage";
 import HomePage from "./pages/HomePage";
 import StreamingPage from "./pages/StreamingPage";
 import WorkspacePage from "./pages/WorkspacePage";
@@ -14,6 +15,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/about" element={<AboutPage />} />
+          <Route path="/about/observer" element={<PlaybackObserverPage />} />
           <Route path="/stream/:id" element={<StreamingPage />} />
           <Route element={<ProtectedRoute />}>
             <Route path="/workspace" element={<WorkspacePage />} />

@@ -56,10 +56,8 @@ export default function AboutPage() {
             What is Stream Mock?
           </h1>
           <p className="mt-5 max-w-2xl text-base leading-relaxed text-stone-300/80">
-            Stream Mock is an all-in-one HLS and DASH player simulator. It clones a
-            live stream once and lets you replay it under any network condition, so
-            developers and QA teams can test playback behavior without hunting for
-            a real degraded stream every time.
+            Stream Mock proxies, clones, and replays HLS streams so developers and
+            QA teams can test playback under controlled conditions.
           </p>
         </section>
 
@@ -103,6 +101,22 @@ export default function AboutPage() {
               </div>
             ))}
           </div>
+        </section>
+
+        <section className="mt-14 rounded-3xl border border-white/10 bg-gradient-to-b from-white/[0.1] to-white/[0.04] p-7 text-center sm:p-10">
+          <h2 className="text-2xl font-semibold tracking-[-0.03em] text-white">
+            Instrument your own player
+          </h2>
+          <p className="mx-auto mt-3 max-w-xl text-sm leading-relaxed text-stone-300/80">
+            The Playback Observer is a standalone npm library. Grab an agent-ready
+            prompt that configures it in any HLS.js player project.
+          </p>
+          <Link
+            to="/about/observer"
+            className="mt-6 inline-flex items-center justify-center rounded-xl bg-white px-6 py-3 text-sm font-semibold text-stone-950 transition hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-white/60"
+          >
+            Playback observer instructions →
+          </Link>
         </section>
 
         <section className="mt-14 rounded-3xl border border-white/10 bg-gradient-to-b from-white/[0.1] to-white/[0.04] p-7 text-center sm:p-10">
