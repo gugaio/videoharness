@@ -10,11 +10,14 @@ export default function WorkspacePage() {
   const { getToken } = useAuth();
   const [token, setToken] = useState<string | undefined>(undefined);
   const [workspaceSlug, setWorkspaceSlug] = useState<string | undefined>(undefined);
+	const [storage, setStorage] = useState<{ used: number; quota: number; ttlHours: number } | null>(null);
   const [streams, setStreams] = useState<Stream[]>([]);
   const [url, setUrl] = useState("");
   const [label, setLabel] = useState("");
   const [duration, setDuration] = useState(60);
   const [format, setFormat] = useState<"hls" | "dash">("hls");
+	const [protection, setProtection] = useState<"clear" | "clearkey">("clear");
+	const [trackSelection, setTrackSelection] = useState<"highest" | "all">("highest");
   const [mode, setMode] = useState<"clone" | "proxy">("proxy");
   const [isCreatingClone, setIsCreatingClone] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,15 +32,35 @@ export default function WorkspacePage() {
           getWorkspace(t ?? undefined).catch(() => null),
         ]);
         setStreams(rows.map(withPresets));
-        if (workspace) setWorkspaceSlug(workspace.slug);
+		if (workspace) {
+		  setWorkspaceSlug(workspace.slug);
+		  setStorage({ used: workspace.stored_bytes, quota: workspace.quota_bytes, ttlHours: workspace.clone_ttl_hours });
+		}
       })
       .catch((e: Error) => setError(e.message));
   }, [getToken]);
 
+	useEffect(() => {
+	  if (!token) return;
+	  let cancelled = false;
+	  const refresh = async () => {
+		try {
+		  const [rows, workspace] = await Promise.all([listStreams(token), getWorkspace(token)]);
+		  if (cancelled) return;
+		  setStreams(rows.map(withPresets));
+		  setStorage({ used: workspace.stored_bytes, quota: workspace.quota_bytes, ttlHours: workspace.clone_ttl_hours });
+		} catch (reason) {
+		  if (!cancelled) setError((reason as Error).message);
+		}
+	  };
+	  const timer = window.setInterval(() => void refresh(), 3000);
+	  return () => { cancelled = true; window.clearInterval(timer); };
+	}, [token]);
+
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     try {
-      const created = await addStream(url.trim(), duration, label.trim(), token, format);
+      const created = await addStream(url.trim(), duration, label.trim(), token, format, protection, trackSelection);
       setStreams((prev) => [...prev, withPresets(created)]);
       setUrl("");
       setLabel("");
@@ -83,6 +106,7 @@ export default function WorkspacePage() {
         <h1 className="mt-3 text-4xl font-semibold tracking-[-0.04em] text-white sm:text-5xl">
           Workspace
         </h1>
+		{storage && <p className="mt-3 text-sm text-stone-400">Clone storage {(storage.used / 1024 / 1024).toFixed(1)} MiB / {storage.quota > 0 ? `${(storage.quota / 1024 / 1024 / 1024).toFixed(1)} GiB` : "unlimited"}{storage.ttlHours > 0 ? ` · expires after ${storage.ttlHours}h` : " · no automatic expiry"}</p>}
 
         <section className="mt-12 grid gap-4 md:grid-cols-2">
           <button
@@ -120,7 +144,7 @@ export default function WorkspacePage() {
               <p className="mt-2 text-sm text-stone-300/70">
                 StreamMock downloads a self-contained copy and serves it locally, so you can replay exactly what the CDN returned.
               </p>
-              <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-3 sm:flex-row">
+			  <form onSubmit={handleSubmit} className="mt-6 grid gap-3 lg:grid-cols-2 xl:grid-cols-[12rem_minmax(16rem,1fr)_auto_auto_auto_auto]">
                 <input
                   type="text"
                   value={label}
@@ -150,11 +174,25 @@ export default function WorkspacePage() {
                 </label>
                 <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-stone-300">
                   <span>Format</span>
-                  <select value={format} onChange={(e) => setFormat(e.target.value as "hls" | "dash")} className="bg-transparent text-white outline-none">
+                  <select value={format} onChange={(e) => { const value = e.target.value as "hls" | "dash"; setFormat(value); if (value === "dash") setProtection("clear"); }} className="bg-transparent text-white outline-none">
                     <option value="hls" className="bg-zinc-900">HLS</option>
                     <option value="dash" className="bg-zinc-900">DASH</option>
                   </select>
                 </label>
+				<label className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-stone-300">
+				  <span>Protection</span>
+				  <select value={protection} onChange={(e) => { const value = e.target.value as "clear" | "clearkey"; setProtection(value); if (value === "clearkey") setTrackSelection("all"); }} disabled={format === "dash"} className="bg-transparent text-white outline-none disabled:opacity-50">
+					<option value="clear" className="bg-zinc-900">Clear</option>
+					<option value="clearkey" className="bg-zinc-900">ClearKey test DRM</option>
+				  </select>
+				</label>
+				<label className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-stone-300">
+				  <span>Tracks</span>
+				  <select value={trackSelection} onChange={(e) => setTrackSelection(e.target.value as "highest" | "all")} className="bg-transparent text-white outline-none">
+					<option value="highest" className="bg-zinc-900">Highest + default audio</option>
+					<option value="all" className="bg-zinc-900">All video/audio/subtitles</option>
+				  </select>
+				</label>
                 <button
                   type="submit"
                   className="rounded-xl bg-white px-6 py-4 text-sm font-semibold text-stone-950 transition hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-white/60"
@@ -218,7 +256,12 @@ export default function WorkspacePage() {
                         {stream.label && <span className="mb-1 block truncate text-sm font-medium text-white md:hidden">{stream.label}</span>}
                         <span className="mb-1 block uppercase tracking-wide text-amber-100/80">{stream.format}</span>
                         <span className="mt-1 block capitalize">{stream.capture_status}</span>
+						{stream.capture_status === "capturing" && <span className="mt-1 block text-amber-200">{stream.capture_progress}%</span>}
                         {stream.duration_seconds !== undefined && <span className="mt-1 block text-stone-500">{stream.duration_seconds.toFixed(1)} s</span>}
+						{stream.total_bytes !== undefined && <span className="mt-1 block text-stone-500">{(stream.total_bytes / 1024 / 1024).toFixed(1)} MiB</span>}
+						<span className="mt-1 block text-stone-500">{stream.protection_mode === "clearkey" ? "ClearKey/CENC" : "Clear"} · {stream.video_track_count}V/{stream.audio_track_count}A/{stream.subtitle_track_count}S</span>
+						<span className="mt-1 block text-stone-600">Created {new Date(stream.created_at).toLocaleDateString()}</span>
+						{stream.expires_at && <span className="mt-1 block text-stone-600">Expires {new Date(stream.expires_at).toLocaleDateString()}</span>}
                         {stream.error_message && <span className="mt-1 block max-w-40 text-red-300">{stream.error_message}</span>}
                       </td>
                       <td className="hidden px-5 py-5 lg:table-cell">

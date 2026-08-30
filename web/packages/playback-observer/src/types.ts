@@ -6,7 +6,8 @@ export type ObserverEventType =
   | "fragment_loading" | "fragment_loaded" | "fragment_parsed" | "fragment_buffered"
   | "buffer_appended" | "buffer_append_error" | "level_switching" | "level_switched"
   | "emergency_downswitch" | "fps_drop" | "stall_detected" | "stall_resolved" | "hls_error"
-  | "adaptation" | "quality_changed" | "gap_jumped" | "segment_downloaded" | "segment_download_failed" | "shaka_error";
+  | "adaptation" | "quality_changed" | "gap_jumped" | "segment_downloaded" | "segment_download_failed" | "shaka_error"
+  | "drm_session_updated" | "drm_key_status_changed" | "drm_expiration_updated" | "license_request_completed" | "license_request_failed";
 
 export interface ObserverEvent {
   id: string;

@@ -90,10 +90,15 @@ describe("Shaka adapter", () => {
 		const emitted: string[] = [];
 		const detach = shakaAdapter(player).attach((type) => emitted.push(type));
 		player.dispatchEvent(new Event("downloadcompleted"));
+		const license = new Event("downloadcompleted") as Event & { requestType: number };
+		Object.defineProperty(license, "requestType", { value: 2, enumerable: true });
+		player.dispatchEvent(license);
+		const failedLicense = new CustomEvent("downloadfailed", { detail: { requestType: "LICENSE" } });
+		player.dispatchEvent(failedLicense);
 		player.dispatchEvent(new Event("adaptation"));
 		player.dispatchEvent(new Event("buffering"));
 		player.dispatchEvent(new Event("error"));
-		expect(emitted).toEqual(expect.arrayContaining(["segment_downloaded", "adaptation", "stall_detected", "shaka_error"]));
+		expect(emitted).toEqual(expect.arrayContaining(["segment_downloaded", "license_request_completed", "license_request_failed", "adaptation", "stall_detected", "shaka_error"]));
 		detach();
 		player.dispatchEvent(new Event("error"));
 		expect(emitted.filter((type) => type === "shaka_error")).toHaveLength(1);

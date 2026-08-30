@@ -13,6 +13,7 @@ const (
 	KindVariant = "variant"
 	KindSegment = "segment"
 	KindAsset   = "asset"
+	KindLicense = "license"
 )
 
 // ProxyRequest is one playback request served for a workspace.

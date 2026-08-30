@@ -31,10 +31,10 @@ export async function getStream(id: string): Promise<Stream> {
   return data.stream;
 }
 
-export async function addStream(url: string, durationSeconds = 60, label = "", token?: string, format?: "hls" | "dash"): Promise<Stream> {
+export async function addStream(url: string, durationSeconds = 60, label = "", token?: string, format?: "hls" | "dash", protectionMode: "clear" | "clearkey" = "clear", trackSelection: "highest" | "all" = "highest"): Promise<Stream> {
   const data = await request<{ stream: Stream }>(
     "/api/streams",
-    { method: "POST", body: JSON.stringify({ url, label, duration_seconds: durationSeconds, mode: "clone", format }) },
+    { method: "POST", body: JSON.stringify({ url, label, duration_seconds: durationSeconds, mode: "clone", format, protection_mode: protectionMode, track_selection: trackSelection }) },
     token,
   );
   return data.stream;
@@ -57,8 +57,8 @@ export async function deleteStream(id: string, token?: string): Promise<void> {
   await request<void>(`/api/streams/${id}`, { method: "DELETE" }, token);
 }
 
-export async function getWorkspace(token?: string): Promise<{ slug: string; playback_url: string }> {
-  return request<{ slug: string; playback_url: string }>("/api/workspace", {}, token);
+export async function getWorkspace(token?: string): Promise<{ slug: string; playback_url: string; stored_bytes: number; quota_bytes: number; clone_ttl_hours: number }> {
+  return request<{ slug: string; playback_url: string; stored_bytes: number; quota_bytes: number; clone_ttl_hours: number }>("/api/workspace", {}, token);
 }
 
 export async function getWorkspaceRequests(

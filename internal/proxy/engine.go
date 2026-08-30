@@ -22,6 +22,7 @@ import (
 	"streammock/internal/config"
 	"streammock/internal/models"
 	"streammock/internal/pubnet"
+	"streammock/internal/ratelimit"
 	"streammock/internal/store"
 )
 
@@ -35,6 +36,7 @@ type Engine struct {
 	storageDir      string
 	sink            RequestSink
 	cmcdDecoder     cmcd.Decoder
+	licenseLimiter  *ratelimit.Limiter
 }
 
 func NewEngine(cfg config.Config, st *store.MemoryStore, chaos *Chaos) *Engine {
@@ -45,10 +47,19 @@ func NewEngine(cfg config.Config, st *store.MemoryStore, chaos *Chaos) *Engine {
 		truncateSeconds: cfg.TruncateSeconds,
 		storageDir:      cfg.StorageDir,
 		cmcdDecoder:     cmcd.NewV1Decoder(cmcd.DefaultLimits()),
+		licenseLimiter:  ratelimit.New(cfg.LicenseRateLimitPerMinute, cfg.LicenseRateLimitBurst),
+	}
+}
+
+func (e *Engine) StartMaintenance(ctx context.Context) {
+	if e.licenseLimiter != nil {
+		e.licenseLimiter.StartCleanup(ctx, time.Minute, 15*time.Minute)
 	}
 }
 
 func (e *Engine) Register(mux *http.ServeMux) {
+	mux.HandleFunc("POST /s/{id}/license/clearkey", e.serveClearKeyLicense)
+	mux.HandleFunc("OPTIONS /s/{id}/license/clearkey", handleLicensePreflight)
 	mux.HandleFunc("GET /s/{id}/master.m3u8", e.serveMaster)
 	mux.HandleFunc("GET /s/{id}/manifest.mpd", e.serveMaster)
 	mux.HandleFunc("GET /s/{id}/r/{encoded}", e.serveProxied)
@@ -82,7 +93,7 @@ func (e *Engine) ServeMasterStream(w http.ResponseWriter, r *http.Request, st *m
 }
 
 func manifestName(st *models.Stream) string {
-	if st.Format == models.FormatDASH {
+	if st.Format == models.FormatDASH || st.ProtectionMode == models.ProtectionClearKey {
 		return "manifest.mpd"
 	}
 	return "master.m3u8"

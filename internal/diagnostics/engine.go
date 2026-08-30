@@ -18,6 +18,28 @@ func Analyze(timeline telemetry.Timeline) []Finding {
 		r := entry.Request
 		evidence := []EvidenceReference{{Kind: EvidenceRequest, ID: strconv.FormatInt(r.RequestID, 10)}}
 		rebuffer := followingEvent(timeline, int64(r.CompletedAtMS), 5000, "buffering_started")
+		if r.Kind == "license" {
+			licenseFailure := followingEvent(timeline, int64(r.CompletedAtMS), 5000, "license_request_failed")
+			if licenseFailure != nil {
+				evidence = append(evidence, EvidenceReference{Kind: EvidenceEvent, ID: licenseFailure.ID})
+			}
+			intervention := ""
+			if r.Intervention != nil {
+				intervention = *r.Intervention
+			}
+			switch {
+			case r.Status >= 400:
+				findings = append(findings, Finding{RuleID: "clearkey_license_failed", RuleVersion: 1, Severity: SeverityError, Confidence: ConfidenceHigh, Message: fmt.Sprintf("A licença ClearKey falhou com HTTP %d; o request e o erro DRM do player podem ser inspecionados na mesma timeline.", r.Status), Evidence: evidence, Measurements: []Measurement{{Name: "license_status", Value: float64(r.Status), Unit: UnitCount}}})
+			case intervention == "wrong_clearkey":
+				findings = append(findings, Finding{RuleID: "clearkey_wrong_key", RuleVersion: 1, Severity: SeverityError, Confidence: ConfidenceHigh, Message: "O StreamMock retornou deliberadamente uma chave ClearKey incorreta para testar a reação do CDM/player.", Evidence: evidence})
+			case intervention == "malformed_license":
+				findings = append(findings, Finding{RuleID: "clearkey_malformed_license", RuleVersion: 1, Severity: SeverityError, Confidence: ConfidenceHigh, Message: "O StreamMock retornou deliberadamente uma licença ClearKey malformada.", Evidence: evidence})
+			}
+			if r.AddedLatencyMS > 0 {
+				findings = append(findings, Finding{RuleID: "clearkey_license_latency", RuleVersion: 1, Severity: SeverityWarning, Confidence: ConfidenceHigh, Message: "O StreamMock atrasou a resposta da licença ClearKey; esse tempo pode bloquear o startup antes da descriptografia.", Evidence: evidence, Measurements: []Measurement{{Name: "license_latency", Value: float64(r.AddedLatencyMS), Unit: UnitMilliseconds}}})
+			}
+			continue
+		}
 		if r.InjectedStatus != 0 {
 			message := fmt.Sprintf("StreamMock injetou HTTP %d; a origem não foi responsável por esta resposta.", r.InjectedStatus)
 			confidence := ConfidenceHigh

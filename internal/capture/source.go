@@ -22,6 +22,10 @@ func newSourceClient(timeout time.Duration) *sourceClient {
 }
 
 func (c *sourceClient) get(ctx context.Context, rawURL string) (*http.Response, error) {
+	return c.getRange(ctx, rawURL, "")
+}
+
+func (c *sourceClient) getRange(ctx context.Context, rawURL, byteRange string) (*http.Response, error) {
 	if err := pubnet.ValidateURL(rawURL); err != nil {
 		return nil, err
 	}
@@ -31,6 +35,9 @@ func (c *sourceClient) get(ctx context.Context, rawURL string) (*http.Response, 
 	}
 	req.Header.Set("User-Agent", "StreamMock/0.2 clone-capture")
 	req.Header.Set("Accept-Encoding", "identity")
+	if byteRange != "" {
+		req.Header.Set("Range", byteRange)
+	}
 	response, err := c.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -38,6 +45,10 @@ func (c *sourceClient) get(ctx context.Context, rawURL string) (*http.Response, 
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		response.Body.Close()
 		return nil, fmt.Errorf("source returned %s", response.Status)
+	}
+	if byteRange != "" && response.StatusCode != http.StatusPartialContent {
+		response.Body.Close()
+		return nil, fmt.Errorf("source ignored requested byte range")
 	}
 	return response, nil
 }

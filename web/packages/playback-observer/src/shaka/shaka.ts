@@ -43,10 +43,24 @@ export function shakaAdapter(player: ShakaPlayerLike): PlaybackAdapter {
         on("mediaqualitychanged", "quality_changed"),
         on("gapjumped", "gap_jumped"),
         on("stalldetected", "stall_detected"),
-        on("downloadcompleted", "segment_downloaded"),
-        on("downloadfailed", "segment_download_failed"),
+		on("drmsessionupdate", "drm_session_updated"),
+		on("keystatuschanged", "drm_key_status_changed"),
+		on("expirationupdated", "drm_expiration_updated"),
         on("error", "shaka_error"),
       ];
+	  const onDownload = (name: "downloadcompleted" | "downloadfailed") => {
+		const handler = (event: Event) => {
+		  const shaped = event as Event & { requestType?: unknown; detail?: Record<string, unknown> };
+		  // Shaka's FakeEvent copies the dictionary fields directly onto the
+		  // event. Some wrappers expose them under detail, so accept both forms.
+		  const requestType = String(shaped.requestType ?? shaped.detail?.requestType ?? shaped.detail?.type ?? "").toLowerCase();
+		  const license = requestType.includes("license") || requestType === "2";
+		  emit(license ? (name === "downloadcompleted" ? "license_request_completed" : "license_request_failed") : (name === "downloadcompleted" ? "segment_downloaded" : "segment_download_failed"), { event: name, requestType, detail: compact(shaped.detail), stats: stats(player) });
+		};
+		player.addEventListener(name, handler);
+		return () => player.removeEventListener(name, handler);
+	  };
+	  removers.push(onDownload("downloadcompleted"), onDownload("downloadfailed"));
       const buffering = (event: Event) => {
         const detail = (event as Event & { buffering?: boolean; detail?: { buffering?: boolean } }).detail;
         const active = detail?.buffering ?? (event as Event & { buffering?: boolean }).buffering;

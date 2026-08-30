@@ -43,9 +43,12 @@ export default function StreamingPage() {
     let hls: Hls | null = null;
     let shakaPlayer: InstanceType<typeof shaka.Player> | null = null;
 
-    if (stream.format === "dash") {
+    if (stream.format === "dash" || stream.protection_mode === "clearkey") {
       shakaPlayer = new shaka.Player();
-      void shakaPlayer.attach(video).then(() => shakaPlayer?.load(url)).then(() => video.play()).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Could not play DASH stream."));
+	  if (stream.protection_mode === "clearkey" && stream.license_path) {
+		shakaPlayer.configure({ drm: { servers: { "org.w3.clearkey": new URL(stream.license_path, window.location.origin).toString() } } });
+	  }
+      void shakaPlayer.attach(video).then(() => shakaPlayer?.load(url)).then(() => video.play()).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Could not play the protected stream."));
     } else if (Hls.isSupported()) {
       hls = new Hls();
       hls.loadSource(url);
@@ -130,8 +133,10 @@ export default function StreamingPage() {
             <p className="mt-2 text-xs text-slate-400">
               Stored locally: {stream.duration_seconds.toFixed(1)} seconds
               {stream.total_bytes !== undefined ? ` · ${(stream.total_bytes / 1024 / 1024).toFixed(1)} MiB` : ""}
+			  {` · ${stream.video_track_count} video / ${stream.audio_track_count} audio / ${stream.subtitle_track_count} subtitle tracks`}
             </p>
           )}
+		  {stream.protection_mode === "clearkey" && <p className="mt-2 text-xs text-amber-300">ClearKey/CENC test clone · license requests use {stream.license_path}</p>}
           <p className="mt-2 break-all text-xs text-slate-500">
             Original: {stream.original_url}
           </p>

@@ -11,6 +11,14 @@ export interface Stream {
   proxy_path: string;
   active_preset: string;
   format: "hls" | "dash";
+	protection_mode: "clear" | "clearkey";
+	track_selection: "highest" | "all";
+	license_path?: string;
+	capture_progress: number;
+	video_track_count: number;
+	audio_track_count: number;
+	subtitle_track_count: number;
+	expires_at?: string;
   owner_id: string | null;
   mode: "proxy" | "clone";
   capture_status: "queued" | "capturing" | "ready" | "failed";
@@ -29,7 +37,7 @@ export interface ProxyRequest {
 	id: number;
   workspace_slug: string;
   stream_id: string;
-  kind: "master" | "variant" | "segment" | "asset";
+  kind: "master" | "variant" | "segment" | "asset" | "license";
   target_url: string;
   status: number;
   duration_ms: number;
@@ -43,7 +51,7 @@ export interface ProxyRequest {
   content_length?: number;
   range_result: "not_requested" | "satisfied" | "ignored" | "missing_content_range" | "failed";
   diagnostic?: string;
-  intervention?: "latency" | "http_error" | "latency_and_http_error";
+	intervention?: "latency" | "http_error" | "latency_and_http_error" | "license_latency" | "license_http_error" | "license_retry" | "wrong_clearkey" | "malformed_license";
   added_latency_ms?: number;
   injected_status?: number;
 	started_at_ms: number;
@@ -201,6 +209,8 @@ export interface CreatedPlaybackSession {
 	playback_url: string;
 	ingest_url: string;
 	ingest_expires_at_ms: number;
+	protection_mode: "clear" | "clearkey";
+	license_url?: string;
 }
 
 export const DEFAULT_PRESETS: Preset[] = [
@@ -208,4 +218,9 @@ export const DEFAULT_PRESETS: Preset[] = [
   { key: "subway_3g", label: "Subway 3G", description: "1500-3000ms artificial latency and a 10% chance of HTTP 504." },
   { key: "cdn_degradation", label: "CDN Degradation", description: "20% of segment requests fail with HTTP 500." },
   { key: "stale_live_manifest", label: "Stale Live Manifest", description: "Manifest refresh responses delayed by 4000ms." },
+  { key: "drm_license_latency", label: "DRM License Latency", description: "ClearKey license responses are delayed by 3000ms." },
+  { key: "drm_license_failure", label: "DRM License Failure", description: "ClearKey license requests fail with HTTP 503." },
+  { key: "drm_license_recovery", label: "DRM License Recovery", description: "The first two ClearKey license requests fail, then recover." },
+  { key: "drm_wrong_key", label: "DRM Wrong Key", description: "The license response contains a deliberately incorrect content key." },
+  { key: "drm_malformed_license", label: "DRM Malformed License", description: "The license server returns malformed JSON." },
 ];

@@ -179,6 +179,7 @@ func (s *MemoryStore) MarkCapturing(id string) error {
 	}
 	s.update(id, func(st *models.Stream) {
 		st.CaptureStatus = models.CaptureCapturing
+		st.CaptureProgress = 5
 		st.ErrorCode = nil
 		st.ErrorMessage = nil
 		st.UpdatedAt = time.Now().UTC()
@@ -186,8 +187,18 @@ func (s *MemoryStore) MarkCapturing(id string) error {
 	return nil
 }
 
-func (s *MemoryStore) CompleteClone(id string, duration float64, totalBytes int64, storageKey string, resources []models.Resource) error {
-	if err := s.db.CompleteClone(id, duration, totalBytes, storageKey, resources); err != nil {
+func (s *MemoryStore) CompleteClone(id string, duration float64, totalBytes int64, storageKey string, resources []models.Resource, trackCounts ...int) error {
+	videoTracks, audioTracks, subtitleTracks := 1, 0, 0
+	if len(trackCounts) > 0 {
+		videoTracks = trackCounts[0]
+	}
+	if len(trackCounts) > 1 {
+		audioTracks = trackCounts[1]
+	}
+	if len(trackCounts) > 2 {
+		subtitleTracks = trackCounts[2]
+	}
+	if err := s.db.CompleteClone(id, duration, totalBytes, storageKey, resources, videoTracks, audioTracks, subtitleTracks); err != nil {
 		return err
 	}
 	for _, resource := range resources {
@@ -199,12 +210,43 @@ func (s *MemoryStore) CompleteClone(id string, duration float64, totalBytes int6
 		st.DurationSeconds = &duration
 		st.TotalBytes = &totalBytes
 		st.ResourceCount = &resourceCount
+		st.CaptureProgress = 100
+		st.VideoTrackCount = videoTracks
+		st.AudioTrackCount = audioTracks
+		st.SubtitleTrackCount = subtitleTracks
 		st.StorageKey = &storageKey
 		st.ErrorCode = nil
 		st.ErrorMessage = nil
 		st.UpdatedAt = time.Now().UTC()
 	})
 	return nil
+}
+
+func (s *MemoryStore) SetCaptureProgress(id string, progress int) error {
+	if progress < 0 {
+		progress = 0
+	}
+	if progress > 99 {
+		progress = 99
+	}
+	if err := s.db.UpdateCaptureProgress(id, progress); err != nil {
+		return err
+	}
+	s.update(id, func(st *models.Stream) {
+		st.CaptureProgress = progress
+		st.UpdatedAt = time.Now().UTC()
+	})
+	return nil
+}
+
+func (s *MemoryStore) AddDRMKey(key models.DRMKey) error { return s.db.InsertDRMKey(key) }
+
+func (s *MemoryStore) DRMKeys(streamID string) ([]models.DRMKey, error) {
+	return s.db.ListDRMKeys(streamID)
+}
+
+func (s *MemoryStore) OwnerStoredBytes(ownerID string) (int64, error) {
+	return s.db.OwnerStoredBytes(ownerID)
 }
 
 func (s *MemoryStore) FailClone(id, code, message string) error {

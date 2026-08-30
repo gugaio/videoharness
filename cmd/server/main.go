@@ -113,6 +113,7 @@ func main() {
 	go limiter.StartCleanup(bgCtx, time.Minute, 15*time.Minute)
 	go ingestLimiter.StartCleanup(bgCtx, time.Minute, 15*time.Minute)
 	go mem.StartSweeper(bgCtx, cfg.EphemeralTTL, cfg.SweeperInterval)
+	go engine.StartMaintenance(bgCtx)
 	go retainProxyRequests(bgCtx, database)
 
 	srv := &Server{
@@ -124,6 +125,7 @@ func main() {
 		ingestLimiter: ingestLimiter,
 		db:            database,
 	}
+	go srv.runCloneJanitor(bgCtx)
 
 	mux := http.NewServeMux()
 	registerFrontend(mux)
@@ -199,6 +201,9 @@ func seedBBBDemo(mem *store.MemoryStore, cfg config.Config) error {
 		Mode:                     models.ModeProxy,
 		CaptureStatus:            models.CaptureReady,
 		Format:                   models.FormatHLS,
+		ProtectionMode:           models.ProtectionClear,
+		TrackSelection:           models.TracksHighest,
+		CaptureProgress:          100,
 		RequestedDurationSeconds: 60,
 		CreatedAt:                time.Now().UTC(),
 		UpdatedAt:                time.Now().UTC(),
@@ -247,22 +252,115 @@ func (s *Server) handleDeleteStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot delete a clone while capture is in progress", http.StatusConflict)
 		return
 	}
-	cloneRoot := filepath.Join(s.cfg.StorageDir, "clones")
-	cloneDir := filepath.Join(cloneRoot, id)
-	if filepath.Dir(cloneDir) != filepath.Clean(cloneRoot) {
-		http.Error(w, "invalid clone path", http.StatusBadRequest)
-		return
-	}
-	if err := os.RemoveAll(cloneDir); err != nil {
-		log.Printf("remove clone files: %v", err)
-		http.Error(w, "failed to remove clone files", http.StatusInternalServerError)
-		return
-	}
-	if err := s.store.Delete(id); err != nil {
+	if err := s.deleteCloneData(id); err != nil {
 		http.Error(w, "failed to delete clone", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) deleteCloneData(id string) error {
+	cloneRoot := filepath.Clean(filepath.Join(s.cfg.StorageDir, "clones"))
+	cloneDir := filepath.Join(cloneRoot, id)
+	if filepath.Dir(cloneDir) != cloneRoot {
+		return errors.New("invalid clone path")
+	}
+	trashRoot := filepath.Join(s.cfg.StorageDir, "trash")
+	trashDir := filepath.Join(trashRoot, id+"-"+strconv.FormatInt(time.Now().UnixNano(), 10))
+	moved := false
+	if _, err := os.Stat(cloneDir); err == nil {
+		if err := os.MkdirAll(trashRoot, 0o755); err != nil {
+			return err
+		}
+		if err := os.Rename(cloneDir, trashDir); err != nil {
+			return err
+		}
+		moved = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := s.store.Delete(id); err != nil {
+		if moved {
+			_ = os.Rename(trashDir, cloneDir)
+		}
+		return err
+	}
+	if moved {
+		if err := os.RemoveAll(trashDir); err != nil {
+			log.Printf("remove clone trash %s: %v", id, err)
+		}
+	}
+	return nil
+}
+
+func (s *Server) runCloneJanitor(ctx context.Context) {
+	interval := s.cfg.CloneJanitorInterval
+	if interval <= 0 {
+		interval = 30 * time.Minute
+	}
+	s.sweepCloneStorage()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.sweepCloneStorage()
+		}
+	}
+}
+
+func (s *Server) sweepCloneStorage() {
+	expired, err := s.db.ListExpiredClones(time.Now().UTC())
+	if err != nil {
+		log.Printf("list expired clones: %v", err)
+	} else {
+		for _, stream := range expired {
+			if stream.CaptureStatus == models.CaptureQueued || stream.CaptureStatus == models.CaptureCapturing {
+				continue
+			}
+			if err := s.deleteCloneData(stream.ID); err != nil {
+				log.Printf("expire clone %s: %v", stream.ID, err)
+			}
+		}
+	}
+	cleanupOldDirectories(filepath.Join(s.cfg.StorageDir, "staging"), 24*time.Hour)
+	cleanupOldDirectories(filepath.Join(s.cfg.StorageDir, "trash"), time.Hour)
+	known := make(map[string]bool)
+	for _, stream := range s.store.All() {
+		if stream.Mode == models.ModeClone {
+			known[stream.ID] = true
+		}
+	}
+	entries, readErr := os.ReadDir(filepath.Join(s.cfg.StorageDir, "clones"))
+	if readErr == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() || known[entry.Name()] {
+				continue
+			}
+			info, statErr := entry.Info()
+			if statErr == nil && time.Since(info.ModTime()) > time.Hour {
+				_ = os.RemoveAll(filepath.Join(s.cfg.StorageDir, "clones", entry.Name()))
+			}
+		}
+	}
+}
+
+func cleanupOldDirectories(root string, age time.Duration) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err == nil && time.Since(info.ModTime()) > age {
+			_ = os.RemoveAll(filepath.Join(root, entry.Name()))
+		}
+	}
 }
 
 func (s *Server) handleAddStream(w http.ResponseWriter, r *http.Request) {
@@ -272,6 +370,8 @@ func (s *Server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 		DurationSeconds float64 `json:"duration_seconds"`
 		Mode            string  `json:"mode"`
 		Format          string  `json:"format"`
+		ProtectionMode  string  `json:"protection_mode"`
+		TrackSelection  string  `json:"track_selection"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -303,6 +403,29 @@ func (s *Server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `format must be "hls" or "dash"`, http.StatusBadRequest)
 		return
 	}
+	protection := strings.ToLower(strings.TrimSpace(body.ProtectionMode))
+	if protection == "" {
+		protection = models.ProtectionClear
+	}
+	if !models.ValidProtection(protection) {
+		http.Error(w, `protection_mode must be "clear" or "clearkey"`, http.StatusBadRequest)
+		return
+	}
+	tracks := strings.ToLower(strings.TrimSpace(body.TrackSelection))
+	if tracks == "" {
+		tracks = models.TracksHighest
+		if protection == models.ProtectionClearKey {
+			tracks = models.TracksAll
+		}
+	}
+	if !models.ValidTrackSelection(tracks) {
+		http.Error(w, `track_selection must be "highest" or "all"`, http.StatusBadRequest)
+		return
+	}
+	if protection == models.ProtectionClearKey && (mode != models.ModeClone || format != models.FormatHLS) {
+		http.Error(w, "ClearKey packaging currently requires an HLS clone source", http.StatusBadRequest)
+		return
+	}
 	duration, err := capture.ValidateDuration(body.DurationSeconds)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -329,6 +452,8 @@ func (s *Server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 		CaptureStatus:            captureStatus,
 		RequestedDurationSeconds: duration,
 		Format:                   format,
+		ProtectionMode:           protection,
+		TrackSelection:           tracks,
 		CreatedAt:                time.Now().UTC(),
 		UpdatedAt:                time.Now().UTC(),
 	}
@@ -342,12 +467,48 @@ func (s *Server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 		} else {
 			st.WorkspaceSlug = &slug
 		}
+		if mode == models.ModeClone && s.cfg.UserQuotaBytes > 0 {
+			used, err := s.store.OwnerStoredBytes(userID)
+			if err != nil {
+				http.Error(w, "failed to check storage quota", http.StatusInternalServerError)
+				return
+			}
+			if used >= s.cfg.UserQuotaBytes {
+				http.Error(w, "workspace clone storage quota exceeded", http.StatusConflict)
+				return
+			}
+		}
+	}
+	if mode == models.ModeClone && s.cfg.CloneTTL > 0 {
+		expires := time.Now().UTC().Add(s.cfg.CloneTTL)
+		st.ExpiresAt = &expires
+	}
+	if protection == models.ProtectionClearKey {
+		licensePath := "/s/" + id + "/license/clearkey"
+		st.LicensePath = &licensePath
+		// CENC raw-key signaling is interoperable through DASH Common PSSH.
+		// The HLS source is still preserved as the capture input, but protected
+		// playback uses the packaged local MPD.
+		st.ProxyPath = "/s/" + id + "/manifest.mpd"
 	}
 	// Clone bytes live on disk, so every clone needs durable metadata even when
 	// created anonymously. Ownership still controls workspace listing and edits.
 	if err := s.store.Add(st, true); err != nil {
 		http.Error(w, fmt.Sprintf("failed to persist stream: %v", err), http.StatusInternalServerError)
 		return
+	}
+	if protection == models.ProtectionClearKey {
+		key, err := newDRMKey(st.ID)
+		if err != nil {
+			_ = s.store.Delete(st.ID)
+			http.Error(w, "failed to generate ClearKey material", http.StatusInternalServerError)
+			return
+		}
+		if err := s.store.AddDRMKey(key); err != nil {
+			_ = s.store.Delete(st.ID)
+			http.Error(w, "failed to persist ClearKey material", http.StatusInternalServerError)
+			return
+		}
 	}
 	if mode == models.ModeClone {
 		s.capture.Enqueue(st.ID)
@@ -664,6 +825,8 @@ func (s *Server) handleCreatePlaybackSession(w http.ResponseWriter, r *http.Requ
 	}
 	streamID := body.StreamID
 	playbackURL := ""
+	protectionMode := models.ProtectionClear
+	licenseURL := ""
 	format := body.Format
 	if body.Source != "" {
 		if err := pubnet.ValidateURL(body.Source); err != nil {
@@ -698,6 +861,10 @@ func (s *Server) handleCreatePlaybackSession(w http.ResponseWriter, r *http.Requ
 		}
 		playbackURL = stream.ProxyPath
 		format = stream.Format
+		protectionMode = stream.ProtectionMode
+		if stream.LicensePath != nil {
+			licenseURL = *stream.LicensePath
+		}
 	} else {
 		http.Error(w, "source or stream_id is required", http.StatusBadRequest)
 		return
@@ -735,6 +902,7 @@ func (s *Server) handleCreatePlaybackSession(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"session": session, "cmcd_session_id": cmcdSID, "content_id": contentID, "playback_url": playbackURL,
 		"ingest_url": "/i/" + token + "/events", "ingest_expires_at_ms": expiresAt,
+		"protection_mode": protectionMode, "license_url": licenseURL,
 	})
 }
 
@@ -858,6 +1026,8 @@ var playbackEventTypes = map[string]bool{
 	"stall_detected": true, "stall_resolved": true, "hls_error": true,
 	"adaptation": true, "quality_changed": true, "gap_jumped": true,
 	"segment_downloaded": true, "segment_download_failed": true, "shaka_error": true,
+	"drm_session_updated": true, "drm_key_status_changed": true, "drm_expiration_updated": true,
+	"license_request_completed": true, "license_request_failed": true,
 }
 
 func validatePlaybackEvent(event telemetry.PlaybackEvent) error {
@@ -886,6 +1056,18 @@ func newOpaqueToken(bytes int) (string, error) {
 	return hex.EncodeToString(buffer), nil
 }
 
+func newDRMKey(streamID string) (models.DRMKey, error) {
+	kid := make([]byte, 16)
+	key := make([]byte, 16)
+	if _, err := rand.Read(kid); err != nil {
+		return models.DRMKey{}, err
+	}
+	if _, err := rand.Read(key); err != nil {
+		return models.DRMKey{}, err
+	}
+	return models.DRMKey{StreamID: streamID, KIDHex: hex.EncodeToString(kid), KeyHex: hex.EncodeToString(key), Label: "STREAMMOCK"}, nil
+}
+
 // handleGetWorkspace returns (creating on first call) the caller's workspace
 // slug and the matching on-demand playback URL.
 func (s *Server) handleGetWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -900,9 +1082,17 @@ func (s *Server) handleGetWorkspace(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to load workspace", http.StatusInternalServerError)
 		return
 	}
+	storedBytes, err := s.store.OwnerStoredBytes(userID)
+	if err != nil {
+		http.Error(w, "failed to load workspace storage", http.StatusInternalServerError)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"slug":         slug,
-		"playback_url": fmt.Sprintf("/ws/%s/p.m3u8", slug),
+		"slug":            slug,
+		"playback_url":    fmt.Sprintf("/ws/%s/p.m3u8", slug),
+		"stored_bytes":    storedBytes,
+		"quota_bytes":     s.cfg.UserQuotaBytes,
+		"clone_ttl_hours": int(s.cfg.CloneTTL.Hours()),
 	})
 }
 

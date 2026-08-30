@@ -62,12 +62,15 @@ export default function ProxyPreviewPage() {
     const video = videoRef.current;
     if (!video || !prepared) return;
 
-	if (format === "dash") {
+	if (format === "dash" || prepared.protection_mode === "clearkey") {
 	  let cancelled = false;
 	  const player = new shaka.Player();
 	  const observer = observePlayback({ media: video, adapter: shakaAdapter(player), sessionId: prepared.cmcd_session_id, ingestUrl: prepared.ingest_url });
 	  observer.playRequested();
-	  player.configure({ cmcd: { enabled: true, useHeaders: false, sessionId: prepared.cmcd_session_id, contentId: prepared.content_id, version: 1 } });
+	  player.configure({
+		cmcd: { enabled: true, useHeaders: false, sessionId: prepared.cmcd_session_id, contentId: prepared.content_id, version: 1 },
+		...(prepared.protection_mode === "clearkey" && prepared.license_url ? { drm: { servers: { "org.w3.clearkey": new URL(prepared.license_url, window.location.origin).toString() } } } : {}),
+	  });
 	  player.addEventListener("error", ((event: Event) => {
 	    const detail = (event as Event & { detail?: { code?: number; message?: string } }).detail;
 	    if (!cancelled) setError(`Playback failed${detail?.code ? ` (Shaka ${detail.code})` : ""}: ${detail?.message ?? "an unrecoverable player error"}`);
@@ -149,7 +152,7 @@ export default function ProxyPreviewPage() {
           </p>
         )}
         {source && <p className="mt-4 break-all font-mono text-xs text-stone-500">Source: {source}</p>}
-		{prepared && <p className="mt-2 break-all font-mono text-xs text-stone-500">CMCD sid: {prepared.cmcd_session_id} · Observer connected with the same session ID</p>}
+		{prepared && <p className="mt-2 break-all font-mono text-xs text-stone-500">CMCD sid: {prepared.cmcd_session_id} · Observer connected with the same session ID{prepared.protection_mode === "clearkey" ? ` · ClearKey license ${prepared.license_url}` : ""}</p>}
       </div>
     </main>
   );

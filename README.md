@@ -1,22 +1,75 @@
 # streammock
 
-Clone, mock and test HLS/DASH streams.
+Clone, mock and test HLS/DASH streams, including test-only ClearKey playback.
 
 ## Streaming formats
 
-StreamMock proxies HLS (.m3u8) and DASH (.mpd) through public or
-workspace-scoped endpoints. DASH clones support clear, static MPDs with one
-Period, SegmentTemplate/SegmentTimeline, a highest-bandwidth video
-representation and an optional audio representation. DRM, dynamic MPDs,
-multiple Periods and SegmentBase-only clones are rejected explicitly rather
-than producing an incomplete local copy.
+StreamMock proxies HLS (`.m3u8`) and DASH (`.mpd`) through public or
+workspace-scoped endpoints. Persistent HLS clones can retain either the
+highest-bandwidth rendition or the complete VOD ladder, including alternate
+audio and WebVTT subtitles. MPEG-TS, fragmented MP4 (`EXT-X-MAP`) and HLS byte
+ranges are materialized into self-contained local files.
+
+DASH clones support clear, static MPDs with one Period and
+`SegmentTemplate`/`SegmentTimeline`. Dynamic MPDs, multiple Periods,
+`SegmentBase`-only clones, encrypted inputs and LL-HLS fail explicitly instead
+of publishing a partial clone.
 
 - Public: /p.m3u8?url=… and /p.mpd?url=…
 - Workspace: /ws/{slug}/p.m3u8?url=… and /ws/{slug}/p.mpd?url=…
-- Local clones: /s/{id}/master.m3u8 or /s/{id}/manifest.mpd
+- Local clear clones: `/s/{id}/master.m3u8` or `/s/{id}/manifest.mpd`
+- Local ClearKey clones: `/s/{id}/manifest.mpd`
+- ClearKey license: `POST /s/{id}/license/clearkey`
 
-The built-in preview uses HLS.js for HLS and Shaka Player for DASH. Both use
-CMCD query parameters and feed the Playback Inspector.
+The built-in preview uses HLS.js for clear HLS and Shaka Player for DASH and
+ClearKey. Both feed the Playback Inspector; DRM session, key status and license
+request events are included in the timeline. CMCD remains query-parameter v1;
+CMCD v2 and request headers are intentionally outside this MVP.
+
+## ClearKey test clones
+
+Choose **ClearKey (test DRM)** while creating an HLS clone. StreamMock captures
+all available video, alternate audio and WebVTT subtitle tracks, generates one
+random 128-bit KID/key pair per clone, packages the audio/video tracks as
+CENC/fMP4, and produces a static DASH manifest for playback. The frontend
+configures `org.w3.clearkey` automatically with the clone's local license URL.
+
+Shaka Packager must be available as `packager` on `PATH`, or configured with
+`STREAMMOCK_PACKAGER_BIN`. The Docker image already contains the pinned,
+checksum-verified Packager binary. A local source build can use the official
+binary or Docker image and then run:
+
+```bash
+make build
+make backend
+```
+
+Open `http://localhost:8080/dashboard`, create a clone, wait for `ready`, and
+open its preview. ClearKey is intended only for deterministic browser/player
+tests: keys are stored in the local SQLite database and are delivered without
+authentication to anyone who has the playback URL. It is not content security,
+license expiry, key rotation, Widevine, FairPlay or PlayReady. Use HTTPS (or
+localhost) because production EME playback requires a secure browser context.
+
+DRM-specific chaos presets cover license latency, failure, fail-then-recover,
+wrong keys and malformed license responses.
+
+## Storage and lifecycle
+
+Clone publication is atomic: downloads are staged, inventoried, quota-checked,
+then moved to the local clone directory. Deletion first moves data to a private
+trash directory so a database failure can restore it. A background janitor
+removes expired clones, stale staging/trash directories and old orphan clone
+directories.
+
+Relevant environment variables (see `.env.example`):
+
+- `STREAMMOCK_CLONE_MAX_BYTES` — maximum bytes per clone (default 1 GiB).
+- `STREAMMOCK_USER_QUOTA_BYTES` — aggregate clone bytes per owner (default 5 GiB; `0` disables the quota).
+- `STREAMMOCK_CLONE_TTL_HOURS` — clone expiry; `0` disables expiry.
+- `STREAMMOCK_CLONE_JANITOR_MINUTES` — cleanup cadence (default 30).
+- `STREAMMOCK_PACKAGER_BIN` and `STREAMMOCK_PACKAGER_TIMEOUT_MINUTES`.
+- `STREAMMOCK_LICENSE_RATELIMIT_RPM` and `STREAMMOCK_LICENSE_RATELIMIT_BURST`.
 
 ## Deploy with Docker Compose
 

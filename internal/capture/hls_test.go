@@ -72,6 +72,72 @@ one.ts
 	}
 }
 
+func TestParseAndBuildFMP4Playlist(t *testing.T) {
+	base, _ := url.Parse("https://origin.example/media.m3u8")
+	media, err := parsePlaylist("#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MAP:URI=init.mp4\n#EXTINF:4,\n1.m4s\n#EXT-X-ENDLIST\n", base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if media.initURL != "https://origin.example/init.mp4" {
+		t.Fatalf("init URL=%q", media.initURL)
+	}
+	segments, _, err := selectSegments(media, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := buildMediaPlaylistForKind(media, segments, "video")
+	if !strings.Contains(local, `#EXT-X-MAP:URI="init.mp4"`) || !strings.Contains(local, "segments/0.m4s") {
+		t.Fatalf("unexpected fMP4 playlist:\n%s", local)
+	}
+}
+
+func TestMaterializeFMP4ByteRangesAsStandaloneFiles(t *testing.T) {
+	manifest := `#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-MAP:URI="media.mp4",BYTERANGE="4@0"
+#EXTINF:4,
+#EXT-X-BYTERANGE:4@4
+media.mp4
+#EXTINF:4,
+#EXT-X-BYTERANGE:4
+media.mp4
+#EXT-X-ENDLIST
+`
+	manager := NewManager(config.Config{CloneMaxBytes: 1 << 20, HTTPTimeout: time.Second}, nil)
+	manager.source = &sourceClient{client: &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.String() == "https://origin.example/media.m3u8" {
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(manifest)), Header: make(http.Header), Request: request}, nil
+		}
+		parts := map[string]string{"bytes=0-3": "init", "bytes=4-7": "seg0", "bytes=8-11": "seg1"}
+		body, ok := parts[request.Header.Get("Range")]
+		if request.URL.String() != "https://origin.example/media.mp4" || !ok {
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("missing")), Header: make(http.Header), Request: request}, nil
+		}
+		return &http.Response{StatusCode: http.StatusPartialContent, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: request}, nil
+	})}}
+	workspace := t.TempDir()
+	result, err := manager.materialize(context.Background(), models.Stream{ID: "fmp4", OriginalURL: "https://origin.example/media.m3u8", RequestedDurationSeconds: 8}, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.videoTracks != 1 || result.duration != 8 {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	for path, want := range map[string]string{
+		"variants/video-0/init.mp4":       "init",
+		"variants/video-0/segments/0.m4s": "seg0",
+		"variants/video-0/segments/1.m4s": "seg1",
+	} {
+		body, err := os.ReadFile(filepath.Join(workspace, filepath.FromSlash(path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(body) != want {
+			t.Fatalf("%s = %q, want %q", path, body, want)
+		}
+	}
+}
+
 func TestMaterializeBuildsSelfContainedLocalPlaylists(t *testing.T) {
 	responses := map[string]string{
 		"https://origin.example/master.m3u8": "#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=audio,NAME=English,DEFAULT=YES,URI=audio.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=800000,AUDIO=audio\nvideo.m3u8\n",
@@ -103,6 +169,59 @@ func TestMaterializeBuildsSelfContainedLocalPlaylists(t *testing.T) {
 		t.Fatalf("master is not local: %s", master)
 	}
 	if _, err := os.Stat(filepath.Join(workspace, "audio", "audio-0", "segments", "0.ts")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMaterializePreservesAllVariantsAudioAndSubtitles(t *testing.T) {
+	responses := map[string]string{
+		"https://origin.example/master.m3u8": `#EXTM3U
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Portuguese",LANGUAGE="pt",DEFAULT=YES,URI="pt.m3u8"
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="English",LANGUAGE="en",URI="en.m3u8"
+#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="Portuguese",LANGUAGE="pt",URI="sub.m3u8"
+#EXT-X-STREAM-INF:BANDWIDTH=800000,AUDIO="audio",SUBTITLES="subs"
+low.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=1800000,AUDIO="audio",SUBTITLES="subs"
+high.m3u8
+`,
+	}
+	media := func(prefix, extension string) string {
+		return "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,\n" + prefix + "0." + extension + "\n#EXTINF:6,\n" + prefix + "1." + extension + "\n#EXT-X-ENDLIST\n"
+	}
+	for _, name := range []string{"low", "high", "pt", "en"} {
+		responses["https://origin.example/"+name+".m3u8"] = media(name, "ts")
+		responses["https://origin.example/"+name+"0.ts"] = name + "-0"
+		responses["https://origin.example/"+name+"1.ts"] = name + "-1"
+	}
+	responses["https://origin.example/sub.m3u8"] = media("sub", "vtt")
+	responses["https://origin.example/sub0.vtt"] = "WEBVTT\n\n00:00.000 --> 00:01.000\nOi"
+	responses["https://origin.example/sub1.vtt"] = "WEBVTT\n\n00:06.000 --> 00:07.000\nOlá"
+	manager := NewManager(config.Config{CloneMaxBytes: 1 << 20, HTTPTimeout: time.Second}, nil)
+	manager.source = &sourceClient{client: &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		body, ok := responses[request.URL.String()]
+		if !ok {
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("missing")), Request: request}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: request}, nil
+	})}}
+	workspace := t.TempDir()
+	result, err := manager.materialize(context.Background(), models.Stream{ID: "all", OriginalURL: "https://origin.example/master.m3u8", RequestedDurationSeconds: 12, ProtectionMode: models.ProtectionClear, TrackSelection: models.TracksAll}, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.videoTracks != 2 || result.audioTracks != 2 || result.subtitleTracks != 1 {
+		t.Fatalf("unexpected track counts: %+v", result)
+	}
+	master, err := os.ReadFile(filepath.Join(workspace, "master.m3u8"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"variants/video-0/index.m3u8", "variants/video-1/index.m3u8", `LANGUAGE="pt"`, `LANGUAGE="en"`, `SUBTITLES="subtitles"`} {
+		if !strings.Contains(string(master), expected) {
+			t.Fatalf("master misses %q:\n%s", expected, master)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "subtitles", "subtitle-0", "segments", "0.vtt")); err != nil {
 		t.Fatal(err)
 	}
 }

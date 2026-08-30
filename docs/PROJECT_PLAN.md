@@ -1,80 +1,89 @@
 # Plano do projeto — StreamMock
 
-Este documento descreve as fases do produto e a diferença importante entre o
-comportamento atual de proxy e o clone HLS que o produto deve oferecer.
+Este documento registra o que já foi entregue e ordena as próximas evoluções.
+O produto combina proxy efêmero, clones VOD autocontidos e observabilidade de
+playback. CMCD v2 e envio de CMCD por headers não fazem parte das próximas
+fases; o suporte atual continua em query parameters v1.
 
-## Fase 1 — Proxy HLS e simulação de falhas (concluída)
+## Fase 1 — Proxy e simulação de falhas (concluída)
 
-- Criar streams a partir de uma URL HLS.
-- Reescrever playlists e URLs de recursos para `/s/{id}/...`.
-- Buscar playlists e segmentos da origem sob demanda.
-- Limitar a playlist retornada a uma janela de até 60 segundos e encerrá-la
-  com `#EXT-X-ENDLIST`.
-- Aplicar presets de caos para testes de player e persistir os metadados da
-  stream para usuários autenticados.
+- Proxy HLS/DASH público e por workspace.
+- Reescrita de playlists e recursos sob `/p`, `/ws/{slug}/p` e `/s/{id}`.
+- Janela VOD de até 300 segundos, presets de caos, limitação por IP e proteção
+  SSRF para todas as buscas externas.
+- Persistência de streams de workspace e request board; proxies públicos são
+  efêmeros, ficam somente em memória e são removidos por inatividade.
 
-Limitação conhecida: esta fase não armazena playlists, segmentos ou chaves.
-Consequentemente, a reprodução depende de a origem continuar disponível. A
-janela de 60 segundos é uma transformação da playlist atual, e não uma cópia
-imutável do conteúdo.
+O proxy continua dependendo da origem e é a opção apropriada para testes sob
+demanda sem armazenar o conteúdo.
 
-## Fase 2 — Clone HLS persistente (em andamento)
+## Fase 2 — Clones VOD persistentes (concluída)
 
-Objetivo: ao criar uma stream, capturar por padrão até 60 segundos de conteúdo
-HLS, com duração solicitada de até 5 minutos, e servi-lo localmente. Depois de
-concluída a captura, a URL clone continua reproduzível mesmo que a URL original
-deixe de existir.
+- Captura assíncrona em staging, publicação atômica e reprodução sem acessar a
+  origem depois que o clone fica `ready`.
+- Duração configurável de 1 a 300 segundos (60 por padrão), somente com
+  segmentos completos.
+- HLS VOD MPEG-TS e fMP4 (`EXT-X-MAP`), inclusive recursos compartilhados por
+  `EXT-X-BYTERANGE`.
+- Seleção da variante mais alta ou preservação da ladder completa, áudios
+  alternativos e legendas WebVTT.
+- Clone DASH clear e estático para o subconjunto suportado de
+  `SegmentTemplate`/`SegmentTimeline`.
+- Inventário de arquivos, hashes, bytes, contagem de faixas, progresso e erros
+  estruturados no SQLite e na interface.
 
-Escopo entregue no primeiro corte:
+Entradas já criptografadas, playlists live/LL-HLS, múltiplos Periods e DASH
+`SegmentBase` continuam sendo rejeitados explicitamente.
 
-- Aceitar master playlist ou media playlist HLS VOD clear/MPEG-TS.
-- Baixar a variante de vídeo de maior `BANDWIDTH` e a rendition de áudio padrão
-  vinculada, quando houver.
-- Selecionar segmentos completos cuja duração acumulada seja de no máximo o
-  valor pedido: 60 segundos por padrão, 300 segundos no máximo.
-- Baixar playlists e segmentos em staging antes da publicação local.
-- Gerar playlists locais com referências locais e `#EXT-X-ENDLIST`.
-- Registrar no banco modo, estado (`queued`, `capturing`, `ready` ou `failed`),
-  duração, bytes, erro, inventário e diretório de armazenamento.
-- Exibir o andamento, a falha ou a disponibilidade do clone na interface.
-- Manter os presets de caos funcionando sobre os recursos locais clonados.
+## Fase 3 — Operação e Playback Inspector (concluída)
 
-Critérios de aceite:
+- Tamanho, duração, estado, progresso, faixas, criação e expiração por clone.
+- Exclusão recuperável em caso de falha de banco, quota agregada por usuário,
+  TTL opcional e limpeza de staging, trash e diretórios órfãos antigos.
+- Timeline de playback, diagnósticos causais e adapters HLS.js/Shaka no pacote
+  `@streammock/playback-observer`.
+- Eventos de manifesto, fragmentos, buffering, ABR, falhas, sessões DRM, status
+  de chaves e requisições de licença.
 
-- Um clone marcado como `ready` toca sem qualquer requisição à origem.
-- Derrubar ou tornar indisponível a URL de origem não impede a reprodução do
-  clone pronto.
-- Um clone não ultrapassa a duração solicitada nem o teto absoluto de 300
-  segundos; segmentos indivisíveis que não couberem no limite são omitidos.
-- Falhas de captura ficam visíveis e não produzem um clone parcialmente
-  utilizável como se estivesse pronto.
+O programa detalhado do Inspector está em
+[`PLAYBACK_INSPECTOR_PLAN.md`](PLAYBACK_INSPECTOR_PLAN.md).
 
-Limitações deliberadas deste corte:
+## Fase 4 — ClearKey e cenários multifaixa (MVP 1.0 concluído)
 
-- Apenas uma variante de vídeo é preservada; a ladder completa fica para a
-  próxima fase de ABR.
-- AES-128/DRM, byte ranges, fMP4/`EXT-X-MAP`, LL-HLS e playlists live falham
-  explicitamente e nunca geram clone parcial.
-- O diretório é configurável por `STREAMMOCK_STORAGE` (default
-  `streammock-data`) e o limite agregado é 1 GiB por clone.
+- Geração criptograficamente aleatória de um KID/key de 128 bits por clone,
+  persistido separadamente dos metadados públicos da stream.
+- Captura HLS clear multifaixa e empacotamento CENC/fMP4 com Shaka Packager.
+- Manifesto DASH estático como entrada protegida principal, com múltiplas
+  representações de vídeo, áudios por idioma e legendas WebVTT locais.
+- Endpoint W3C ClearKey em `POST /s/{id}/license/clearkey`, Base64URL sem
+  padding, CORS, limite de corpo, rate limit e respostas sem cache.
+- Preview Shaka configurado para `org.w3.clearkey` e diagnósticos específicos
+  para latência, falha, recuperação, chave errada e licença malformada.
+- Imagem Docker multi-arquitetura com Shaka Packager versionado e verificado
+  por SHA-256.
 
-## Fase 3 — Operação do acervo de clones
+ClearKey é apenas uma ferramenta de teste: a chave precisa ser entregue ao
+navegador e não protege conteúdo contra cópia. Não substitui Widevine,
+FairPlay, PlayReady, rotação de chaves ou um serviço comercial de licenças.
 
-O programa detalhado de observabilidade de playback, com CMCD, diagnóstico
-causal e Observer HLS.js, está em
-[`PLAYBACK_INSPECTOR_PLAN.md`](PLAYBACK_INSPECTOR_PLAN.md). O escopo inicial
-aprovado cobre as fases 0 a 4 desse documento.
+## Fase 5 — Próximas implementações importantes
 
-- Listar tamanho, duração, data e estado de cada clone.
-- Permitir remover clones e recuperar espaço com segurança.
-- Aplicar quotas por usuário e políticas de expiração.
-- Disponibilizar observabilidade de captura, reprodução e erros de origem.
+Ordem sugerida para a próxima rodada:
 
-## Fase 4 — Formatos e cenários avançados
+1. **Compatibilidade de ingestão:** detectar áudio muxado na variante quando
+   não há `EXT-X-MEDIA`, suportar mais layouts fMP4/DASH e produzir uma matriz
+   automatizada de compatibilidade com Shaka Player, Safari e players móveis.
+2. **Captura de live:** selecionar um ponto inicial, congelar uma janela de live
+   de forma determinística e tratar descontinuidades; LL-HLS deve ser
+   normalizado para VOD, não reproduzido parcialmente.
+3. **Hardening das chaves de teste:** criptografia dos valores em repouso,
+   chave-mestra externa, auditoria e rotação/expiração opcional da licença.
+4. **Operação em escala:** fila de workers persistente, cancelamento/retry de
+   captura, reserva transacional de quota, métricas e storage compatível com
+   objetos em vez de depender do filesystem local.
+5. **E2E de playback:** fixture audiovisual versionada com duas resoluções,
+   áudio `pt`/`en` e WebVTT, mais testes Playwright que confirmem troca de
+   faixa, renovação/erro de licença e reprodução sem a origem.
 
-- Suporte real a DASH, com parsing XML, reescrita de BaseURL e
-  SegmentTemplate/SegmentTimeline, proxy .mpd e clone VOD local.
-- Preview DASH com Shaka Player e adapter playback-observer/shaka.
-- Captura de múltiplas variantes, faixas de áudio e legendas.
-- Controles de captura, como duração, qualidade e ponto inicial para conteúdo
-  live.
+Ficam deliberadamente fora dessa sequência: CMCD v2, CMCD em headers e DRM
+comercial. Eles só devem voltar ao plano quando houver um caso de uso concreto.

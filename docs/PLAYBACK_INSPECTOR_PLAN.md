@@ -26,17 +26,17 @@ O resultado esperado é uma timeline capaz de produzir diagnósticos como:
 
 ## 2. Escopo deste plano
 
-As fases 0 a 4 formam o programa inicial de desenvolvimento:
+As fases 0 a 5 foram entregues no programa inicial de desenvolvimento:
 
 - Fase 0 — fundação, contratos e conformidade;
 - Fase 1 — CMCD v1 em Request Mode por query string;
 - Fase 2 — sessões, correlações e primeira interface do Inspector;
 - Fase 3 — timings causais do proxy e motor de diagnósticos;
-- Fase 4 — Observer JavaScript core e adapter para HLS.js.
+- Fase 4 — Observer JavaScript core e adapter para HLS.js;
+- Fase 5 — adapter para Shaka Player, incluindo eventos de DRM/licença.
 
-Ficam adiados, mas registrados para planejamento futuro:
+Ficam fora do roadmap ativo, sem previsão de implementação:
 
-- Fase 5 — adapter para Shaka Player;
 - Fase 6 — CMCD Request Mode por headers;
 - Fase 7 — CMCD v2, Structured Fields e Event Mode.
 

@@ -16,7 +16,7 @@ type DB struct {
 }
 
 func Open(path string) (*DB, error) {
-	dsn := fmt.Sprintf("%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", path)
+	dsn := fmt.Sprintf("%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)", path)
 	conn, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
@@ -52,6 +52,14 @@ CREATE TABLE IF NOT EXISTS streams (
     error_code                 TEXT,
     error_message              TEXT,
     format                     TEXT NOT NULL DEFAULT 'hls',
+	protection_mode            TEXT NOT NULL DEFAULT 'clear',
+	track_selection            TEXT NOT NULL DEFAULT 'highest',
+	license_path               TEXT,
+	capture_progress           INTEGER NOT NULL DEFAULT 0,
+	video_track_count          INTEGER NOT NULL DEFAULT 0,
+	audio_track_count          INTEGER NOT NULL DEFAULT 0,
+	subtitle_track_count       INTEGER NOT NULL DEFAULT 0,
+	expires_at                 TEXT,
     created_at                 TEXT NOT NULL,
     updated_at                 TEXT NOT NULL
 );`
@@ -72,6 +80,14 @@ CREATE TABLE IF NOT EXISTS streams (
 		{"error_code", "TEXT"},
 		{"error_message", "TEXT"},
 		{"format", "TEXT NOT NULL DEFAULT 'hls'"},
+		{"protection_mode", "TEXT NOT NULL DEFAULT 'clear'"},
+		{"track_selection", "TEXT NOT NULL DEFAULT 'highest'"},
+		{"license_path", "TEXT"},
+		{"capture_progress", "INTEGER NOT NULL DEFAULT 0"},
+		{"video_track_count", "INTEGER NOT NULL DEFAULT 0"},
+		{"audio_track_count", "INTEGER NOT NULL DEFAULT 0"},
+		{"subtitle_track_count", "INTEGER NOT NULL DEFAULT 0"},
+		{"expires_at", "TEXT"},
 		{"updated_at", "TEXT"},
 	} {
 		if err := d.ensureColumn(column.name, column.definition); err != nil {
@@ -92,6 +108,16 @@ CREATE TABLE IF NOT EXISTS streams (
         FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE CASCADE
     )`); err != nil {
 		return fmt.Errorf("migrate resources: %w", err)
+	}
+	if _, err := d.conn.Exec(`CREATE TABLE IF NOT EXISTS stream_drm_keys (
+		stream_id TEXT NOT NULL,
+		kid_hex TEXT NOT NULL,
+		key_hex TEXT NOT NULL,
+		label TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (stream_id, kid_hex),
+		FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE CASCADE
+	)`); err != nil {
+		return fmt.Errorf("migrate DRM keys: %w", err)
 	}
 	if _, err := d.conn.Exec(`CREATE TABLE IF NOT EXISTS workspaces (
         slug       TEXT PRIMARY KEY,
@@ -322,9 +348,11 @@ func (d *DB) ensureProxyRequestColumn(name, definition string) error {
 	return nil
 }
 
+const streamColumns = `id, label, original_url, proxy_path, active_preset, owner_id, workspace_slug, mode, capture_status, requested_duration_seconds, duration_seconds, total_bytes, resource_count, storage_key, error_code, error_message, format, protection_mode, track_selection, license_path, capture_progress, video_track_count, audio_track_count, subtitle_track_count, expires_at, created_at, updated_at`
+
 func (d *DB) InsertStream(st models.Stream) error {
 	_, err := d.conn.Exec(
-		`INSERT INTO streams (id, label, original_url, proxy_path, active_preset, owner_id, workspace_slug, mode, capture_status, requested_duration_seconds, duration_seconds, total_bytes, resource_count, storage_key, error_code, error_message, format, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO streams (`+streamColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		st.ID,
 		st.Label,
 		st.OriginalURL,
@@ -342,6 +370,14 @@ func (d *DB) InsertStream(st models.Stream) error {
 		st.ErrorCode,
 		st.ErrorMessage,
 		st.Format,
+		st.ProtectionMode,
+		st.TrackSelection,
+		st.LicensePath,
+		st.CaptureProgress,
+		st.VideoTrackCount,
+		st.AudioTrackCount,
+		st.SubtitleTrackCount,
+		timeString(st.ExpiresAt),
 		st.CreatedAt.UTC().Format(time.RFC3339),
 		st.UpdatedAt.UTC().Format(time.RFC3339),
 	)
@@ -352,19 +388,33 @@ func (d *DB) InsertStream(st models.Stream) error {
 }
 
 func (d *DB) DeleteStream(id string) error {
-	if _, err := d.conn.Exec(`DELETE FROM streams WHERE id = ?`, id); err != nil {
+	tx, err := d.conn.Begin()
+	if err != nil {
+		return fmt.Errorf("delete stream: %w", err)
+	}
+	defer tx.Rollback()
+	for _, query := range []string{
+		`DELETE FROM stream_drm_keys WHERE stream_id = ?`,
+		`DELETE FROM stream_resources WHERE stream_id = ?`,
+		`DELETE FROM streams WHERE id = ?`,
+	} {
+		if _, err := tx.Exec(query, id); err != nil {
+			return fmt.Errorf("delete stream: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("delete stream: %w", err)
 	}
 	return nil
 }
 
 func (d *DB) ListStreams() ([]models.Stream, error) {
-	return d.queryStreams(`SELECT id, label, original_url, proxy_path, active_preset, owner_id, workspace_slug, mode, capture_status, requested_duration_seconds, duration_seconds, total_bytes, resource_count, storage_key, error_code, error_message, format, created_at, updated_at FROM streams ORDER BY created_at ASC`)
+	return d.queryStreams(`SELECT ` + streamColumns + ` FROM streams ORDER BY created_at ASC`)
 }
 
 func (d *DB) ListStreamsByOwner(ownerID string) ([]models.Stream, error) {
 	rows, err := d.conn.Query(
-		`SELECT id, label, original_url, proxy_path, active_preset, owner_id, workspace_slug, mode, capture_status, requested_duration_seconds, duration_seconds, total_bytes, resource_count, storage_key, error_code, error_message, format, created_at, updated_at FROM streams WHERE owner_id = ? ORDER BY created_at ASC`,
+		`SELECT `+streamColumns+` FROM streams WHERE owner_id = ? ORDER BY created_at ASC`,
 		ownerID,
 	)
 	if err != nil {
@@ -375,7 +425,11 @@ func (d *DB) ListStreamsByOwner(ownerID string) ([]models.Stream, error) {
 }
 
 func (d *DB) queryStreams(query string) ([]models.Stream, error) {
-	rows, err := d.conn.Query(query)
+	return d.queryStreamsArgs(query)
+}
+
+func (d *DB) queryStreamsArgs(query string, args ...any) ([]models.Stream, error) {
+	rows, err := d.conn.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list streams: %w", err)
 	}
@@ -388,7 +442,8 @@ func scanStreams(rows *sql.Rows) ([]models.Stream, error) {
 	for rows.Next() {
 		var st models.Stream
 		var createdAt, updatedAt string
-		if err := rows.Scan(&st.ID, &st.Label, &st.OriginalURL, &st.ProxyPath, &st.ActivePreset, &st.OwnerID, &st.WorkspaceSlug, &st.Mode, &st.CaptureStatus, &st.RequestedDurationSeconds, &st.DurationSeconds, &st.TotalBytes, &st.ResourceCount, &st.StorageKey, &st.ErrorCode, &st.ErrorMessage, &st.Format, &createdAt, &updatedAt); err != nil {
+		var expiresAt sql.NullString
+		if err := rows.Scan(&st.ID, &st.Label, &st.OriginalURL, &st.ProxyPath, &st.ActivePreset, &st.OwnerID, &st.WorkspaceSlug, &st.Mode, &st.CaptureStatus, &st.RequestedDurationSeconds, &st.DurationSeconds, &st.TotalBytes, &st.ResourceCount, &st.StorageKey, &st.ErrorCode, &st.ErrorMessage, &st.Format, &st.ProtectionMode, &st.TrackSelection, &st.LicensePath, &st.CaptureProgress, &st.VideoTrackCount, &st.AudioTrackCount, &st.SubtitleTrackCount, &expiresAt, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan stream: %w", err)
 		}
 		ts, err := time.Parse(time.RFC3339, createdAt)
@@ -403,6 +458,19 @@ func scanStreams(rows *sql.Rows) ([]models.Stream, error) {
 		if st.Format == "" {
 			st.Format = models.FormatHLS
 		}
+		if st.ProtectionMode == "" {
+			st.ProtectionMode = models.ProtectionClear
+		}
+		if st.TrackSelection == "" {
+			st.TrackSelection = models.TracksHighest
+		}
+		if expiresAt.Valid {
+			value, parseErr := time.Parse(time.RFC3339, expiresAt.String)
+			if parseErr != nil {
+				return nil, fmt.Errorf("parse expires_at %q: %w", expiresAt.String, parseErr)
+			}
+			st.ExpiresAt = &value
+		}
 		out = append(out, st)
 	}
 	if err := rows.Err(); err != nil {
@@ -412,11 +480,16 @@ func scanStreams(rows *sql.Rows) ([]models.Stream, error) {
 }
 
 func (d *DB) UpdateCaptureStatus(id, status string) error {
-	_, err := d.conn.Exec(`UPDATE streams SET capture_status = ?, error_code = NULL, error_message = NULL, updated_at = ? WHERE id = ?`, status, time.Now().UTC().Format(time.RFC3339), id)
+	_, err := d.conn.Exec(`UPDATE streams SET capture_status = ?, capture_progress = ?, error_code = NULL, error_message = NULL, updated_at = ? WHERE id = ?`, status, 5, time.Now().UTC().Format(time.RFC3339), id)
 	return err
 }
 
-func (d *DB) CompleteClone(id string, duration float64, totalBytes int64, storageKey string, resources []models.Resource) error {
+func (d *DB) UpdateCaptureProgress(id string, progress int) error {
+	_, err := d.conn.Exec(`UPDATE streams SET capture_progress = ?, updated_at = ? WHERE id = ?`, progress, time.Now().UTC().Format(time.RFC3339), id)
+	return err
+}
+
+func (d *DB) CompleteClone(id string, duration float64, totalBytes int64, storageKey string, resources []models.Resource, videoTracks, audioTracks, subtitleTracks int) error {
 	tx, err := d.conn.Begin()
 	if err != nil {
 		return err
@@ -430,7 +503,7 @@ func (d *DB) CompleteClone(id string, duration float64, totalBytes int64, storag
 			return err
 		}
 	}
-	if _, err := tx.Exec(`UPDATE streams SET capture_status = ?, duration_seconds = ?, total_bytes = ?, resource_count = ?, storage_key = ?, error_code = NULL, error_message = NULL, updated_at = ? WHERE id = ?`, models.CaptureReady, duration, totalBytes, len(resources), storageKey, time.Now().UTC().Format(time.RFC3339), id); err != nil {
+	if _, err := tx.Exec(`UPDATE streams SET capture_status = ?, capture_progress = 100, duration_seconds = ?, total_bytes = ?, resource_count = ?, storage_key = ?, video_track_count = ?, audio_track_count = ?, subtitle_track_count = ?, error_code = NULL, error_message = NULL, updated_at = ? WHERE id = ?`, models.CaptureReady, duration, totalBytes, len(resources), storageKey, videoTracks, audioTracks, subtitleTracks, time.Now().UTC().Format(time.RFC3339), id); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -439,6 +512,48 @@ func (d *DB) CompleteClone(id string, duration float64, totalBytes int64, storag
 func (d *DB) FailClone(id, code, message string) error {
 	_, err := d.conn.Exec(`UPDATE streams SET capture_status = ?, error_code = ?, error_message = ?, updated_at = ? WHERE id = ?`, models.CaptureFailed, code, message, time.Now().UTC().Format(time.RFC3339), id)
 	return err
+}
+
+func (d *DB) InsertDRMKey(key models.DRMKey) error {
+	_, err := d.conn.Exec(`INSERT INTO stream_drm_keys (stream_id, kid_hex, key_hex, label) VALUES (?, ?, ?, ?)`, key.StreamID, strings.ToLower(key.KIDHex), strings.ToLower(key.KeyHex), key.Label)
+	if err != nil {
+		return fmt.Errorf("insert DRM key: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) ListDRMKeys(streamID string) ([]models.DRMKey, error) {
+	rows, err := d.conn.Query(`SELECT stream_id, kid_hex, key_hex, label FROM stream_drm_keys WHERE stream_id = ? ORDER BY kid_hex`, streamID)
+	if err != nil {
+		return nil, fmt.Errorf("list DRM keys: %w", err)
+	}
+	defer rows.Close()
+	var keys []models.DRMKey
+	for rows.Next() {
+		var key models.DRMKey
+		if err := rows.Scan(&key.StreamID, &key.KIDHex, &key.KeyHex, &key.Label); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}
+
+func (d *DB) OwnerStoredBytes(ownerID string) (int64, error) {
+	var total int64
+	err := d.conn.QueryRow(`SELECT COALESCE(SUM(total_bytes), 0) FROM streams WHERE owner_id = ? AND mode = 'clone'`, ownerID).Scan(&total)
+	return total, err
+}
+
+func (d *DB) ListExpiredClones(now time.Time) ([]models.Stream, error) {
+	return d.queryStreamsArgs(`SELECT `+streamColumns+` FROM streams WHERE mode = 'clone' AND expires_at IS NOT NULL AND expires_at <= ? ORDER BY expires_at ASC`, now.UTC().Format(time.RFC3339))
+}
+
+func timeString(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.UTC().Format(time.RFC3339)
 }
 
 func (d *DB) ListResources(streamID string) ([]models.Resource, error) {
