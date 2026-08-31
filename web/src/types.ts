@@ -34,6 +34,14 @@ export interface Stream {
   presets: Preset[];
 }
 
+export interface LiveMock {
+	status: "stopped" | "playing" | "paused" | "ended";
+	window_segments: number;
+	loop: boolean;
+	playback_path: string;
+	sequence: number;
+}
+
 export interface ProxyRequest {
 	id: number;
   workspace_slug: string;

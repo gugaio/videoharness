@@ -19,6 +19,7 @@ export default function WorkspacePage() {
 	const [protection, setProtection] = useState<"clear" | "clearkey">("clear");
 	const [trackSelection, setTrackSelection] = useState<"highest" | "all">("highest");
   const [mode, setMode] = useState<"clone" | "proxy">("proxy");
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [isCreatingClone, setIsCreatingClone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const clones = streams.filter((stream) => stream.mode === "clone");
@@ -144,68 +145,93 @@ export default function WorkspacePage() {
               <p className="mt-2 text-sm text-stone-300/70">
                 StreamMock downloads a self-contained VOD or freezes the latest complete window of a live stream, so playback no longer depends on the origin.
               </p>
-			  <form onSubmit={handleSubmit} className="mt-6 grid gap-3 lg:grid-cols-2 xl:grid-cols-[12rem_minmax(16rem,1fr)_auto_auto_auto_auto]">
+              <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem]">
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-medium uppercase tracking-[0.14em] text-stone-400">Source URL</span>
+                    <input
+                      type="url"
+                      value={url}
+                      onChange={(e) => setUrl(e.target.value)}
+                      required
+                      placeholder="https://example.com/manifest.mpd"
+                      className="w-full min-w-0 rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm text-white outline-none transition placeholder:text-stone-500 focus:border-amber-100/60 focus:ring-2 focus:ring-amber-100/15"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-medium uppercase tracking-[0.14em] text-stone-400">Format</span>
+                    <select value={format} onChange={(e) => { const value = e.target.value as "hls" | "dash"; setFormat(value); if (value === "dash") setProtection("clear"); }} className="w-full rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm text-white outline-none transition focus:border-amber-100/60 focus:ring-2 focus:ring-amber-100/15">
+                      <option value="hls" className="bg-zinc-900">HLS</option>
+                      <option value="dash" className="bg-zinc-900">DASH</option>
+                    </select>
+                  </label>
+                </div>
                 <input
                   type="text"
                   value={label}
                   onChange={(e) => setLabel(e.target.value)}
                   maxLength={120}
                   placeholder="Label (optional)"
-                  className="min-w-0 rounded-xl border border-white/10 bg-black/25 px-5 py-4 text-sm text-white outline-none transition placeholder:text-stone-500 focus:border-amber-100/60 focus:ring-2 focus:ring-amber-100/15 sm:w-48"
+                  className="w-full min-w-0 rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm text-white outline-none transition placeholder:text-stone-500 focus:border-amber-100/60 focus:ring-2 focus:ring-amber-100/15"
                 />
-                <input
-                  type="url"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  required
-                  placeholder="https://example.com/manifest.mpd"
-                  className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/25 px-5 py-4 text-sm text-white outline-none transition placeholder:text-stone-500 focus:border-amber-100/60 focus:ring-2 focus:ring-amber-100/15"
-                />
-                <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-stone-300">
-                  <span>Capture duration</span>
-                  <input
-                    type="number"
-                    min="1"
-                    max="300"
-                    value={duration}
-                    onChange={(e) => setDuration(Math.max(1, Math.min(300, Number(e.target.value) || 60)))}
-                    className="w-14 bg-transparent text-right text-white outline-none"
-                  />
-                </label>
-                <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-stone-300">
-                  <span>Format</span>
-                  <select value={format} onChange={(e) => { const value = e.target.value as "hls" | "dash"; setFormat(value); if (value === "dash") setProtection("clear"); }} className="bg-transparent text-white outline-none">
-                    <option value="hls" className="bg-zinc-900">HLS</option>
-                    <option value="dash" className="bg-zinc-900">DASH</option>
-                  </select>
-                </label>
-				<label className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-stone-300">
-				  <span>Protection</span>
-				  <select value={protection} onChange={(e) => { const value = e.target.value as "clear" | "clearkey"; setProtection(value); if (value === "clearkey") setTrackSelection("all"); }} disabled={format === "dash"} className="bg-transparent text-white outline-none disabled:opacity-50">
-					<option value="clear" className="bg-zinc-900">Clear</option>
-					<option value="clearkey" className="bg-zinc-900">ClearKey test DRM</option>
-				  </select>
-				</label>
-				<label className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-stone-300">
-				  <span>Tracks</span>
-				  <select value={trackSelection} onChange={(e) => setTrackSelection(e.target.value as "highest" | "all")} className="bg-transparent text-white outline-none">
-					<option value="highest" className="bg-zinc-900">Highest + default audio</option>
-					<option value="all" className="bg-zinc-900">All video/audio/subtitles</option>
-				  </select>
-				</label>
-                <button
-                  type="submit"
-                  className="rounded-xl bg-white px-6 py-4 text-sm font-semibold text-stone-950 transition hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-white/60"
-                >
-                  Clone stream
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsCreatingClone(false)}
-                  className="rounded-xl px-4 py-4 text-sm font-medium text-stone-400 transition hover:text-white"
-                >
-                  Cancel
-                </button>
+                {showAdvanced && (
+                  <div className="grid gap-3 rounded-2xl border border-white/10 bg-black/15 p-4 sm:grid-cols-3">
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-medium uppercase tracking-[0.14em] text-stone-400">Capture duration</span>
+                      <span className="flex items-center rounded-xl border border-white/10 bg-black/25 px-4 py-3 transition focus-within:border-amber-100/60 focus-within:ring-2 focus-within:ring-amber-100/15">
+                        <input
+                          type="number"
+                          min="1"
+                          max="300"
+                          value={duration}
+                          onChange={(e) => setDuration(Math.max(1, Math.min(300, Number(e.target.value) || 60)))}
+                          className="w-full min-w-0 bg-transparent text-sm text-white outline-none"
+                        />
+                        <span className="ml-2 text-xs text-stone-500">sec</span>
+                      </span>
+                    </label>
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-medium uppercase tracking-[0.14em] text-stone-400">Protection</span>
+                      <select value={protection} onChange={(e) => { const value = e.target.value as "clear" | "clearkey"; setProtection(value); if (value === "clearkey") setTrackSelection("all"); }} disabled={format === "dash"} className="w-full rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm text-white outline-none transition focus:border-amber-100/60 focus:ring-2 focus:ring-amber-100/15 disabled:opacity-50">
+                        <option value="clear" className="bg-zinc-900">Clear</option>
+                        <option value="clearkey" className="bg-zinc-900">ClearKey test DRM</option>
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-medium uppercase tracking-[0.14em] text-stone-400">Tracks</span>
+                      <select value={trackSelection} onChange={(e) => setTrackSelection(e.target.value as "highest" | "all")} className="w-full rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm text-white outline-none transition focus:border-amber-100/60 focus:ring-2 focus:ring-amber-100/15">
+                        <option value="highest" className="bg-zinc-900">Highest + default audio</option>
+                        <option value="all" className="bg-zinc-900">All video/audio/subtitles</option>
+                      </select>
+                    </label>
+                </div>
+                )}
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <button
+                    type="button"
+                    aria-expanded={showAdvanced}
+                    onClick={() => setShowAdvanced((v) => !v)}
+                    className="inline-flex items-center gap-1.5 self-start rounded-xl px-3 py-3 text-sm font-medium text-stone-400 transition hover:text-white focus:outline-none focus:ring-2 focus:ring-amber-100/40"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`size-4 transition-transform ${showAdvanced ? "rotate-180" : ""}`} aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+                    Advanced options
+                  </button>
+                  <div className="flex gap-2 sm:ml-auto">
+                    <button
+                      type="submit"
+                      className="flex-1 rounded-xl bg-white px-6 py-3 text-sm font-semibold text-stone-950 transition hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-white/60 sm:flex-none"
+                    >
+                      Clone stream
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsCreatingClone(false)}
+                      className="rounded-xl px-4 py-3 text-sm font-medium text-stone-400 transition hover:text-white"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
               </form>
             </section>
             }

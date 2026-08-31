@@ -23,6 +23,7 @@ import (
 	"streammock/internal/config"
 	"streammock/internal/db"
 	"streammock/internal/diagnostics"
+	"streammock/internal/live"
 	"streammock/internal/models"
 	"streammock/internal/proxy"
 	"streammock/internal/pubnet"
@@ -135,6 +136,8 @@ func main() {
 	mux.HandleFunc("DELETE /api/streams/{id}", srv.handleDeleteStream)
 	mux.HandleFunc("POST /api/streams", srv.handleAddStream)
 	mux.HandleFunc("POST /api/streams/{id}/preset", srv.handleSetPreset)
+	mux.HandleFunc("GET /api/streams/{id}/live", srv.handleLiveMock)
+	mux.HandleFunc("POST /api/streams/{id}/live", srv.handleLiveMock)
 	mux.HandleFunc("GET /api/workspace", srv.handleGetWorkspace)
 	mux.HandleFunc("GET /api/workspace/requests", srv.handleWorkspaceRequests)
 	mux.HandleFunc("DELETE /api/workspace/requests", srv.handleWorkspaceRequests)
@@ -555,6 +558,51 @@ func (s *Server) handleSetPreset(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleLiveMock controls the in-memory HLS live projection of a ready clone.
+// The clone itself stays immutable; stopping or restarting only changes the
+// generated playlists, never its stored media files.
+func (s *Server) handleLiveMock(w http.ResponseWriter, r *http.Request) {
+	st, ok := s.store.Get(r.PathValue("id"))
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	userID, authed := s.authenticatedUserID(r)
+	if !authed || st.OwnerID == nil || *st.OwnerID != userID {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if r.Method == http.MethodGet {
+		state, err := s.engine.Live().State(st)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"live": state})
+		return
+	}
+	var body struct {
+		Action         string `json:"action"`
+		WindowSegments int    `json:"window_segments"`
+		Loop           *bool  `json:"loop"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	state, err := s.engine.Live().Control(st, body.Action, live.Options{WindowSegments: body.WindowSegments, Loop: body.Loop})
+	if err != nil {
+		status := http.StatusBadRequest
+		if state.Status == "stopped" && strings.TrimSpace(body.Action) != "start" && strings.TrimSpace(body.Action) != "restart" {
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"live": state})
+}
+
 // handleOnDemand is the public no-signup entry point: /p.m3u8?url=<hls>&preset=&duration=
 // It proxies the given HLS stream on the fly (nothing is recorded), reusing a
 // deterministic stream ID per playback configuration so player refreshes keep
@@ -801,6 +849,7 @@ func (s *Server) handleCreatePlaybackSession(w http.ResponseWriter, r *http.Requ
 		ContentID       string  `json:"content_id"`
 		AllowedOrigin   string  `json:"allowed_origin"`
 		DurationSeconds float64 `json:"duration_seconds"`
+		Live            bool    `json:"live"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -862,6 +911,15 @@ func (s *Server) handleCreatePlaybackSession(w http.ResponseWriter, r *http.Requ
 		playbackURL = stream.ProxyPath
 		format = stream.Format
 		protectionMode = stream.ProtectionMode
+		if body.Live {
+			state, stateErr := s.engine.Live().State(stream)
+			if stateErr != nil || state.Status == "stopped" {
+				http.Error(w, "live mock is not running", http.StatusConflict)
+				return
+			}
+			playbackURL = state.PlaybackPath
+			format = models.FormatHLS
+		}
 		if stream.LicensePath != nil {
 			licenseURL = *stream.LicensePath
 		}

@@ -27,6 +27,8 @@ fail explicitly instead of publishing a partial clone.
 - Public: /p.m3u8?url=… and /p.mpd?url=…
 - Workspace: /ws/{slug}/p.m3u8?url=… and /ws/{slug}/p.mpd?url=…
 - Local clear clones: `/s/{id}/master.m3u8` or `/s/{id}/manifest.mpd`
+- Local HLS live mock: `/s/{id}/live.m3u8` (a ready clear HLS clone, started
+  through the workspace dashboard or `POST /api/streams/{id}/live`)
 - Local ClearKey clones: `/s/{id}/manifest.mpd`
 - ClearKey license: `POST /s/{id}/license/clearkey`
 
@@ -34,6 +36,19 @@ The built-in preview uses HLS.js for clear HLS and Shaka Player for DASH and
 ClearKey. Both feed the Playback Inspector; DRM session, key status and license
 request events are included in the timeline. CMCD remains query-parameter v1;
 CMCD v2 and request headers are intentionally outside this MVP.
+
+## Local HLS live mocks
+
+Any ready clear HLS clone can become a local rolling live source. Start it from
+the clone dashboard, then use `/s/{id}/live.m3u8`; the generated master and
+media playlists reference only stored clone files. The dashboard can pause,
+resume, restart, or stop the scenario. It starts with a three-segment window,
+loops by default, and accepts a 1–20 segment window through the control API.
+
+Live state is intentionally process-local. Restarting StreamMock resets the
+scenario rather than attempting to resume a wall-clock run. This first cut is
+HLS-only: it does not create DASH dynamic manifests, LL-HLS parts, or a
+continuous ingest from an upstream live origin.
 
 ## ClearKey test clones
 

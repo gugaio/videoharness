@@ -15,6 +15,7 @@ export default function ProxyPreviewPage() {
   const query = new URLSearchParams(useLocation().search);
   const source = query.get("source")?.trim() ?? "";
   const preset = query.get("preset") ?? "clean";
+  const live = query.get("live") === "1";
   const format = (query.get("format") ?? (source.toLowerCase().split("?")[0].endsWith(".mpd") ? "dash" : "hls")) as "hls" | "dash";
   const isClone = Boolean(id);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -43,7 +44,7 @@ export default function ProxyPreviewPage() {
       .then(async (token) => {
         if (!token) throw new Error("Authentication is required to create an Inspector session.");
         const session = await createPlaybackSession(token, isClone
-          ? { stream_id: id, allowed_origin: window.location.origin }
+		  ? { stream_id: id, allowed_origin: window.location.origin, live }
           : { source, preset, format, allowed_origin: window.location.origin });
         if (!cancelled) setPrepared(session);
       })
@@ -56,7 +57,7 @@ export default function ProxyPreviewPage() {
     return () => {
       cancelled = true;
     };
-  }, [format, getToken, id, isClone, preset, source]);
+  }, [format, getToken, id, isClone, live, preset, source]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -124,7 +125,7 @@ export default function ProxyPreviewPage() {
           <Link to={dashboardPath} className="text-sm font-medium text-white/65 transition hover:text-white">
             ← Back to dashboard
           </Link>
-          <span className="text-sm font-medium text-white">{isClone ? "Clone" : "Proxy"} player preview</span>
+          <span className="text-sm font-medium text-white">{live ? "Live mock" : isClone ? "Clone" : "Proxy"} player preview</span>
         </div>
       </header>
 

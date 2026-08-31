@@ -20,6 +20,7 @@ import (
 
 	"streammock/internal/cmcd"
 	"streammock/internal/config"
+	"streammock/internal/live"
 	"streammock/internal/models"
 	"streammock/internal/pubnet"
 	"streammock/internal/ratelimit"
@@ -37,6 +38,7 @@ type Engine struct {
 	sink            RequestSink
 	cmcdDecoder     cmcd.Decoder
 	licenseLimiter  *ratelimit.Limiter
+	live            *live.Manager
 }
 
 func NewEngine(cfg config.Config, st *store.MemoryStore, chaos *Chaos) *Engine {
@@ -48,6 +50,7 @@ func NewEngine(cfg config.Config, st *store.MemoryStore, chaos *Chaos) *Engine {
 		storageDir:      cfg.StorageDir,
 		cmcdDecoder:     cmcd.NewV1Decoder(cmcd.DefaultLimits()),
 		licenseLimiter:  ratelimit.New(cfg.LicenseRateLimitPerMinute, cfg.LicenseRateLimitBurst),
+		live:            live.NewManager(cfg.StorageDir),
 	}
 }
 
@@ -61,11 +64,15 @@ func (e *Engine) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /s/{id}/license/clearkey", e.serveClearKeyLicense)
 	mux.HandleFunc("OPTIONS /s/{id}/license/clearkey", handleLicensePreflight)
 	mux.HandleFunc("GET /s/{id}/master.m3u8", e.serveMaster)
+	mux.HandleFunc("GET /s/{id}/live.m3u8", e.serveLiveMaster)
+	mux.HandleFunc("GET /s/{id}/live/{resource...}", e.serveLiveResource)
 	mux.HandleFunc("GET /s/{id}/manifest.mpd", e.serveMaster)
 	mux.HandleFunc("GET /s/{id}/r/{encoded}", e.serveProxied)
 	mux.HandleFunc("GET /s/{id}/d/{base}/{resource...}", e.serveDASHResource)
 	mux.HandleFunc("GET /s/{id}/{resource...}", e.serveLocal)
 	mux.HandleFunc("OPTIONS /s/{id}/master.m3u8", handlePreflight)
+	mux.HandleFunc("OPTIONS /s/{id}/live.m3u8", handlePreflight)
+	mux.HandleFunc("OPTIONS /s/{id}/live/{resource...}", handlePreflight)
 	mux.HandleFunc("OPTIONS /s/{id}/manifest.mpd", handlePreflight)
 	mux.HandleFunc("OPTIONS /s/{id}/r/{encoded}", handlePreflight)
 	mux.HandleFunc("OPTIONS /s/{id}/d/{base}/{resource...}", handlePreflight)

@@ -1,4 +1,4 @@
-import { DEFAULT_PRESETS, type CreatedPlaybackSession, type Finding, type PlaybackTimeline, type ProxyRequest, type SessionListItem, type Stream } from "./types";
+import { DEFAULT_PRESETS, type CreatedPlaybackSession, type Finding, type LiveMock, type PlaybackTimeline, type ProxyRequest, type SessionListItem, type Stream } from "./types";
 
 async function request<T>(
   path: string,
@@ -57,6 +57,20 @@ export async function deleteStream(id: string, token?: string): Promise<void> {
   await request<void>(`/api/streams/${id}`, { method: "DELETE" }, token);
 }
 
+export async function getLiveMock(id: string, token?: string): Promise<LiveMock> {
+	const data = await request<{ live: LiveMock }>(`/api/streams/${id}/live`, {}, token);
+	return data.live;
+}
+
+export async function controlLiveMock(id: string, action: "start" | "pause" | "resume" | "restart" | "stop", token?: string, options: { window_segments?: number; loop?: boolean } = {}): Promise<LiveMock> {
+	const data = await request<{ live: LiveMock }>(
+		`/api/streams/${id}/live`,
+		{ method: "POST", body: JSON.stringify({ action, ...options }) },
+		token,
+	);
+	return data.live;
+}
+
 export async function getWorkspace(token?: string): Promise<{ slug: string; playback_url: string; stored_bytes: number; quota_bytes: number; clone_ttl_hours: number }> {
   return request<{ slug: string; playback_url: string; stored_bytes: number; quota_bytes: number; clone_ttl_hours: number }>("/api/workspace", {}, token);
 }
@@ -93,7 +107,7 @@ export function withPresets(stream: Omit<Stream, "presets">): Stream {
   return { ...stream, presets: DEFAULT_PRESETS };
 }
 
-export async function createPlaybackSession(token: string, input: { source?: string; stream_id?: string; preset?: string; format?: "hls" | "dash"; content_id?: string; duration_seconds?: number; allowed_origin?: string }): Promise<CreatedPlaybackSession> {
+export async function createPlaybackSession(token: string, input: { source?: string; stream_id?: string; preset?: string; format?: "hls" | "dash"; content_id?: string; duration_seconds?: number; allowed_origin?: string; live?: boolean }): Promise<CreatedPlaybackSession> {
 	return request<CreatedPlaybackSession>("/api/playback/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }, token);
 }
 

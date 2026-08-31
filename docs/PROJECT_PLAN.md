@@ -70,25 +70,40 @@ ClearKey é apenas uma ferramenta de teste: a chave precisa ser entregue ao
 navegador e não protege conteúdo contra cópia. Não substitui Widevine,
 FairPlay, PlayReady, rotação de chaves ou um serviço comercial de licenças.
 
-## Fase 5 — Próximas implementações importantes
+## Fase 5 — Mock live HLS local (MVP concluído)
+
+- Um clone HLS clear pronto pode ser exposto em `/s/{id}/live.m3u8` como uma
+  origem live local, sem voltar a consultar a origem capturada.
+- A playlist usa uma janela deslizante, `MEDIA-SEQUENCE` crescente e loop por
+  padrão. Segmentos, mapas de inicialização e faixas continuam sendo os
+  recursos locais do clone.
+- O dono do workspace controla o cenário em
+  `GET/POST /api/streams/{id}/live`: `start`, `pause`, `resume`, `restart` e
+  `stop`; a janela aceita de 1 a 20 segmentos e o loop pode ser desligado.
+- O estado é propositalmente mantido em memória: reiniciar o processo reinicia
+  o cenário, permitindo começar cada execução em um ponto conhecido.
+- O dashboard oferece os controles e abre o preview com a mesma telemetria,
+  CMCD, logs e presets de caos dos clones comuns.
+
+Este corte suporta somente HLS tradicional e clones clear. DASH dinâmico,
+ClearKey live, LL-HLS, relógio virtual e ingestão contínua de uma origem live
+permanecem fora do MVP.
+
+## Fase 6 — Próximas implementações importantes
 
 Ordem sugerida para a próxima rodada:
 
-1. **Compatibilidade de ingestão:** detectar áudio muxado na variante quando
-   não há `EXT-X-MEDIA`, suportar mais layouts fMP4/DASH e produzir uma matriz
-   automatizada de compatibilidade com Shaka Player, Safari e players móveis.
-2. **Controles avançados de live:** configurar atraso em relação ao live edge,
-   selecionar um horário inicial e opcionalmente aguardar novos segmentos até
-   preencher toda a duração pedida. O snapshot imediato e a normalização
-   LL-HLS já estão implementados.
-3. **Hardening das chaves de teste:** criptografia dos valores em repouso,
-   chave-mestra externa, auditoria e rotação/expiração opcional da licença.
-4. **Operação em escala:** fila de workers persistente, cancelamento/retry de
-   captura, reserva transacional de quota, métricas e storage compatível com
-   objetos em vez de depender do filesystem local.
-5. **E2E de playback:** fixture audiovisual versionada com duas resoluções,
-   áudio `pt`/`en` e WebVTT, mais testes Playwright que confirmem troca de
-   faixa, renovação/erro de licença e reprodução sem a origem.
+1. **Cenários live programáveis:** aplicar presets, descontinuidades e mudanças
+   de qualidade em pontos definidos da timeline do mock, além de um relógio
+   manual para execuções determinísticas.
+2. **Compatibilidade de ingestão:** detectar áudio muxado na variante quando
+   não há `EXT-X-MEDIA` e ampliar layouts fMP4/DASH somente a partir de uma
+   matriz pequena de fixtures reais.
+3. **Operação de captura:** retry manual, cancelamento e métricas básicas. Fila
+   distribuída, quota transacional e storage de objetos só entram quando houver
+   concorrência ou mais de uma instância.
+4. **Hardening condicional:** chaves externas, criptografia em repouso e licença
+   com expiração apenas se o ambiente deixar de ser ClearKey de teste local.
 
 Ficam deliberadamente fora dessa sequência: CMCD v2, CMCD em headers e DRM
 comercial. Eles só devem voltar ao plano quando houver um caso de uso concreto.
