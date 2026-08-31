@@ -25,38 +25,31 @@ export default function WorkspacePage() {
   const clones = streams.filter((stream) => stream.mode === "clone");
 
   useEffect(() => {
-    getToken()
-      .then(async (t) => {
-        setToken(t ?? undefined);
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        // A Clerk session JWT expires and rotates. Fetch it for every poll
+        // instead of reusing the token that was current when this page mounted.
+        const currentToken = await getToken();
+        if (!currentToken) throw new Error("Authentication token is unavailable.");
         const [rows, workspace] = await Promise.all([
-          listStreams(t ?? ""),
-          getWorkspace(t ?? undefined).catch(() => null),
+          listStreams(currentToken),
+          getWorkspace(currentToken),
         ]);
+        if (cancelled) return;
+        setToken(currentToken);
         setStreams(rows.map(withPresets));
-		if (workspace) {
-		  setWorkspaceSlug(workspace.slug);
-		  setStorage({ used: workspace.stored_bytes, quota: workspace.quota_bytes, ttlHours: workspace.clone_ttl_hours });
-		}
-      })
-      .catch((e: Error) => setError(e.message));
+        setWorkspaceSlug(workspace.slug);
+        setStorage({ used: workspace.stored_bytes, quota: workspace.quota_bytes, ttlHours: workspace.clone_ttl_hours });
+        setError(null);
+      } catch (reason) {
+        if (!cancelled) setError((reason as Error).message);
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 3000);
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, [getToken]);
-
-	useEffect(() => {
-	  if (!token) return;
-	  let cancelled = false;
-	  const refresh = async () => {
-		try {
-		  const [rows, workspace] = await Promise.all([listStreams(token), getWorkspace(token)]);
-		  if (cancelled) return;
-		  setStreams(rows.map(withPresets));
-		  setStorage({ used: workspace.stored_bytes, quota: workspace.quota_bytes, ttlHours: workspace.clone_ttl_hours });
-		} catch (reason) {
-		  if (!cancelled) setError((reason as Error).message);
-		}
-	  };
-	  const timer = window.setInterval(() => void refresh(), 3000);
-	  return () => { cancelled = true; window.clearInterval(timer); };
-	}, [token]);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
