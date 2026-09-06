@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT3S" minBufferTime="PT1S">
+  <Period id="0" start="PT0S">
+    <AdaptationSet mimeType="video/mp4" contentType="video">
+      <SegmentTemplate timescale="1" initialization="video/init_$RepresentationID$.mp4" media="video/$RepresentationID$/$Time$.m4s">
+        <SegmentTimeline>
+          <S t="1" d="1" r="2"/>
+        </SegmentTimeline>
+      </SegmentTemplate>
+      <Representation id="v360" bandwidth="800000" width="640" height="360" codecs="avc1.64001e" frameRate="30"/>
+    </AdaptationSet>
+  </Period>
+</MPD>

@@ -1,0 +1,29 @@
+# Stream Lens — backend
+# Contexto do build: raiz do repositório (ver compose.yaml), por isso os
+# caminhos abaixo incluem o prefixo backend/.
+FROM python:3.14-slim
+
+WORKDIR /app
+
+COPY backend/requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+# código (src layout + pyproject para empacotar stream_lens)
+COPY backend/pyproject.toml ./
+COPY backend/src ./src
+RUN pip install --no-cache-dir -e .
+
+# fixtures servem como fonte fixture:// também no container
+COPY fixtures /app/fixtures
+
+ENV STREAM_LENS_WORKSPACE=/data/inspections \
+    STREAM_LENS_FIXTURES=/app/fixtures \
+    PYTHONUNBUFFERED=1
+
+RUN mkdir -p /data/inspections
+VOLUME ["/data/inspections"]
+
+EXPOSE 8000
+
+# sem --reload em produção-like; workers=1 porque jobs são in-process
+CMD ["uvicorn", "stream_lens.adapters.inbound.http.asgi:app", "--host", "0.0.0.0", "--port", "8000"]

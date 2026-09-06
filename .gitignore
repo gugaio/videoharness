@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Stream Lens
+.venv/
+.runtime/
+node_modules/
+frontend/dist/
+*.local

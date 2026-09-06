@@ -1,0 +1,150 @@
+{
+  "capabilities": {
+    "segment_download": {
+      "reason": "Fase 3 inspeciona apenas declarações",
+      "status": "not_collected"
+    },
+    "segment_timeline": {
+      "reason": "MPD sem SegmentTimeline",
+      "status": "not_applicable"
+    }
+  },
+  "drm_systems": [],
+  "is_live": false,
+  "kind": "dash_mpd",
+  "protocol": "DASH",
+  "protocol_specific": {
+    "dash": {
+      "media_presentation_duration": "PT12S",
+      "min_buffer_time": "PT2S",
+      "mpd_type": "static",
+      "period_count": 1,
+      "profiles": "urn:mpeg:dash:profile:isoff-live:2011"
+    }
+  },
+  "track_groups": [
+    {
+      "kind": "video",
+      "language": null,
+      "name": "video",
+      "representations": [
+        {
+          "audio_sampling_rate": null,
+          "average_bandwidth_bps": null,
+          "bandwidth_bps": 800000,
+          "codecs": "avc1.64001e",
+          "frame_rate": 30.0,
+          "id": "v360",
+          "init_segment": {
+            "discontinuity": false,
+            "duration_seconds": null,
+            "start_number": null,
+            "template": null,
+            "template_duration": null,
+            "timescale": 1000,
+            "uri": "video/init_v360.mp4"
+          },
+          "language": null,
+          "resolution": {
+            "height": 360,
+            "width": 640
+          },
+          "roles": [],
+          "segment_count_declared": null,
+          "segments": [
+            {
+              "discontinuity": false,
+              "duration_seconds": null,
+              "start_number": 1,
+              "template": "video/v360/$Number$.m4s",
+              "template_duration": 4000,
+              "timescale": 1000,
+              "uri": null
+            }
+          ],
+          "total_duration_seconds": 12.0,
+          "uri": null
+        },
+        {
+          "audio_sampling_rate": null,
+          "average_bandwidth_bps": null,
+          "bandwidth_bps": 2000000,
+          "codecs": "avc1.64001f",
+          "frame_rate": 30.0,
+          "id": "v720",
+          "init_segment": {
+            "discontinuity": false,
+            "duration_seconds": null,
+            "start_number": null,
+            "template": null,
+            "template_duration": null,
+            "timescale": 1000,
+            "uri": "video/init_v720.mp4"
+          },
+          "language": null,
+          "resolution": {
+            "height": 720,
+            "width": 1280
+          },
+          "roles": [],
+          "segment_count_declared": null,
+          "segments": [
+            {
+              "discontinuity": false,
+              "duration_seconds": null,
+              "start_number": 1,
+              "template": "video/v720/$Number$.m4s",
+              "template_duration": 4000,
+              "timescale": 1000,
+              "uri": null
+            }
+          ],
+          "total_duration_seconds": 12.0,
+          "uri": null
+        }
+      ]
+    },
+    {
+      "kind": "audio",
+      "language": "pt",
+      "name": "audio",
+      "representations": [
+        {
+          "audio_sampling_rate": 48000,
+          "average_bandwidth_bps": null,
+          "bandwidth_bps": 128000,
+          "codecs": "mp4a.40.2",
+          "frame_rate": null,
+          "id": "apt",
+          "init_segment": {
+            "discontinuity": false,
+            "duration_seconds": null,
+            "start_number": null,
+            "template": null,
+            "template_duration": null,
+            "timescale": 48000,
+            "uri": "audio/init_pt.mp4"
+          },
+          "language": null,
+          "resolution": null,
+          "roles": [],
+          "segment_count_declared": null,
+          "segments": [
+            {
+              "discontinuity": false,
+              "duration_seconds": null,
+              "start_number": 1,
+              "template": "audio/pt/$Number$.m4s",
+              "template_duration": 191520,
+              "timescale": 48000,
+              "uri": null
+            }
+          ],
+          "total_duration_seconds": 12.0,
+          "uri": null
+        }
+      ]
+    }
+  ],
+  "warnings": []
+}

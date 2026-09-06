@@ -1,0 +1,15 @@
+{
+  "schema_version": "0.1",
+  "skills": [
+    {
+      "id": "stream-lens-inspection",
+      "name": "Stream Lens Inspection",
+      "version": "0.0.1",
+      "status": "draft",
+      "description": "Consulta inspeções de streams (HLS/DASH) via API do Stream Lens. Nenhuma capacidade implementada ainda; endpoints e schemas reais serão documentados aqui somente quando existirem e forem validados.",
+      "snapshot_schema_compatibility": [">=1.0"],
+      "entrypoint": "skills/stream-lens-inspection/SKILL.md",
+      "capabilities": []
+    }
+  ]
+}
