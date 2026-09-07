@@ -10,4 +10,6 @@ from stream_lens.domain.value_objects.containers import ContainerAnalysis
 class ContainerAnalyzer(Protocol):
     """Parse estrutural determinístico (sem I/O, sem diagnóstico)."""
 
-    def analyze(self, data: bytes, is_init: bool) -> ContainerAnalysis: ...
+    def analyze(
+        self, data: bytes, is_init: bool, init_data: bytes | None = None
+    ) -> ContainerAnalysis: ...

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { ContainerInspector } from './ContainersView'
 import type { ContainerDTO } from '../types'
@@ -14,6 +14,19 @@ const fmp4Container: ContainerDTO = {
     kind: 'mp4',
     error: null,
     ts: null,
+    samples_truncated: false,
+    samples: [
+      {
+        index: 0, unit_type: 'sample', byte_size: 1800, track_id: 1, pid: null,
+        duration: 3000, dts: 180000, pts: 186000, composition_offset: 6000,
+        timescale: 90000, is_sync: true,
+      },
+      {
+        index: 1, unit_type: 'sample', byte_size: 420, track_id: 1, pid: null,
+        duration: 3000, dts: 183000, pts: 180000, composition_offset: -3000,
+        timescale: 90000, is_sync: false,
+      },
+    ],
     fmp4: {
       is_init: false,
       brands: ['iso6', 'cmfc'],
@@ -46,6 +59,31 @@ const fmp4Container: ContainerDTO = {
 }
 
 describe('ContainerInspector', () => {
+  it('desenha frames em ordem com tamanho, PTS, DTS e sync visíveis', () => {
+    render(<ContainerInspector container={fmp4Container} />)
+
+    expect(screen.getByRole('heading', { name: 'Frames do segmento' })).toBeInTheDocument()
+    const legend = screen.getByLabelText('Legenda dos frames e tamanhos')
+    expect(within(legend).getByText('largura e altura = bytes')).toBeInTheDocument()
+    expect(within(legend).getByText('quadro-chave (I/IDR/CRA)')).toBeInTheDocument()
+    expect(within(legend).getByText('inter-frame (P/B)')).toBeInTheDocument()
+    const track = screen.getByRole('list', { name: 'Frames do segmento: Track 1' })
+    const frames = within(track).getAllByRole('listitem')
+    expect(frames).toHaveLength(2)
+    expect(frames[0]).toHaveTextContent('1.8 KiB')
+    expect(frames[0]).toHaveTextContent('PTS 2.067s')
+    expect(frames[0]).toHaveTextContent('DTS 2.000s')
+    expect(frames[0]).toHaveTextContent('KEY 01')
+    expect(frames[1]).toHaveTextContent('P/B 02')
+    expect(frames[0]).toHaveClass('is-sync')
+    expect(frames[0].style.getPropertyValue('--sample-width')).not.toBe(
+      frames[1].style.getPropertyValue('--sample-width'),
+    )
+    expect(frames[0].style.getPropertyValue('--sample-color')).not.toBe(
+      frames[1].style.getPropertyValue('--sample-color'),
+    )
+  })
+
   it('mostra fatos fMP4 e expande a árvore de boxes sob demanda', async () => {
     const { userEvent } = await import('@testing-library/user-event')
     const user = userEvent.setup()

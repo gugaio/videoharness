@@ -1,6 +1,6 @@
 # TESTING.md
 
-**Status: Fase 6 concluída — 121 testes backend (pytest) + 30 frontend (vitest),
+**Status: Fase 6 + extensão concluída — 123 testes backend (pytest) + 31 frontend (vitest),
 todos offline; o teste opcional de ffprobe é pulado quando o binário não existe.**
 
 ## Princípios
@@ -33,6 +33,8 @@ TS (PAT/PMT/PES/PCR) e fMP4 (init e fragmentos). Sem mídia protegida por copyri
 - Limites de captura e proteções de URL;
 - Arquivos expirados e escrita atômica;
 - Metadados HDR estáticos e assinatura HDR10+ em bytes sintéticos.
+- Samples fMP4 com tamanho/duração/flags/composition offset e unidades PES TS com
+  tamanho/PTS, além da escala visual e dos tempos no componente React.
 
 ## Comandos (raiz do repositório)
 

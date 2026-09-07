@@ -7,14 +7,17 @@ multi-pacote além do essencial). Determinístico, sem diagnóstico.
 from __future__ import annotations
 
 import struct
+from dataclasses import replace
 
 from stream_lens.domain.value_objects.containers import (
     ContainerAnalysis,
+    ContainerSample,
     TsInfo,
     TsPidStats,
 )
 
 PKT = 188
+_MAX_SAMPLES = 1_000
 
 _STREAM_KINDS = {
     0x1B: "video (h264)",
@@ -33,6 +36,30 @@ def parse_mpegts(data: bytes) -> ContainerAnalysis:
 
     pids: dict[int, dict] = {}
     programs: dict[int, int] = {}
+    samples: list[ContainerSample] = []
+    active_pes: dict[int, dict] = {}
+    pes_indexes: dict[int, int] = {}
+    total_pes_units = 0
+
+    def finish_pes(pid: int) -> None:
+        nonlocal total_pes_units
+        active = active_pes.pop(pid, None)
+        if active is None:
+            return
+        total_pes_units += 1
+        if len(samples) >= _MAX_SAMPLES:
+            return
+        samples.append(
+            ContainerSample(
+                index=active["index"],
+                unit_type="pes",
+                byte_size=active["byte_size"],
+                pid=pid,
+                dts=active["dts"],
+                pts=active["pts"],
+                timescale=90_000,
+            )
+        )
 
     pos = 0
     while pos < len(data):
@@ -85,18 +112,51 @@ def parse_mpegts(data: bytes) -> ContainerAnalysis:
         if not payload:
             continue
 
-        if pid == 0x0000 and pusi:
-            _parse_pat(payload, programs, pids)
-        elif pid in programs.values() and pusi:
-            _parse_pmt(payload, pids)
-        elif pusi and payload[0:3] == b"\x00\x00\x01":
+        if pusi and payload[0:3] == b"\x00\x00\x01":
+            finish_pes(pid)
             pts, dts = _parse_pes_timestamps(payload)
+            byte_size, size_is_complete = _pes_elementary_size(payload)
+            pes_index = pes_indexes.get(pid, 0)
+            pes_indexes[pid] = pes_index + 1
+            active_pes[pid] = {
+                "index": pes_index,
+                "byte_size": byte_size,
+                "size_is_complete": size_is_complete,
+                "pts": pts,
+                "dts": dts,
+            }
             stats["pes_count"] += 1
             if pts is not None:
                 stats["first_pts"] = stats["first_pts"] if stats["first_pts"] is not None else pts
                 stats["last_pts"] = pts
             if dts is not None and stats["first_dts"] is None:
                 stats["first_dts"] = dts
+        elif pid in active_pes and not active_pes[pid]["size_is_complete"]:
+            active_pes[pid]["byte_size"] += len(payload)
+
+        if pid == 0x0000 and pusi:
+            _parse_pat(payload, programs, pids)
+        elif pid in programs.values() and pusi:
+            _parse_pmt(payload, pids)
+
+    for pid in tuple(active_pes):
+        finish_pes(pid)
+
+    # Duração observada é a distância até o próximo timestamp da mesma PID.
+    next_timestamp: dict[int, int] = {}
+    for index in range(len(samples) - 1, -1, -1):
+        sample = samples[index]
+        timestamp = sample.dts if sample.dts is not None else sample.pts
+        following = next_timestamp.get(sample.pid) if sample.pid is not None else None
+        duration = None
+        if timestamp is not None and following is not None:
+            observed_delta = (following - timestamp) & 0x1FFFFFFFF
+            if 0 < observed_delta <= 90_000 * 60:
+                duration = observed_delta
+        if sample.pid is not None and timestamp is not None:
+            next_timestamp[sample.pid] = timestamp
+        if duration is not None:
+            samples[index] = replace(sample, duration=duration)
 
     mapped = tuple(
         TsPidStats(
@@ -120,7 +180,12 @@ def parse_mpegts(data: bytes) -> ContainerAnalysis:
         pids=mapped,
         programs={str(k): v for k, v in programs.items()},
     )
-    return ContainerAnalysis(kind="mpeg-ts", ts=info)
+    return ContainerAnalysis(
+        kind="mpeg-ts",
+        ts=info,
+        samples=tuple(samples),
+        samples_truncated=total_pes_units > len(samples),
+    )
 
 
 def _parse_pat(payload: bytes, programs: dict[int, int], pids: dict) -> None:
@@ -173,6 +238,18 @@ def _parse_pes_timestamps(payload: bytes) -> tuple[int | None, int | None]:
         dts = _read_ts33(payload[pos : pos + 5])
     _ = header_data_length
     return pts, dts
+
+
+def _pes_elementary_size(payload: bytes) -> tuple[int, bool]:
+    """Retorna bytes do payload elementary e se o PES declarou o tamanho total."""
+    if len(payload) < 9:
+        return 0, False
+    packet_length = int.from_bytes(payload[4:6], "big")
+    header_data_length = payload[8]
+    payload_start = min(len(payload), 9 + header_data_length)
+    if packet_length:
+        return max(0, packet_length - 3 - header_data_length), True
+    return len(payload) - payload_start, False
 
 
 def _read_ts33(b: bytes) -> int:

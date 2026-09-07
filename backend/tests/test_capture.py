@@ -326,7 +326,7 @@ class TestProgressoEContrato:
         insp0 = create.execute("fixture://hls-fmp4/video/360p.m3u8")
         _run(runner, insp0.inspection_id, "fixture://hls-fmp4/video/360p.m3u8")
         payload = snapshot_to_dict(repo.get_snapshot(insp0.inspection_id))
-        assert payload["schema_version"] == "1.3"
+        assert payload["schema_version"] == "1.4"
         assert payload["capture"]["planned"] == 3
         assert payload["capture"]["captured"] == 3
         assert payload["capture"]["window_seconds"] == 10.0

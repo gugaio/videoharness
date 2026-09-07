@@ -197,6 +197,20 @@ export interface TsInfoDTO {
   provenance: string
 }
 
+export interface ContainerSampleDTO {
+  index: number
+  unit_type: 'sample' | 'pes'
+  byte_size: number | null
+  track_id: number | null
+  pid: number | null
+  duration: number | null
+  dts: number | null
+  pts: number | null
+  composition_offset: number | null
+  timescale: number | null
+  is_sync: boolean | null
+}
+
 export interface ProbeStreamDTO {
   codec_name: string | null
   codec_type: string | null
@@ -233,6 +247,8 @@ export interface ContainerDTO {
     kind: string
     fmp4: Fmp4InfoDTO | null
     ts: TsInfoDTO | null
+    samples: ContainerSampleDTO[]
+    samples_truncated: boolean
     error: string | null
   }
   probe: ProbeDTO | null

@@ -170,6 +170,12 @@ class RunInspection:
         if self._containers is not None and self._workspace is not None:
             inspection.start_stage(InspectionStatus.INSPECTING_CONTAINERS)
             self._repository.save(inspection)
+            init_files = {
+                (cap.rep_id, cap.group_kind): cap.file
+                for cap in captured
+                if cap.ok and cap.is_init and cap.file
+            }
+            init_cache: dict[tuple[str, str], bytes] = {}
             for cap in captured:
                 if not cap.ok or not cap.file:
                     continue
@@ -177,7 +183,19 @@ class RunInspection:
                 probe: dict | None = None
                 try:
                     data = path.read_bytes()
-                    analysis = self._containers.analyze(data, cap.is_init)
+                    init_data = None
+                    key = (cap.rep_id, cap.group_kind)
+                    init_file = init_files.get(key)
+                    if not cap.is_init and init_file:
+                        if key not in init_cache:
+                            try:
+                                init_cache[key] = (
+                                    self._workspace / inspection_id / init_file
+                                ).read_bytes()
+                            except OSError:
+                                init_cache[key] = b""
+                        init_data = init_cache[key] or None
+                    analysis = self._containers.analyze(data, cap.is_init, init_data)
                 except Exception as exc:  # container individual não derruba nada
                     from stream_lens.domain.value_objects.containers import (
                         ContainerAnalysis as _CA,

@@ -17,13 +17,18 @@ _FMP4_TOP_BOXES = {b"ftyp", b"styp", b"moov", b"moof", b"sidx", b"skip", b"free"
 class SniffingContainerAnalyzer:
     """Implementa o port ContainerAnalyzer."""
 
-    def analyze(self, data: bytes, is_init: bool) -> ContainerAnalysis:
+    def analyze(
+        self, data: bytes, is_init: bool, init_data: bytes | None = None
+    ) -> ContainerAnalysis:
         if not data:
             return ContainerAnalysis(kind="unknown", error="sem bytes")
         if _looks_like_mpegts(data):
             return parse_mpegts(data)
         if _looks_like_fmp4(data):
-            return parse_fmp4(data, is_init)
+            init_info = None
+            if not is_init and init_data and _looks_like_fmp4(init_data):
+                init_info = parse_fmp4(init_data, is_init=True).fmp4
+            return parse_fmp4(data, is_init, init_info=init_info)
         return ContainerAnalysis(
             kind="unknown", error="formato não reconhecido (nem TS nem fMP4)"
         )

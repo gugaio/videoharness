@@ -7,11 +7,12 @@ compartilhável dentro de um TTL.
 
 ## Status
 
-**Fase 6 concluída — metadados HDR.** Backend
+**Fase 6 concluída + visualização de frames/samples.** Backend
 FastAPI + CLI + frontend React; uma inspeção percorre manifesto, captura uma janela e
-analisa cada segmento fMP4/CMAF ou MPEG-TS. O snapshot 1.3 inclui árvore de boxes ou
-estatísticas TS e, quando declarado nos bytes, sinal HDR, HDR estático e presença de
-HDR10+ em segmento capturado; `ffprobe` continua opcional e derivado. A captura tem
+analisa cada segmento fMP4/CMAF ou MPEG-TS. O snapshot 1.4 inclui árvore de boxes ou
+estatísticas TS, samples fMP4 e unidades PES com tamanho/PTS/DTS e, quando declarado
+nos bytes, sinal HDR, HDR estático e presença de HDR10+; `ffprobe` continua opcional
+e derivado. A captura tem
 orçamento padrão de **500 MB** por inspeção e **20 MB** por segmento. URLs `http(s)`
 passam pelo safe fetcher (SSRF, redirects revalidados, limites, redaction). Também há
 Docker Compose (UI `:8080`, API `:8000`). DASH aceita `SegmentTemplate` com

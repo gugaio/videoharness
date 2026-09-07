@@ -1,8 +1,8 @@
 # SNAPSHOT_SCHEMA.md
 
-**Status: implementado (Fase 6) — `schema_version` 1.3, analyzer 0.5.0** (1.2 +
-bloco aditivo `hdr`). Contrato validado por testes de round-trip, captura e parsers
-estruturais offline.
+**Status: implementado (Fase 6 + extensão de samples) — `schema_version` 1.4,
+analyzer 0.6.0** (1.3 + bloco aditivo `analysis.samples`). Contrato validado por
+testes de round-trip, captura e parsers estruturais offline.
 
 ## Princípios
 
@@ -213,11 +213,41 @@ uma afirmação de SDR.
 - `probe.streams[]` pode trazer propriedades de cor e side data reconhecidos pelo
   `ffprobe`, sempre com proveniência derivada e sem substituir os fatos acima.
 
+## Bloco 1.4 (extensão — samples e unidades temporais)
+
+Cada `analysis` pode materializar até 1.000 itens ordenados do próprio container.
+fMP4 usa os registros do `trun`, defaults `tfhd`/`trex` e `tfdt`; quando o init da
+mesma representação foi capturado, ele fornece timescale e defaults ausentes no
+fragmento. MPEG-TS materializa unidades PES e usa a escala fixa de 90 kHz de PTS/DTS.
+
+```json
+"analysis": {
+  "kind": "mp4",
+  "samples": [
+    {
+      "index": 0, "unit_type": "sample", "byte_size": 1800,
+      "track_id": 1, "pid": null,
+      "duration": 3000, "dts": 180000, "pts": 186000,
+      "composition_offset": 6000, "timescale": 90000,
+      "is_sync": true
+    }
+  ],
+  "samples_truncated": false
+}
+```
+
+- Tempos são inteiros nos ticks do container; segundos = valor / `timescale`.
+- `is_sync` só é preenchido quando sample flags fMP4 fornecem essa evidência.
+- `unit_type: "pes"` não afirma correspondência 1:1 com frame: um PES pode conter
+  múltiplos access units. A UI preserva essa distinção e o chama de unidade PES.
+- `samples_truncated: true` indica que a lista atingiu o limite defensivo; contagens
+  totais continuam disponíveis em `fmp4.sample_counts` ou `ts.pids[].pes_count`.
+
 ## Carregamento sob demanda
 
 O snapshot completo pode ser baixado; rotas por recurso (`/representations/{id}`, `/segments/{id}`, …) entram nas fases seguintes conforme o volume crescer.
 
 ## Roadmap do schema
 
-`parts`, `samples`, parsing de codec, evidências e diagnóstico entram nas fases
+`parts`, parsing de access units/codec, evidências e diagnóstico entram nas fases
 seguintes com o mesmo padrão de versionamento.

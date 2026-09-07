@@ -1,10 +1,11 @@
-"""Serialização dos containers inspecionados (bloco `containers`, schema 1.3)."""
+"""Serialização dos containers inspecionados (bloco `containers`, schema 1.4)."""
 
 from __future__ import annotations
 
 from stream_lens.domain.value_objects.containers import (
     BoxNode,
     ContainerAnalysis,
+    ContainerSample,
     Fmp4Info,
     HdrInfo,
     SegmentContainer,
@@ -32,6 +33,38 @@ def _box_from_dict(data: dict) -> BoxNode:
         size=data["size"],
         fields=data.get("fields", {}),
         children=tuple(_box_from_dict(c) for c in data.get("children", [])),
+    )
+
+
+def _sample_to_dict(sample: ContainerSample) -> dict:
+    return {
+        "index": sample.index,
+        "unit_type": sample.unit_type,
+        "byte_size": sample.byte_size,
+        "track_id": sample.track_id,
+        "pid": sample.pid,
+        "duration": sample.duration,
+        "dts": sample.dts,
+        "pts": sample.pts,
+        "composition_offset": sample.composition_offset,
+        "timescale": sample.timescale,
+        "is_sync": sample.is_sync,
+    }
+
+
+def _sample_from_dict(data: dict) -> ContainerSample:
+    return ContainerSample(
+        index=data["index"],
+        unit_type=data["unit_type"],
+        byte_size=data.get("byte_size"),
+        track_id=data.get("track_id"),
+        pid=data.get("pid"),
+        duration=data.get("duration"),
+        dts=data.get("dts"),
+        pts=data.get("pts"),
+        composition_offset=data.get("composition_offset"),
+        timescale=data.get("timescale"),
+        is_sync=data.get("is_sync"),
     )
 
 
@@ -146,6 +179,8 @@ def analysis_to_dict(analysis: ContainerAnalysis) -> dict:
         "kind": analysis.kind,
         "fmp4": _fmp4_to_dict(analysis.fmp4) if analysis.fmp4 else None,
         "ts": _ts_to_dict(analysis.ts) if analysis.ts else None,
+        "samples": [_sample_to_dict(sample) for sample in analysis.samples],
+        "samples_truncated": analysis.samples_truncated,
         "error": analysis.error,
     }
 
@@ -155,6 +190,8 @@ def analysis_from_dict(data: dict) -> ContainerAnalysis:
         kind=data["kind"],
         fmp4=_fmp4_from_dict(data["fmp4"]) if data.get("fmp4") else None,
         ts=_ts_from_dict(data["ts"]) if data.get("ts") else None,
+        samples=tuple(_sample_from_dict(sample) for sample in data.get("samples", [])),
+        samples_truncated=data.get("samples_truncated", False),
         error=data.get("error"),
     )
 

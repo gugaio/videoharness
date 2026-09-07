@@ -73,6 +73,12 @@ const container: ContainerDTO = {
   file: 'segments/0001_1.ts', byte_size: 2048,
   analysis: {
     kind: 'mpeg-ts', fmp4: null, error: null,
+    samples_truncated: false,
+    samples: [{
+      index: 0, unit_type: 'pes', byte_size: 840, track_id: null, pid: 256,
+      duration: 3600, dts: null, pts: 90000, composition_offset: null,
+      timescale: 90000, is_sync: null,
+    }],
     ts: {
       packet_count: 12, sync_errors: 0, programs: { '1': 256 }, provenance: 'deterministic',
       pids: [{
@@ -168,6 +174,9 @@ describe('TimelineView', () => {
 
     expect(screen.getByRole('heading', { name: 'Container MPEG-TS' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Programas e PIDs' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Unidades PES do segmento' })).toBeInTheDocument()
+    expect(screen.getByText('tipo de frame não disponível no PES')).toBeInTheDocument()
+    expect(screen.getByText(/Uma unidade PES pode conter mais de um frame/)).toBeInTheDocument()
     expect(screen.getByText('0x0100')).toBeInTheDocument()
     expect(screen.getByText('2.0 KiB')).toBeInTheDocument()
   })

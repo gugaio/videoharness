@@ -11,6 +11,7 @@ import struct
 from stream_lens.domain.value_objects.containers import (
     BoxNode,
     ContainerAnalysis,
+    ContainerSample,
     Fmp4Info,
     HdrInfo,
 )
@@ -19,9 +20,12 @@ _CONTAINER_BOXES = {
     "moov", "trak", "mdia", "minf", "stbl", "mvex", "moof", "traf",
     "mfra", "udta", "edts", "dinf",
 }
+_MAX_SAMPLES = 1_000
 
 
-def parse_fmp4(data: bytes, is_init: bool) -> ContainerAnalysis:
+def parse_fmp4(
+    data: bytes, is_init: bool, init_info: Fmp4Info | None = None
+) -> ContainerAnalysis:
     boxes: list[BoxNode] = []
     truncated = False
     offset = 0
@@ -38,8 +42,14 @@ def parse_fmp4(data: bytes, is_init: bool) -> ContainerAnalysis:
         return ContainerAnalysis(kind="mp4", error="nenhum box parseável")
 
     info = Fmp4Info(is_init=is_init, boxes=tuple(boxes), truncated=truncated)
-    info = _summarize(info, data)
-    return ContainerAnalysis(kind="mp4", fmp4=info)
+    info = _summarize(info, data, init_info=init_info)
+    samples, samples_truncated = _extract_samples(info, data, init_info=init_info)
+    return ContainerAnalysis(
+        kind="mp4",
+        fmp4=info,
+        samples=samples,
+        samples_truncated=samples_truncated,
+    )
 
 
 def _parse_box(
@@ -204,8 +214,23 @@ def _parse_fields(box_type: str, payload: bytes) -> dict:
             return {"nal_length_size": (payload[21] & 0x03) + 1}
         if box_type == "trex":
             track_id = struct.unpack_from(">I", payload, 4)[0]
-            default_duration = struct.unpack_from(">I", payload, 8)[0]
-            return {"track_id": track_id, "default_sample_duration": default_duration}
+            # ISO/IEC 14496-12 inclui sample_description_index antes dos defaults.
+            # As fixtures históricas compactas do projeto omitem esse campo; ambos
+            # os layouts são aceitos para preservar compatibilidade do snapshot.
+            defaults_at = 12 if len(payload) >= 24 else 8
+            fields = {
+                "track_id": track_id,
+                "default_sample_duration": struct.unpack_from(">I", payload, defaults_at)[0],
+            }
+            if defaults_at + 8 <= len(payload):
+                fields["default_sample_size"] = struct.unpack_from(
+                    ">I", payload, defaults_at + 4
+                )[0]
+            if defaults_at + 12 <= len(payload):
+                fields["default_sample_flags"] = struct.unpack_from(
+                    ">I", payload, defaults_at + 8
+                )[0]
+            return fields
         if box_type == "mfhd":
             return {"sequence_number": struct.unpack_from(">I", payload, 4)[0]}
         if box_type == "tfhd":
@@ -269,6 +294,183 @@ def _parse_fields(box_type: str, payload: bytes) -> dict:
     return {}
 
 
+def _walk_boxes(nodes: tuple[BoxNode, ...]):
+    for node in nodes:
+        yield node
+        yield from _walk_boxes(node.children)
+
+
+def _trex_defaults(init_info: Fmp4Info | None) -> dict[int, dict]:
+    if init_info is None:
+        return {}
+    return {
+        int(node.fields["track_id"]): node.fields
+        for node in _walk_boxes(init_info.boxes)
+        if node.type == "trex" and "track_id" in node.fields
+    }
+
+
+def _trun_entries(
+    data: bytes, node: BoxNode, limit: int
+) -> tuple[list[dict], bool]:
+    """Lê os registros por sample de um `trun`, limitado para o snapshot."""
+    header_size = 16 if data[node.offset : node.offset + 4] == b"\x00\x00\x00\x01" else 8
+    payload = data[node.offset + header_size : node.offset + node.size]
+    if len(payload) < 8:
+        return [], True
+    version = payload[0]
+    flags = int.from_bytes(payload[0:4], "big") & 0xFFFFFF
+    sample_count = int.from_bytes(payload[4:8], "big")
+    pos = 8
+
+    def read(fmt: str) -> int | None:
+        nonlocal pos
+        size = struct.calcsize(fmt)
+        if pos + size > len(payload):
+            return None
+        value = struct.unpack_from(fmt, payload, pos)[0]
+        pos += size
+        return value
+
+    if flags & 0x000001 and read(">i") is None:  # data_offset
+        return [], True
+    first_sample_flags = None
+    if flags & 0x000004:
+        first_sample_flags = read(">I")
+        if first_sample_flags is None:
+            return [], True
+
+    entries: list[dict] = []
+    truncated = sample_count > limit
+    for index in range(min(sample_count, limit)):
+        duration = read(">I") if flags & 0x000100 else None
+        size = read(">I") if flags & 0x000200 else None
+        sample_flags = read(">I") if flags & 0x000400 else None
+        composition_offset = None
+        if flags & 0x000800:
+            composition_offset = read(">i" if version == 1 else ">I")
+        required_missing = (
+            (flags & 0x000100 and duration is None)
+            or (flags & 0x000200 and size is None)
+            or (flags & 0x000400 and sample_flags is None)
+            or (flags & 0x000800 and composition_offset is None)
+        )
+        if required_missing:
+            truncated = True
+            break
+        entries.append(
+            {
+                "duration": duration,
+                "size": size,
+                "flags": (
+                    first_sample_flags
+                    if index == 0 and first_sample_flags is not None
+                    else sample_flags
+                ),
+                "composition_offset": composition_offset,
+            }
+        )
+    return entries, truncated
+
+
+def _extract_samples(
+    info: Fmp4Info, data: bytes, init_info: Fmp4Info | None = None
+) -> tuple[tuple[ContainerSample, ...], bool]:
+    """Materializa samples de `trun` com defaults e relógio do init, se disponível."""
+    if info.is_init:
+        return (), False
+
+    trex = _trex_defaults(init_info)
+    samples: list[ContainerSample] = []
+    truncated = False
+    indexes: dict[int | None, int] = {}
+
+    for traf in (node for node in _walk_boxes(info.boxes) if node.type == "traf"):
+        tfhd = next((node for node in traf.children if node.type == "tfhd"), None)
+        tfdt = next((node for node in traf.children if node.type == "tfdt"), None)
+        raw_track_id = tfhd.fields.get("track_id") if tfhd is not None else None
+        track_id = int(raw_track_id) if raw_track_id is not None else None
+        track_defaults = trex.get(track_id, {}) if track_id is not None else {}
+        default_duration = (
+            tfhd.fields.get("default_sample_duration") if tfhd is not None else None
+        ) or track_defaults.get("default_sample_duration")
+        default_size = (
+            tfhd.fields.get("default_sample_size") if tfhd is not None else None
+        ) or track_defaults.get("default_sample_size")
+        default_flags = (
+            tfhd.fields.get("default_sample_flags") if tfhd is not None else None
+        )
+        if default_flags is None:
+            default_flags = track_defaults.get("default_sample_flags")
+        decode_time = (
+            tfdt.fields.get("base_media_decode_time") if tfdt is not None else None
+        )
+        timescale = info.timescales.get(track_id)
+        if timescale is None and len(info.track_ids) == 1:
+            timescale = info.timescales.get("track")
+
+        for trun in (node for node in traf.children if node.type == "trun"):
+            remaining = max(0, _MAX_SAMPLES - len(samples))
+            if remaining == 0:
+                truncated = True
+                break
+            entries, run_truncated = _trun_entries(data, trun, remaining)
+            truncated = truncated or run_truncated
+            for entry in entries:
+                duration = entry["duration"] or default_duration
+                byte_size = entry["size"] or default_size
+                sample_flags = entry["flags"]
+                if sample_flags is None:
+                    sample_flags = default_flags
+                composition_offset = entry["composition_offset"]
+                if composition_offset is None:
+                    composition_offset = 0
+                pts = (
+                    decode_time + composition_offset
+                    if decode_time is not None
+                    else None
+                )
+                index = indexes.get(track_id, 0)
+                indexes[track_id] = index + 1
+                samples.append(
+                    ContainerSample(
+                        index=index,
+                        unit_type="sample",
+                        byte_size=byte_size,
+                        track_id=track_id,
+                        duration=duration,
+                        dts=decode_time,
+                        pts=pts,
+                        composition_offset=composition_offset,
+                        timescale=timescale,
+                        is_sync=(not bool(sample_flags & 0x00010000))
+                        if sample_flags is not None
+                        else None,
+                    )
+                )
+                decode_time = (
+                    decode_time + duration
+                    if decode_time is not None and duration is not None
+                    else None
+                )
+
+    # Um fragmento de sample único sem tamanho declarado ainda permite medir o
+    # payload `mdat` diretamente, sem extrapolar a divisão entre vários samples.
+    if len(samples) == 1 and samples[0].byte_size is None:
+        payload_size = 0
+        for node in info.boxes:
+            if node.type != "mdat":
+                continue
+            header_size = 16 if data[node.offset : node.offset + 4] == b"\x00\x00\x00\x01" else 8
+            payload_size += max(0, node.size - header_size)
+        if payload_size:
+            import dataclasses
+
+            samples[0] = dataclasses.replace(samples[0], byte_size=payload_size)
+
+    return tuple(samples), truncated
+
+
 _CICP_PRIMARIES = {1: "BT.709", 9: "BT.2020", 12: "P3 D65"}
 _CICP_TRANSFER = {1: "BT.709", 13: "sRGB", 16: "PQ (ST 2084)", 18: "HLG"}
 _CICP_MATRIX = {1: "BT.709", 9: "BT.2020 non-constant", 10: "BT.2020 constant"}
@@ -329,11 +531,13 @@ def _has_hdr10_plus(data: bytes) -> bool:
     return False
 
 
-def _summarize(info: Fmp4Info, data: bytes) -> Fmp4Info:
+def _summarize(
+    info: Fmp4Info, data: bytes, init_info: Fmp4Info | None = None
+) -> Fmp4Info:
     import dataclasses
 
     track_ids: list[int] = []
-    timescales: dict = {}
+    timescales: dict = dict(init_info.timescales) if init_info is not None else {}
     brands: list[str] = []
     sequence_number = None
     bmdt = None
@@ -365,6 +569,7 @@ def _summarize(info: Fmp4Info, data: bytes) -> Fmp4Info:
                 sequence_number = f["sequence_number"]
             if node.type == "tfhd" and "track_id" in f:
                 current_track = f["track_id"]
+                track_ids.append(f["track_id"])
             if node.type == "tfdt" and "base_media_decode_time" in f:
                 bmdt = f["base_media_decode_time"]
             if node.type == "trun" and "sample_count" in f:

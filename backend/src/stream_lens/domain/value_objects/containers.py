@@ -28,6 +28,29 @@ class BoxNode:
 
 
 @dataclass(frozen=True, slots=True)
+class ContainerSample:
+    """Sample fMP4 ou unidade PES observada, na ordem do container.
+
+    `unit_type` mantém explícita a diferença estrutural: um sample de vídeo fMP4
+    normalmente corresponde a um frame comprimido; uma unidade PES de MPEG-TS
+    pode carregar um ou mais access units e não é rotulada como frame sem prova.
+    Tempos permanecem nos ticks do container e `timescale` permite convertê-los.
+    """
+
+    index: int
+    unit_type: str  # "sample" | "pes"
+    byte_size: int | None = None
+    track_id: int | None = None
+    pid: int | None = None
+    duration: int | None = None
+    dts: int | None = None
+    pts: int | None = None
+    composition_offset: int | None = None
+    timescale: int | None = None
+    is_sync: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class TsPidStats:
     """Estatísticas por PID declaradas/observadas no fluxo TS."""
 
@@ -97,6 +120,8 @@ class ContainerAnalysis:
     kind: str  # "mp4" | "mpeg-ts" | "unknown"
     fmp4: Fmp4Info | None = None
     ts: TsInfo | None = None
+    samples: tuple[ContainerSample, ...] = ()
+    samples_truncated: bool = False
     error: str | None = None
 
 

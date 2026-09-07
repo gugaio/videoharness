@@ -53,6 +53,11 @@ MaxCLL/MaxFALL e indicador de HDR dinâmico observado.
 de metadados não é classificada como SDR; ✅ nenhum diagnóstico de compatibilidade
 ou leitura completa do stream é alegado.
 
+**Extensão aprovada**: ✅ o detalhe do segmento materializa samples fMP4 de `trun`
+e unidades PES MPEG-TS no schema 1.4; a UI os mostra horizontalmente com tamanho
+relativo, PTS/DTS e cor por classificação sync quando o container a declara. PES permanece
+identificado como unidade, sem ser apresentado indevidamente como frame.
+
 ## Fase 7 — Skills e API para agentes
 
 Skill principal revisada para endpoints/schemas reais; referências HLS/DASH/TS/ISOBMFF coerentes com o suporte atual; catálogo versionado; endpoints de skills; compatibilidade com `schema_version`; exemplos com fixtures; evals; testes de referências/paths/versões; ação "Use with an agent" na UI; `capabilities` e `recommended_skills` no snapshot. Agente carrega só módulos relevantes.

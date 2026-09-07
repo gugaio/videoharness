@@ -69,6 +69,7 @@ class TestFmp4:
         assert [b.type for b in info.boxes] == ["styp", "moof", "mdat"]
         assert info.sequence_number == 1
         assert info.base_media_decode_time == 0
+        assert info.track_ids == (1,)
         assert info.sample_counts == {1: 1}
         moof = info.boxes[1]
         traf = next(c for c in moof.children if c.type == "traf")
@@ -79,6 +80,37 @@ class TestFmp4:
         trun = next(c for c in traf.children if c.type == "trun")
         assert trun.fields["sample_count"] == 1
         assert trun.fields["data_offset"] > 0
+
+    def test_materializa_samples_com_tamanho_dts_pts_e_sync(self):
+        init_data = (FIXTURES / "hls-fmp4/video/init_v360.mp4").read_bytes()
+        init_info = parse_fmp4(init_data, is_init=True).fmp4
+        assert init_info is not None
+        tfhd = _box("tfhd", b"\x00\x00\x00\x00" + (1).to_bytes(4, "big"))
+        tfdt = _box("tfdt", b"\x01\x00\x00\x00" + (90_000).to_bytes(8, "big"))
+        flags = 0x000F00  # duration, size, flags e composition time offset
+        trun = _box(
+            "trun",
+            b"\x01" + flags.to_bytes(3, "big") + (2).to_bytes(4, "big")
+            + struct.pack(">IIIi", 3_000, 1_800, 0, 6_000)
+            + struct.pack(">IIIi", 3_000, 420, 0x00010000, -3_000),
+        )
+        fragment = _box("moof", _box("traf", tfhd + tfdt + trun)) + _box(
+            "mdat", b"x" * 2_220
+        )
+
+        result = parse_fmp4(fragment, is_init=False, init_info=init_info)
+
+        assert result.samples_truncated is False
+        assert len(result.samples) == 2
+        first, second = result.samples
+        assert (first.byte_size, first.dts, first.pts, first.duration) == (
+            1_800, 90_000, 96_000, 3_000,
+        )
+        assert first.timescale == 1_000
+        assert first.is_sync is True
+        assert (second.byte_size, second.dts, second.pts) == (420, 93_000, 90_000)
+        assert second.composition_offset == -3_000
+        assert second.is_sync is False
 
     def test_tfhd_flags_seguem_isobmff(self):
         # full box: default duration, size e flags; nenhum offset/índice opcional.
@@ -192,6 +224,20 @@ class TestMpegTs:
         assert video.pcr_count >= 1
         assert video.last_pcr == 0  # pcr_base do seg-0
 
+    def test_materializa_unidades_pes_com_tamanho_e_pts(self):
+        data = (FIXTURES / "hls-ts/video/seg-0.ts").read_bytes()
+        result = parse_mpegts(data)
+
+        assert result.samples_truncated is False
+        assert [(sample.pid, sample.pts) for sample in result.samples] == [
+            (0x100, 0),
+            (0x100, 3600),
+        ]
+        assert all(sample.unit_type == "pes" for sample in result.samples)
+        assert all(sample.byte_size == 102 for sample in result.samples)
+        assert result.samples[0].duration == 3600
+        assert result.samples[0].timescale == 90_000
+
     def test_packet_count(self):
         data = (FIXTURES / "hls-ts/video/seg-1.ts").read_bytes()
         info = parse_mpegts(data).ts
@@ -277,6 +323,14 @@ class TestIntegracaoSnapshot:
             assert snap is not None and snap.containers, url
             kinds = {c.analysis.kind for c in snap.containers}
             assert kinds == {"mp4"} if "hls-ts" not in url else kinds == {"mpeg-ts"}
+            timed_units = [
+                sample
+                for container in snap.containers
+                if not container.is_init
+                for sample in container.analysis.samples
+            ]
+            assert timed_units, url
+            assert all(sample.timescale for sample in timed_units), url
             # round-trip
             payload = snapshot_to_dict(snap)
             for c in payload["containers"]:

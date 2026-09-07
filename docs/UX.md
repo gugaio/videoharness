@@ -30,13 +30,18 @@ Presentation → Manifest → Track group → Representation → Segment → Par
 4. A seleção expande abaixo da própria representação: breadcrumb curto
    representação → segmento → container, fatos do segmento e então a estrutura do
    container.
-5. fMP4 mostra resumo e árvore de boxes; MPEG-TS mostra resumo e tabela de PIDs.
+5. Antes da estrutura, o segmento mostra uma faixa horizontal de frames/samples
+   fMP4 ou unidades PES TS. Largura e altura comunicam o tamanho relativo; a cor
+   distingue quadro-chave (I/IDR/CRA), inter-frame (P/B) ou tipo não sinalizado.
+   Cada bloco mostra PTS/DTS na escala disponível.
+   fMP4 então mostra resumo e árvore de boxes; MPEG-TS mostra resumo e tabela de PIDs.
    `ffprobe` permanece separado e identificado como derivado.
 6. Capabilities, dados específicos do protocolo e JSON bruto ficam recolhidos em
    “Dados técnicos e JSON”.
 
 O detalhe aberto é exclusivo: selecionar um segmento em outra representação troca o
-contexto em vez de acumular painéis. A estrutura só é renderizada depois da seleção;
+contexto em vez de acumular painéis. A estrutura e os samples só são renderizados
+depois da seleção;
 o snapshot continua sendo obtido pelo endpoint canônico único do MVP.
 
 A decodificação de codec nesta fase é uma ajuda de leitura determinística sobre a
