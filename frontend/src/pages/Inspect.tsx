@@ -200,6 +200,8 @@ export function Inspect() {
           timeline={timeline}
           segments={segments}
           containers={containers}
+          abrAlignment={snapshot.data.abr_alignment ?? []}
+          bitrateObservations={snapshot.data.bitrate_observations ?? []}
           capture={snapshot.data.capture}
         />
       ) : null}

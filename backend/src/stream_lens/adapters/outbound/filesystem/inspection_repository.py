@@ -24,10 +24,14 @@ from stream_lens.adapters.outbound.containers.serialization import (
 )
 from stream_lens.adapters.outbound.manifests.serialization import media_from_dict, media_to_dict
 from stream_lens.adapters.outbound.segments.serialization import (
+    abr_alignment_from_dict,
+    abr_alignment_to_dict,
     capture_report_from_dict,
     capture_report_to_dict,
     captured_from_dict,
     captured_to_dict,
+    representation_bitrate_from_dict,
+    representation_bitrate_to_dict,
     timeline_from_dict,
     timeline_to_dict,
 )
@@ -212,6 +216,10 @@ def snapshot_to_dict(snapshot: Snapshot) -> dict:
         "segments": [captured_to_dict(s) for s in snapshot.segments],
         "timeline": [timeline_to_dict(t) for t in snapshot.timeline],
         "containers": [container_to_dict(c) for c in snapshot.containers],
+        "abr_alignment": [abr_alignment_to_dict(item) for item in snapshot.abr_alignment],
+        "bitrate_observations": [
+            representation_bitrate_to_dict(item) for item in snapshot.bitrate_observations
+        ],
         "warnings": list(snapshot.warnings),
     }
 
@@ -237,6 +245,13 @@ def _snapshot_from_dict(data: dict) -> Snapshot:
         segments=tuple(captured_from_dict(s) for s in data.get("segments", [])),
         timeline=tuple(timeline_from_dict(t) for t in data.get("timeline", [])),
         containers=tuple(container_from_dict(c) for c in data.get("containers", [])),
+        abr_alignment=tuple(
+            abr_alignment_from_dict(item) for item in data.get("abr_alignment", [])
+        ),
+        bitrate_observations=tuple(
+            representation_bitrate_from_dict(item)
+            for item in data.get("bitrate_observations", [])
+        ),
         warnings=list(data.get("warnings", [])),
     )
 

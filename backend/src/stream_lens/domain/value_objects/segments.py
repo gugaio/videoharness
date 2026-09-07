@@ -87,6 +87,74 @@ class RepresentationTimeline:
 
 
 @dataclass(frozen=True, slots=True)
+class AbrSegmentAlignment:
+    """Comparação de um segmento de rendição com o mesmo índice de referência.
+
+    Os deltas declarados vêm do manifesto normalizado. O delta de keyframe só
+    existe quando ambos os fragments fornecem um keyframe com PTS via ffprobe.
+    Valores ausentes não indicam que o switch seja seguro ou inseguro.
+    """
+
+    index: int
+    declared_start_delta_seconds: float | None = None
+    declared_duration_delta_seconds: float | None = None
+    keyframe_pts_delta_seconds: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AbrAlignment:
+    """Evidência de alinhamento entre uma rendição e sua referência do grupo."""
+
+    group_kind: str
+    reference_rep_id: str
+    rep_id: str
+    segments: tuple[AbrSegmentAlignment, ...] = ()
+    comparable_declared_segments: int = 0
+    comparable_keyframes: int = 0
+    max_abs_declared_start_delta_seconds: float | None = None
+    max_abs_declared_duration_delta_seconds: float | None = None
+    max_abs_keyframe_pts_delta_seconds: float | None = None
+    declared_provenance: str = "declared (manifest timeline)"
+    keyframe_provenance: str = "derived (ffprobe)"
+
+
+@dataclass(frozen=True, slots=True)
+class SegmentBitrate:
+    """Taxa calculada de um segmento e indicadores de tamanho de unidades.
+
+    A taxa é ``bytes do arquivo * 8 / duração``. A duração observada no
+    container é preferida quando as tracks concordam; na falta dela, usa-se a
+    duração declarada no manifesto. Tamanho de sample/frame é somente um
+    indicador de distribuição de payload — não mede a complexidade do codec.
+    """
+
+    index: int
+    byte_size: int
+    duration_seconds: float
+    duration_provenance: str
+    bitrate_bps: int
+    bitrate_ratio_to_declared: float | None = None
+    unit_count: int = 0
+    average_unit_bytes: int | None = None
+    largest_unit_bytes: int | None = None
+    unit_provenance: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RepresentationBitrate:
+    """Resumo dos segmentos capturados de uma representação."""
+
+    group_kind: str
+    rep_id: str
+    declared_bandwidth_bps: int | None = None
+    segments: tuple[SegmentBitrate, ...] = ()
+    average_bitrate_bps: int | None = None
+    peak_bitrate_bps: int | None = None
+    lowest_bitrate_bps: int | None = None
+    bitrate_provenance: str = "calculated (captured segment bytes / duration)"
+
+
+@dataclass(frozen=True, slots=True)
 class CaptureReport:
     """Resumo da janela de captura aplicada nesta inspeção."""
 

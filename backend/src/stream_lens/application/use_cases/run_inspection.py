@@ -22,7 +22,9 @@ from stream_lens.application.ports.media_probe import MediaProbe
 from stream_lens.application.ports.repositories import InspectionRepository
 from stream_lens.application.use_cases.create_inspection import InspectionError
 from stream_lens.domain.entities.inspection import Inspection, InspectionStatus
+from stream_lens.domain.services.abr_alignment import measure_abr_alignment
 from stream_lens.domain.services.redaction import redact_url
+from stream_lens.domain.services.segment_bitrate import measure_segment_bitrate
 from stream_lens.domain.services.timeline_health import apply_timing_health
 from stream_lens.domain.value_objects.containers import SegmentContainer
 from stream_lens.domain.value_objects.manifest_summary import summary_from_unified
@@ -48,6 +50,8 @@ def build_snapshot(
     segments=(),
     timeline=(),
     containers=(),
+    abr_alignment=(),
+    bitrate_observations=(),
     warnings: list[str] | None = None,
 ) -> Snapshot:
     """Constrói o snapshot canônico a partir de uma inspeção concluída."""
@@ -70,6 +74,8 @@ def build_snapshot(
         segments=tuple(segments),
         timeline=tuple(timeline),
         containers=tuple(containers),
+        abr_alignment=tuple(abr_alignment),
+        bitrate_observations=tuple(bitrate_observations),
         warnings=warnings if warnings is not None else list(inspection.warnings),
     )
 
@@ -272,6 +278,10 @@ class RunInspection:
                 total_bytes=sum(c.byte_size or 0 for c in captured if c.ok),
             )
         timed_containers = apply_timing_health(tuple(containers), tuple(captured))
+        abr_alignment = measure_abr_alignment(tuple(timelines), timed_containers)
+        bitrate_observations = measure_segment_bitrate(
+            media, tuple(captured), timed_containers
+        )
         snapshot = build_snapshot(
             inspection,
             url,
@@ -280,6 +290,8 @@ class RunInspection:
             segments=captured,
             timeline=timelines,
             containers=timed_containers,
+            abr_alignment=abr_alignment,
+            bitrate_observations=bitrate_observations,
         )
         self._repository.save(inspection, snapshot)
         return inspection

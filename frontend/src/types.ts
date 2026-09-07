@@ -143,6 +143,51 @@ export interface RepresentationTimeline {
   entries: TimelineEntry[]
 }
 
+export interface AbrSegmentAlignment {
+  index: number
+  declared_start_delta_seconds: number | null
+  declared_duration_delta_seconds: number | null
+  keyframe_pts_delta_seconds: number | null
+}
+
+export interface AbrAlignment {
+  group_kind: string
+  reference_rep_id: string
+  rep_id: string
+  segments: AbrSegmentAlignment[]
+  comparable_declared_segments: number
+  comparable_keyframes: number
+  max_abs_declared_start_delta_seconds: number | null
+  max_abs_declared_duration_delta_seconds: number | null
+  max_abs_keyframe_pts_delta_seconds: number | null
+  declared_provenance: string
+  keyframe_provenance: string
+}
+
+export interface SegmentBitrate {
+  index: number
+  byte_size: number
+  duration_seconds: number
+  duration_provenance: string
+  bitrate_bps: number
+  bitrate_ratio_to_declared: number | null
+  unit_count: number
+  average_unit_bytes: number | null
+  largest_unit_bytes: number | null
+  unit_provenance: string | null
+}
+
+export interface RepresentationBitrate {
+  group_kind: string
+  rep_id: string
+  declared_bandwidth_bps: number | null
+  segments: SegmentBitrate[]
+  average_bitrate_bps: number | null
+  peak_bitrate_bps: number | null
+  lowest_bitrate_bps: number | null
+  bitrate_provenance: string
+}
+
 export interface BoxNodeDTO {
   type: string
   offset: number
@@ -329,5 +374,7 @@ export interface Snapshot {
   segments: CapturedSegment[]
   timeline: RepresentationTimeline[]
   containers: ContainerDTO[]
+  abr_alignment?: AbrAlignment[]
+  bitrate_observations?: RepresentationBitrate[]
   warnings: string[]
 }

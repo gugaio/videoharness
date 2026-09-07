@@ -7,12 +7,14 @@ compartilhável dentro de um TTL.
 
 ## Status
 
-**Fase 6 concluída + visualização de frames/samples.** Backend
+**Fase 6 concluída + extensões de observabilidade.** Backend
 FastAPI + CLI + frontend React; uma inspeção percorre manifesto, captura uma janela e
-analisa cada segmento fMP4/CMAF ou MPEG-TS. O snapshot 1.6 inclui árvore de boxes ou
+analisa cada segmento fMP4/CMAF ou MPEG-TS. O snapshot 1.8 inclui árvore de boxes ou
 estatísticas TS, samples fMP4 e unidades PES com tamanho/PTS/DTS. Quando o `ffprobe`
 consegue ler o vídeo, inclui também frames I/P/B exatos e seus tempos; essa leitura
-permanece opcional e derivada e alimenta um resumo de GOP/keyframes observado. O
+permanece opcional e derivada e alimenta um resumo de GOP/keyframes observado. A UI
+também compara o alinhamento ABR e calcula bitrate por segmento a partir de bytes e
+duração, deixando claro quando a duração vem do container ou do manifesto. O
 snapshot ainda preserva sinal HDR, HDR estático e presença de HDR10+ observados nos
 bytes. A captura tem
 orçamento padrão de **500 MB** por inspeção e **20 MB** por segmento. URLs `http(s)`
@@ -52,6 +54,8 @@ make cli inspect url=https://exemplo.com/master.m3u8
 - `docs/PROJECT_STATE.md` — estado atual e próximo passo
 - `docs/OBSERVABILITY.md` — trilha de medições para investigação e otimização
 - `docs/TIMELINE_HEALTH.md` — métricas temporais, limites e roteiro de QA
+- `docs/ABR_ALIGNMENT.md` — evidências de alinhamento para troca adaptativa
+- `docs/BITRATE_PER_SEGMENT.md` — taxa calculada, distribuição de payload e roteiro de QA
 - `docs/adr/` — decisões arquiteturais
 
 ## Layout

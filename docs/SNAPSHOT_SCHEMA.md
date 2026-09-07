@@ -1,7 +1,7 @@
 # SNAPSHOT_SCHEMA.md
 
-**Status: implementado (Fase 6 + extensões de observabilidade) — `schema_version` 1.6,
-analyzer 0.8.0** (schema 1.5 acrescido do bloco `analysis.timing`). Contrato
+**Status: implementado (Fase 6 + extensões de observabilidade) — `schema_version` 1.8,
+analyzer 1.0.0** (schema 1.7 acrescido de `bitrate_observations`). Contrato
 validado por testes de round-trip, captura, parsers estruturais e adapter derivado
 offline.
 
@@ -322,8 +322,61 @@ mesma representação.
 - `boundary_delta_seconds > 0` é gap; `< 0` é overlap; `0` é fronteira contínua.
 - `null` é não comparável, por exemplo quando a última PES não fornece duração.
 - PTS fica visível para investigar reorder; a continuidade usa DTS.
-- Ainda não há comparação entre rendições, A/V ou PCR: essas são extensões futuras
-  documentadas em [OBSERVABILITY.md](OBSERVABILITY.md).
+- A matriz ABR compara rendições de vídeo equivalentes; A/V e PCR continuam extensões
+  futuras documentadas em [OBSERVABILITY.md](OBSERVABILITY.md).
+
+## Bloco 1.7 (extensão — matriz ABR)
+
+`abr_alignment` compara rendições do mesmo `group_kind` contra a primeira timeline
+do grupo, na ordem preservada pelo manifesto. Cada linha compara somente segmentos
+com o mesmo `index`: os deltas de início/duração são declarativos; o delta de PTS de
+keyframe é derivado e só existe se os dois fragments o fornecerem.
+
+```json
+"abr_alignment": [{
+  "group_kind": "video",
+  "reference_rep_id": "v360",
+  "rep_id": "v720",
+  "comparable_declared_segments": 2,
+  "comparable_keyframes": 1,
+  "max_abs_declared_start_delta_seconds": 0.0,
+  "max_abs_declared_duration_delta_seconds": 0.0,
+  "max_abs_keyframe_pts_delta_seconds": 0.033333
+}]
+```
+
+Valores `null` e contagem zero significam que não havia um par comparável na janela;
+não são veredito sobre switching seguro ou inseguro.
+
+## Bloco 1.8 (extensão — bitrate por segmento)
+
+`bitrate_observations` usa somente segmentos baixados com tamanho e duração
+utilizáveis. A fórmula é `byte_size * 8 / duration_seconds`. A duração vinda de
+timestamps do container é preferida somente quando as tracks observadas concordam
+em até 50 ms; de outro modo, a duração declarada do manifesto é usada como fallback
+e sua proveniência fica explícita.
+
+```json
+"bitrate_observations": [{
+  "group_kind": "video", "rep_id": "v720", "declared_bandwidth_bps": 2000000,
+  "average_bitrate_bps": 1870000, "peak_bitrate_bps": 2430000,
+  "lowest_bitrate_bps": 1540000,
+  "segments": [{
+    "index": 1, "byte_size": 935000, "duration_seconds": 4.0,
+    "duration_provenance": "deterministic (container timestamps)",
+    "bitrate_bps": 1870000, "bitrate_ratio_to_declared": 0.935,
+    "unit_count": 120, "average_unit_bytes": 6500, "largest_unit_bytes": 48000,
+    "unit_provenance": "derived (ffprobe frame packet sizes)"
+  }]
+}]
+```
+
+- A média é ponderada: soma dos bytes dividida pela soma das durações da janela.
+- `declared_bandwidth_bps` vem do manifesto; não é substituído pela medição.
+- Tamanhos de unidades descrevem apenas a concentração de payload observado. Não
+  são uma métrica de complexidade de codec, VMAF/qualidade ou taxa de entrega HTTP.
+- Segmentos sem bytes, sem duração aproveitável ou `init` ficam fora do cálculo;
+  ausência de observação não é taxa zero.
 
 ## Carregamento sob demanda
 

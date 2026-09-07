@@ -13,12 +13,17 @@ o valor; nunca devem ser exibidos como estado saudável.
 
 ## Trilha aprovada
 
-1. **Timeline Health** — duração real, PTS/DTS, `tfdt` e fronteiras. Explica gaps,
+1. **Timeline Health** — duração real, PTS/DTS, `tfdt` e fronteiras. ✅ Implementado.
+   Explica gaps,
    overlaps, drift e falhas de append/seek.
-2. **Matriz ABR** — alinhamento temporal e de keyframes entre rendições. Explica
+2. **Matriz ABR** — alinhamento temporal e de keyframes entre rendições. ✅ Implementado.
+   Explica
    falhas de switching e tela preta em troca de qualidade.
-3. **Bitrate real** — taxa por segmento/GOP, picos e overhead. Explica buffering,
-   degraus ineficientes e custo de entrega.
+3. **Bitrate por segmento** — ✅ Implementado para a janela capturada. Taxa calculada
+   por bytes/duração, pico, faixa e comparação com o bitrate declarado; tamanho de
+   frame/sample/PES é apresentado apenas como indicador de distribuição de payload.
+   Ajuda a investigar buffering, degraus ineficientes e custo de entrega, sem alegar
+   medir complexidade de codec ou qualidade visual.
 4. **Entrega HTTP e live** — TTFB, throughput, cache, disponibilidade e live edge.
    Explica startup lento, rebuffer e atraso live.
 5. **Bitstream e áudio** — configuração efetiva, mudanças, A/V timing e sinais de

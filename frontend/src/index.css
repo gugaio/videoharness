@@ -914,6 +914,109 @@ code {
   font-size: 0.75rem;
 }
 
+.abr-alignment,
+.bitrate-observations {
+  margin: 1.25rem 0;
+  padding: 1rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: rgba(17, 26, 36, 0.58);
+}
+
+.abr-alignment > header,
+.bitrate-observations > header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.abr-alignment h3,
+.bitrate-observations h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.abr-alignment > header > span,
+.abr-alignment > p,
+.bitrate-observations > header > span,
+.bitrate-observations > p {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.metric-help {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: help;
+}
+
+.metric-help-icon {
+  display: inline-grid;
+  width: 1rem;
+  height: 1rem;
+  place-items: center;
+  border: 1px solid var(--faint);
+  border-radius: 50%;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.65rem;
+  line-height: 1;
+}
+
+.metric-tooltip {
+  position: absolute;
+  z-index: 3;
+  top: calc(100% + 0.5rem);
+  left: 0;
+  display: none;
+  width: min(22rem, 70vw);
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: #0a1118;
+  color: var(--text-soft);
+  font-family: var(--sans);
+  font-size: 0.75rem;
+  font-weight: 450;
+  line-height: 1.4;
+  text-transform: none;
+  white-space: normal;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+}
+
+.metric-help:hover .metric-tooltip,
+.metric-help:focus .metric-tooltip {
+  display: block;
+}
+
+.abr-alignment > p,
+.bitrate-observations > p {
+  max-width: 78ch;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.bitrate-table small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.bitrate-details {
+  margin-top: 0.85rem;
+}
+
+.bitrate-details > summary {
+  cursor: pointer;
+  color: var(--text-soft);
+  font-size: 0.8125rem;
+}
+
+.bitrate-details[open] > .table-scroll {
+  margin-top: 0.8rem;
+}
+
 /* Segment and container drill-down */
 
 .segment-detail {

@@ -1,5 +1,7 @@
 import { useId, useMemo, useState } from 'react'
 import type {
+  AbrAlignment,
+  RepresentationBitrate,
   CapturedSegment,
   CaptureReport,
   ContainerDTO,
@@ -64,6 +66,133 @@ function formatBandwidth(bps: number | null): string {
 function formatDuration(seconds: number | null): string {
   if (seconds === null) return '—'
   return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`
+}
+
+function formatDelta(seconds: number | null): string {
+  return seconds === null ? 'não comparável' : `${seconds.toFixed(3)}s`
+}
+
+function AlignmentMetricHeader({ label, help }: { label: string; help: string }) {
+  const tooltipId = useId()
+  return (
+    <th>
+      <span className="metric-help" tabIndex={0} aria-describedby={tooltipId}>
+        {label}<span className="metric-help-icon" aria-hidden="true">?</span>
+        <span className="metric-tooltip" id={tooltipId} role="tooltip">{help}</span>
+      </span>
+    </th>
+  )
+}
+
+function AbrAlignmentMatrix({ alignments }: { alignments: AbrAlignment[] }) {
+  if (alignments.length === 0) return null
+  return (
+    <section className="abr-alignment" aria-labelledby="abr-alignment-heading">
+      <header>
+        <div>
+          <span className="eyebrow">Troca adaptativa</span>
+          <h3 id="abr-alignment-heading">Matriz de alinhamento ABR</h3>
+        </div>
+        <span>{alignments.length} {alignments.length === 1 ? 'comparação' : 'comparações'}</span>
+      </header>
+      <p>
+        Deltas absolutos máximos na janela. Manifesto e keyframes são evidências distintas;
+        ausência de keyframe não confirma nem descarta uma troca segura.
+      </p>
+      <div className="table-scroll">
+        <table className="structure-table">
+          <thead><tr>
+            <th>Referência → rendição</th>
+            <AlignmentMetricHeader
+              label="Segmentos comparados"
+              help="Quantidade de segmentos com o mesmo índice e início/duração declarados nos dois manifestos."
+            />
+            <AlignmentMetricHeader
+              label="Maior desvio no início"
+              help="Maior diferença absoluta entre os instantes de início declarados no manifesto, dentro da janela capturada. 0.000s indica que todos os pares comparados começam no mesmo instante declarado."
+            />
+            <AlignmentMetricHeader
+              label="Maior desvio na duração"
+              help="Maior diferença absoluta entre as durações declaradas de segmentos equivalentes. Não mede duração efetivamente decodificada."
+            />
+            <AlignmentMetricHeader
+              label="Maior desvio no keyframe"
+              help="Maior diferença absoluta entre o PTS do primeiro keyframe que o ffprobe observou nos dois fragments. “Não observado” não é uma conclusão sobre a segurança da troca."
+            />
+          </tr></thead>
+          <tbody>{alignments.map((item) => (
+            <tr key={`${item.reference_rep_id}-${item.rep_id}`}>
+              <td><code>{item.reference_rep_id}</code> → <code>{item.rep_id}</code></td>
+              <td>{item.comparable_declared_segments} segmentos</td>
+              <td>{formatDelta(item.max_abs_declared_start_delta_seconds)}</td>
+              <td>{formatDelta(item.max_abs_declared_duration_delta_seconds)}</td>
+              <td>{item.comparable_keyframes > 0
+                ? formatDelta(item.max_abs_keyframe_pts_delta_seconds)
+                : 'não observado'}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+    </section>
+  )
+}
+
+function formatRatio(ratio: number | null): string {
+  return ratio === null ? 'sem referência declarada' : `${(ratio * 100).toFixed(0)}% do declarado`
+}
+
+function BitrateObservations({ observations }: { observations: RepresentationBitrate[] }) {
+  if (observations.length === 0) return null
+  return (
+    <section className="bitrate-observations" aria-labelledby="bitrate-observations-heading">
+      <header>
+        <div>
+          <span className="eyebrow">Bytes capturados</span>
+          <h3 id="bitrate-observations-heading">Bitrate por segmento</h3>
+        </div>
+        <span>{observations.reduce((total, item) => total + item.segments.length, 0)} segmentos com duração</span>
+      </header>
+      <p>
+        Taxa calculada como bytes do arquivo ÷ duração do segmento. O tamanho das unidades indica concentração de payload; não mede a complexidade nem a qualidade do vídeo.
+      </p>
+      <div className="table-scroll">
+        <table className="structure-table bitrate-table">
+          <thead><tr>
+            <th>Rendição</th>
+            <AlignmentMetricHeader label="Média calculada" help="Total de bytes dos segmentos capturados dividido pela soma de suas durações. Não inclui segmentos que falharam ou não tinham duração utilizável." />
+            <AlignmentMetricHeader label="Pico por segmento" help="Maior taxa calculada em um segmento individual da janela. Ajuda a revelar picos que pressionam a banda disponível e o buffer." />
+            <AlignmentMetricHeader label="Faixa observada" help="Menor e maior taxa calculadas na janela. Grande variação pode indicar conteúdo com payload desigual; este dado, isoladamente, não identifica a causa." />
+            <AlignmentMetricHeader label="Declarado no manifesto" help="BANDWIDTH do HLS ou bandwidth do DASH, quando presente. É metadado do manifesto e não uma medição dos bytes baixados." />
+          </tr></thead>
+          <tbody>{observations.map((item) => (
+            <tr key={`${item.group_kind}-${item.rep_id}`}>
+              <td><code>{item.rep_id}</code><br /><small>{item.segments.length} segmentos</small></td>
+              <td>{formatBandwidth(item.average_bitrate_bps)}</td>
+              <td>{formatBandwidth(item.peak_bitrate_bps)}</td>
+              <td>{formatBandwidth(item.lowest_bitrate_bps)} — {formatBandwidth(item.peak_bitrate_bps)}</td>
+              <td>{formatBandwidth(item.declared_bandwidth_bps)}{item.declared_bandwidth_bps && item.peak_bitrate_bps ? <><br /><small>pico: {formatRatio(item.peak_bitrate_bps / item.declared_bandwidth_bps)}</small></> : null}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+      <details className="bitrate-details">
+        <summary>Ver medições por segmento</summary>
+        <div className="table-scroll">
+          <table className="structure-table bitrate-table">
+            <thead><tr><th>Rendição / segmento</th><th>Bitrate calculado</th><th>Duração usada</th><th>Unidades observadas</th></tr></thead>
+            <tbody>{observations.flatMap((item) => item.segments.map((segment) => (
+              <tr key={`${item.rep_id}-${segment.index}`}>
+                <td><code>{item.rep_id}</code> · {segment.index}<br /><small>{formatBytes(segment.byte_size)} · {formatRatio(segment.bitrate_ratio_to_declared)}</small></td>
+                <td>{formatBandwidth(segment.bitrate_bps)}</td>
+                <td>{formatDuration(segment.duration_seconds)}<br /><small>{segment.duration_provenance.includes('container') ? 'timestamps do container' : 'manifesto'}</small></td>
+                <td>{segment.unit_count > 0 ? <>{segment.unit_count} unidades<br /><small>média {formatBytes(segment.average_unit_bytes)} · maior {formatBytes(segment.largest_unit_bytes)}</small></> : 'não observadas'}</td>
+              </tr>
+            )))}</tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+  )
 }
 
 function segmentKey(repId: string, index: number, isInit: boolean): string {
@@ -434,12 +563,16 @@ export function TimelineView({
   timeline,
   segments,
   containers = [],
+  abrAlignment = [],
+  bitrateObservations = [],
   capture,
 }: {
   media?: UnifiedMedia | null
   timeline: RepresentationTimeline[]
   segments: CapturedSegment[]
   containers?: ContainerDTO[]
+  abrAlignment?: AbrAlignment[]
+  bitrateObservations?: RepresentationBitrate[]
   capture: CaptureReport | null
 }) {
   const [selected, setSelected] = useState<string | null>(null)
@@ -468,6 +601,9 @@ export function TimelineView({
         <span><i className="legend-dot failed" />falhou</span>
         <span><i className="legend-container">◇</i>container</span>
       </div>
+
+      <AbrAlignmentMatrix alignments={abrAlignment} />
+      <BitrateObservations observations={bitrateObservations} />
 
       <div className="track-groups">
         {groups.map((group) => {

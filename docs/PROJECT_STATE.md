@@ -4,8 +4,9 @@ Fotografia concisa do estado atual. Atualizada ao final de cada fase. Histórico
 arquitetural fica nos ADRs; histórico de mudanças no Git.
 
 **Data**: 2026-09-06 · **Fase concluída**: 6 + extensões aprovadas · **Produto
-funcional**: ✅ v0.8 — captura limitada + inspeção estrutural fMP4/MPEG-TS,
-Timeline Health, visualização de frames/samples e HDR (snapshot 1.6, analyzer 0.8.0)
+funcional**: ✅ v1.0 — captura limitada + inspeção estrutural fMP4/MPEG-TS,
+Timeline Health, matriz ABR, bitrate por segmento, visualização de frames/samples e HDR
+(snapshot 1.8, analyzer 1.0.0)
 
 ## Entrega mais recente (extensão da Fase 6)
 
@@ -20,7 +21,21 @@ Medidas determinísticas por track/PID: PTS/DTS observáveis, duração dos byte
 duração declarada e fronteira com o segmento anterior. Gaps, overlaps e ausência de
 evidência são distintos na UI; não há diagnóstico automático.
 
-**Validação atual**: 129 testes backend e 33 frontend; lint, typecheck e build de
+## Entrega mais recente (O2 — Matriz ABR)
+
+Compara rendições do mesmo grupo por índice de segmento. Deltas de início e duração
+vêm da timeline declarada; PTS de keyframe só entra quando ambos os fragments foram
+observados pelo `ffprobe`. A matriz não declara compatibilidade de switching.
+
+## Entrega mais recente (O3 — Bitrate por segmento)
+
+Calcula bitrate da janela a partir de bytes baixados e duração por segmento; quando
+as tracks do container não oferecem uma duração consistente, mostra o fallback da
+duração declarada no manifesto. A UI resume média ponderada, mínimo, pico e a
+relação com o bitrate declarado. Tamanho de frame/sample/PES fica explícito como
+indicador de distribuição de payload, não como medição de complexidade ou qualidade.
+
+**Validação atual**: 133 testes backend e 35 frontend; lint, typecheck e build de
 produção do frontend passam.
 
 ## Status atual
@@ -144,5 +159,5 @@ implícito e `S@r`, e `Representation/BaseURL` direto é capturável como segmen
 
 ## Próximo passo exato
 
-**Fase 7** (mediante aprovação): skills e API para agentes, baseadas no schema 1.6 e
+**Fase 7** (mediante aprovação): skills e API para agentes, baseadas no schema 1.8 e
 nos endpoints reais; catálogo versionado, exemplos verificáveis e evals.

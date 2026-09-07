@@ -68,6 +68,16 @@ apresentados como conclusões.
 duração observada e duração declarada por track/PID. A documentação de observabilidade
 define a sequência de métricas futuras e os limites verificáveis por QA.
 
+**Extensão aprovada**: ✅ no schema 1.7, a matriz ABR compara início e duração
+declarados de segmentos equivalentes e PTS de keyframe somente quando ambos são
+observados pelo ffprobe. A ausência de pares comparáveis não é convertida em diagnóstico.
+
+**Extensão aprovada**: ✅ no schema 1.8, bitrate por segmento é calculado por
+bytes capturados/duração, priorizando timestamps do container quando as tracks
+concordam e identificando o fallback do manifesto. Picos, faixa e comparação com
+bitrate declarado ficam visíveis; tamanho de unidade é indicador de payload, não
+uma alegação de complexidade de codec.
+
 ## Fase 7 — Skills e API para agentes
 
 Skill principal revisada para endpoints/schemas reais; referências HLS/DASH/TS/ISOBMFF coerentes com o suporte atual; catálogo versionado; endpoints de skills; compatibilidade com `schema_version`; exemplos com fixtures; evals; testes de referências/paths/versões; ação "Use with an agent" na UI; `capabilities` e `recommended_skills` no snapshot. Agente carrega só módulos relevantes.

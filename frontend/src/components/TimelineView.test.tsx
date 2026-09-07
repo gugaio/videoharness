@@ -7,6 +7,8 @@ import type {
   ContainerDTO,
   RepresentationTimeline,
   UnifiedMedia,
+  AbrAlignment,
+  RepresentationBitrate,
 } from '../types'
 
 const timeline: RepresentationTimeline[] = [
@@ -51,6 +53,27 @@ const capture: CaptureReport = {
   total_bytes: 3072,
 }
 
+const abrAlignment: AbrAlignment[] = [{
+  group_kind: 'video', reference_rep_id: 'v360', rep_id: 'v720', segments: [],
+  comparable_declared_segments: 2, comparable_keyframes: 1,
+  max_abs_declared_start_delta_seconds: 0,
+  max_abs_declared_duration_delta_seconds: 0,
+  max_abs_keyframe_pts_delta_seconds: 0.033333,
+  declared_provenance: 'declared (manifest timeline)', keyframe_provenance: 'derived (ffprobe)',
+}]
+
+const bitrateObservations: RepresentationBitrate[] = [{
+  group_kind: 'video', rep_id: 'v360', declared_bandwidth_bps: 800_000,
+  average_bitrate_bps: 4_096, peak_bitrate_bps: 4_096, lowest_bitrate_bps: 4_096,
+  bitrate_provenance: 'calculated (captured segment bytes / duration)',
+  segments: [{
+    index: 1, byte_size: 2048, duration_seconds: 4,
+    duration_provenance: 'declared (manifest duration)', bitrate_bps: 4_096,
+    bitrate_ratio_to_declared: 0.0051, unit_count: 0, average_unit_bytes: null,
+    largest_unit_bytes: null, unit_provenance: null,
+  }],
+}]
+
 const media: UnifiedMedia = {
   protocol: 'HLS',
   kind: 'hls_master_playlist',
@@ -92,6 +115,24 @@ const container: ContainerDTO = {
 }
 
 describe('TimelineView', () => {
+  it('separa alinhamento declarado de evidência derivada de keyframe', () => {
+    render(<TimelineView media={media} timeline={timeline} segments={segments} capture={capture} abrAlignment={abrAlignment} />)
+    const matrix = screen.getByRole('heading', { name: 'Matriz de alinhamento ABR' }).closest('section')!
+    expect(within(matrix).getByText('2 segmentos')).toBeInTheDocument()
+    expect(within(matrix).getByText('0.033s')).toBeInTheDocument()
+    expect(within(matrix).getByText(/ausência de keyframe não confirma/)).toBeInTheDocument()
+    expect(within(matrix).getByText('Maior desvio no início')).toBeInTheDocument()
+    expect(within(matrix).getByRole('tooltip', { name: /início declarados no manifesto/ })).toBeInTheDocument()
+  })
+
+  it('explica bitrate calculado sem chamar tamanho de payload de complexidade', () => {
+    render(<TimelineView media={media} timeline={timeline} segments={segments} capture={capture} bitrateObservations={bitrateObservations} />)
+    const panel = screen.getByRole('heading', { name: 'Bitrate por segmento' }).closest('section')!
+    expect(within(panel).getAllByText('4 kbps')).toHaveLength(3)
+    expect(within(panel).getByText(/não mede a complexidade nem a qualidade/)).toBeInTheDocument()
+    expect(within(panel).getByRole('tooltip', { name: /bytes dos segmentos capturados dividido/ })).toBeInTheDocument()
+  })
+
   it('resume a captura sem separar a timeline da visão principal', () => {
     render(<TimelineView media={media} timeline={timeline} segments={segments} capture={capture} />)
     const summary = screen.getByLabelText('Resumo da captura')

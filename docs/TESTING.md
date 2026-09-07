@@ -1,6 +1,6 @@
 # TESTING.md
 
-**Status: Fase 6 + extensões concluídas — 129 testes backend (pytest) + 33 frontend (vitest),
+**Status: Fase 6 + extensões concluídas — 133 testes backend (pytest) + 35 frontend (vitest),
 todos offline; o teste opcional de ffprobe é pulado quando o binário não existe.**
 
 ## Princípios
@@ -41,6 +41,11 @@ TS (PAT/PMT/PES/PCR) e fMP4 (init e fragmentos). Sem mídia protegida por copyri
   e ausência explícita de intervalo quando só um ponto de acesso foi observado.
 - Timeline Health: duração observada, duração declarada, gap, overlap e fronteira
   não comparável quando a mídia não fornece fim de DTS.
+- Matriz ABR: pares de rendições do mesmo tipo, deltas declarados por índice e
+  keyframe apenas quando os dois fragments o reportam via ffprobe.
+- Bitrate por segmento: bytes/duração observada quando as tracks concordam,
+  fallback declarado quando não concordam, média ponderada, pico e tamanho de
+  unidade claramente separado de complexidade de codec.
 
 ## Comandos (raiz do repositório)
 
