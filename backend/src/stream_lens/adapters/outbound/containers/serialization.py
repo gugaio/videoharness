@@ -1,4 +1,4 @@
-"""Serialização dos containers inspecionados (bloco `containers`, schema 1.4)."""
+"""Serialização dos containers inspecionados (bloco `containers`, schema 1.6)."""
 
 from __future__ import annotations
 
@@ -6,9 +6,11 @@ from stream_lens.domain.value_objects.containers import (
     BoxNode,
     ContainerAnalysis,
     ContainerSample,
+    ContainerTiming,
     Fmp4Info,
     HdrInfo,
     SegmentContainer,
+    TimingTrack,
     TsInfo,
     TsPidStats,
 )
@@ -65,6 +67,48 @@ def _sample_from_dict(data: dict) -> ContainerSample:
         composition_offset=data.get("composition_offset"),
         timescale=data.get("timescale"),
         is_sync=data.get("is_sync"),
+    )
+
+
+def _timing_to_dict(timing: ContainerTiming) -> dict:
+    return {
+        "declared_duration_seconds": timing.declared_duration_seconds,
+        "tracks": [
+            {
+                "track_id": track.track_id,
+                "pid": track.pid,
+                "timescale": track.timescale,
+                "start_dts": track.start_dts,
+                "end_dts": track.end_dts,
+                "start_pts": track.start_pts,
+                "end_pts": track.end_pts,
+                "observed_duration_seconds": track.observed_duration_seconds,
+                "boundary_delta_seconds": track.boundary_delta_seconds,
+            }
+            for track in timing.tracks
+        ],
+        "provenance": timing.provenance,
+    }
+
+
+def _timing_from_dict(data: dict) -> ContainerTiming:
+    return ContainerTiming(
+        declared_duration_seconds=data.get("declared_duration_seconds"),
+        tracks=tuple(
+            TimingTrack(
+                track_id=track.get("track_id"),
+                pid=track.get("pid"),
+                timescale=track.get("timescale"),
+                start_dts=track.get("start_dts"),
+                end_dts=track.get("end_dts"),
+                start_pts=track.get("start_pts"),
+                end_pts=track.get("end_pts"),
+                observed_duration_seconds=track.get("observed_duration_seconds"),
+                boundary_delta_seconds=track.get("boundary_delta_seconds"),
+            )
+            for track in data.get("tracks", [])
+        ),
+        provenance=data.get("provenance", "deterministic (container timestamps)"),
     )
 
 
@@ -181,6 +225,7 @@ def analysis_to_dict(analysis: ContainerAnalysis) -> dict:
         "ts": _ts_to_dict(analysis.ts) if analysis.ts else None,
         "samples": [_sample_to_dict(sample) for sample in analysis.samples],
         "samples_truncated": analysis.samples_truncated,
+        "timing": _timing_to_dict(analysis.timing) if analysis.timing else None,
         "error": analysis.error,
     }
 
@@ -192,6 +237,7 @@ def analysis_from_dict(data: dict) -> ContainerAnalysis:
         ts=_ts_from_dict(data["ts"]) if data.get("ts") else None,
         samples=tuple(_sample_from_dict(sample) for sample in data.get("samples", [])),
         samples_truncated=data.get("samples_truncated", False),
+        timing=_timing_from_dict(data["timing"]) if data.get("timing") else None,
         error=data.get("error"),
     )
 

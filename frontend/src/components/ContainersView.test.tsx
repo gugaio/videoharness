@@ -51,6 +51,9 @@ const fmp4Container: ContainerDTO = {
     duration: '4.000000',
     size: '4096',
     bit_rate: '8192',
+    frames: [],
+    frames_truncated: false,
+    gop: null,
     streams: [{
       codec_name: 'h264', codec_type: 'video', profile: 'High', width: 1280,
       height: 720, sample_rate: null, channels: null,
@@ -59,10 +62,83 @@ const fmp4Container: ContainerDTO = {
 }
 
 describe('ContainerInspector', () => {
+  it('usa pict_type do ffprobe para separar frames I, P e B', () => {
+    const withDerivedFrames: ContainerDTO = {
+      ...fmp4Container,
+      probe: {
+        ...fmp4Container.probe!,
+        frames: [
+          {
+            index: 0, stream_index: 0, pict_type: 'I', key_frame: true,
+            byte_size: 1800, pts: 0, pts_time: '0.000000', dts: 0,
+            dts_time: '0.000000', duration: 3000, duration_time: '0.033333',
+          },
+          {
+            index: 1, stream_index: 0, pict_type: 'P', key_frame: false,
+            byte_size: 700, pts: 6000, pts_time: '0.066667', dts: 3000,
+            dts_time: '0.033333', duration: 3000, duration_time: '0.033333',
+          },
+          {
+            index: 2, stream_index: 0, pict_type: 'B', key_frame: false,
+            byte_size: 220, pts: 3000, pts_time: '0.033333', dts: 6000,
+            dts_time: '0.066667', duration: 3000, duration_time: '0.033333',
+          },
+          {
+            index: 3, stream_index: 0, pict_type: 'I', key_frame: true,
+            byte_size: 1700, pts: 9000, pts_time: '0.100000', dts: 9000,
+            dts_time: '0.100000', duration: 3000, duration_time: '0.033333',
+          },
+        ],
+        gop: {
+          starts_with_key_frame: true,
+          first_key_frame_index: 0,
+          key_frame_count: 2,
+          i_frame_count: 2,
+          p_frame_count: 1,
+          b_frame_count: 1,
+          unknown_frame_count: 0,
+          intervals: [{
+            start_frame_index: 0,
+            next_key_frame_index: 3,
+            frame_count: 3,
+            duration_seconds: 0.1,
+          }],
+          trailing_gop: {
+            start_frame_index: 3,
+            observed_frame_count: 1,
+            observed_duration_seconds: 0.033333,
+          },
+          truncated: false,
+        },
+      },
+    }
+
+    render(<ContainerInspector container={withDerivedFrames} />)
+
+    const legend = screen.getByLabelText('Legenda dos tipos de frame e tamanhos')
+    expect(within(legend).getByText('I-frame')).toBeInTheDocument()
+    expect(within(legend).getByText('P-frame')).toBeInTheDocument()
+    expect(within(legend).getByText('B-frame')).toBeInTheDocument()
+    const frames = within(screen.getByRole('list', { name: 'Frames decodificados: Stream 0' }))
+      .getAllByRole('listitem')
+    expect(frames).toHaveLength(4)
+    expect(frames[0]).toHaveTextContent('I 01')
+    expect(frames[1]).toHaveTextContent('P 02')
+    expect(frames[2]).toHaveTextContent('B 03')
+    expect(frames[0]).toHaveTextContent('PTS 0.000s')
+    const gop = screen.getByRole('region', { name: 'GOP observado' })
+    expect(within(gop).getByText('Sim')).toBeInTheDocument()
+    expect(within(gop).getByText('3 frames')).toBeInTheDocument()
+    expect(within(gop).getByText('0.100s')).toBeInTheDocument()
+    expect(within(gop).getByText('I 2 · P 1 · B 1')).toBeInTheDocument()
+    expect(screen.getAllByText('derivado por ffprobe')).toHaveLength(2)
+  })
+
   it('desenha frames em ordem com tamanho, PTS, DTS e sync visíveis', () => {
     render(<ContainerInspector container={fmp4Container} />)
 
     expect(screen.getByRole('heading', { name: 'Frames do segmento' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'GOP observado' })).not.toBeInTheDocument()
     const legend = screen.getByLabelText('Legenda dos frames e tamanhos')
     expect(within(legend).getByText('largura e altura = bytes')).toBeInTheDocument()
     expect(within(legend).getByText('quadro-chave (I/IDR/CRA)')).toBeInTheDocument()
@@ -82,6 +158,37 @@ describe('ContainerInspector', () => {
     expect(frames[0].style.getPropertyValue('--sample-color')).not.toBe(
       frames[1].style.getPropertyValue('--sample-color'),
     )
+  })
+
+  it('expõe duração e descontinuidade temporal sem tratá-las como diagnóstico', () => {
+    const withTiming: ContainerDTO = {
+      ...fmp4Container,
+      analysis: {
+        ...fmp4Container.analysis,
+        timing: {
+          declared_duration_seconds: 2,
+          provenance: 'deterministic (container timestamps)',
+          tracks: [{
+            track_id: 1,
+            pid: null,
+            timescale: 90000,
+            start_dts: 180000,
+            end_dts: 360000,
+            start_pts: 186000,
+            end_pts: 366000,
+            observed_duration_seconds: 2,
+            boundary_delta_seconds: 0.066667,
+          }],
+        },
+      },
+    }
+
+    render(<ContainerInspector container={withTiming} />)
+
+    const section = screen.getByRole('heading', { name: 'Saúde temporal' }).closest('section')!
+    expect(within(section).getAllByText('2.000s')).toHaveLength(2)
+    expect(within(section).getByText('gap 0.067s')).toBeInTheDocument()
+    expect(within(section).getByText(/não são considerados continuidade/)).toBeInTheDocument()
   })
 
   it('mostra fatos fMP4 e expande a árvore de boxes sob demanda', async () => {

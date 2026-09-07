@@ -3,37 +3,55 @@
 Fotografia concisa do estado atual. Atualizada ao final de cada fase. Histórico
 arquitetural fica nos ADRs; histórico de mudanças no Git.
 
-**Data**: 2026-09-06 · **Fase concluída**: 6 + extensão aprovada · **Produto
-funcional**: ✅ v0.6 — captura limitada + inspeção estrutural fMP4/MPEG-TS,
-visualização de frames/samples e metadados HDR (snapshot 1.4, analyzer 0.6.0)
+**Data**: 2026-09-06 · **Fase concluída**: 6 + extensões aprovadas · **Produto
+funcional**: ✅ v0.8 — captura limitada + inspeção estrutural fMP4/MPEG-TS,
+Timeline Health, visualização de frames/samples e HDR (snapshot 1.6, analyzer 0.8.0)
 
 ## Entrega mais recente (extensão da Fase 6)
 
-Materializar unidades temporizadas diretamente dos containers capturados e mostrá-las
-em uma faixa horizontal no detalhe do segmento, usando tamanho e tipo visual sem
-chamar unidades PES de frames quando o container não prova essa equivalência.
+Enriquecer a faixa horizontal com `ffprobe -show_frames`, usando o init junto ao
+fragmento fMP4 para obter a classificação I/P/B real do bitstream e resumir o GOP
+observado, sem perder a visualização estrutural anterior quando a leitura derivada
+não estiver disponível.
+
+## Entrega mais recente (O1 — Timeline Health)
+
+Medidas determinísticas por track/PID: PTS/DTS observáveis, duração dos bytes,
+duração declarada e fronteira com o segmento anterior. Gaps, overlaps e ausência de
+evidência são distintos na UI; não há diagnóstico automático.
+
+**Validação atual**: 129 testes backend e 33 frontend; lint, typecheck e build de
+produção do frontend passam.
 
 ## Status atual
 
 `analysis.samples` preserva até 1.000 samples fMP4 de `trun` ou unidades PES TS,
 com tamanho, PTS/DTS, duração, timescale e sync quando disponível. A UI mostra cada
-track/PID em uma linha horizontal, com largura/altura proporcionais ao tamanho e cor
-para quadro-chave, inter-frame ou tipo não sinalizado.
-O painel HDR da Fase 6 permanece contextual e `ffprobe` continua separado como dado
-derivado.
+track/PID em uma linha horizontal como fallback. Quando `probe.frames` está
+disponível, a UI prefere os frames I, P e B reportados pelo decoder, com cor própria,
+tamanho de pacote, PTS e DTS. Um resumo mostra ponto de acesso inicial, distribuição
+I/P/B e intervalos entre keyframes em frames/segundos, distinguindo intervalos
+completos de limites inferiores. O painel HDR da Fase 6 permanece contextual e todo
+resultado do `ffprobe` continua separado e marcado como derivado.
 
-## Entregas concluídas (extensão de samples)
+## Entregas concluídas (extensões de visualização)
 
 - **fMP4**: registros de `trun`, defaults `tfhd`/`trex`, decode time `tfdt`,
   composition offset, sync flags e timescale do init da mesma representação.
 - **MPEG-TS**: unidades PES observadas com tamanho de payload, PTS/DTS em 90 kHz e
   duração entre timestamps consecutivos da mesma PID.
-- **Contrato/UI**: `ContainerSample`, schema 1.4/analyzer 0.6.0 e faixa horizontal
-  responsiva com escala visual de tamanho, tempos visíveis e distinção sample/PES.
-- **Limites**: no máximo 1.000 itens serializados por container; a flag
-  `samples_truncated` e as contagens totais tornam o corte explícito.
-- **Testes**: 123 testes backend e 31 frontend passam; lint, typecheck e build do
-  frontend também passam.
+- **Contrato/UI (histórico)**: `ContainerSample`, `probe.frames`, schema 1.5/analyzer 0.7.0 e
+  faixa horizontal responsiva com escala visual de tamanho, tempos visíveis e
+  distinção I/P/B ou sample/PES no fallback.
+- **Frames derivados**: `show_frames` limitado a 1.000 frames; fMP4 usa
+  `init + fragmento` via stdin, enquanto TS é sondado diretamente.
+- **GOP observado**: ponto de acesso no início, contagem I/P/B, pares de keyframes e
+  trecho final incompleto; open/closed GOP não é inferido.
+- **Limites**: no máximo 1.000 itens serializados por container; as flags
+  `samples_truncated`/`frames_truncated` tornam o corte explícito; a entrada fMP4
+  combinada do probe é limitada a 40 MiB.
+- **Testes (na entrega anterior)**: 127 testes backend e 32 frontend passavam; a
+  contagem atualizada fica registrada após a validação da extensão O1.
 
 ## Objetivo da Fase 5
 
@@ -107,20 +125,24 @@ implícito e `S@r`, e `Representation/BaseURL` direto é capturável como segmen
   payloads nem configurações gerais de codec, e limita a
   serialização a 64 filhos por nó; boxes malformados são preservados como
   truncados/erro quando possível.
-- `ffprobe` pode recusar fragmentos sem init/sample entry; nesse caso `probe` é `null`.
+- `ffprobe` pode estar ausente, recusar bitstream inválido/protegido ou não produzir
+  frames; nesse caso a UI usa os samples/PES estruturais. Um fragmento fMP4 recebe o
+  init capturado da mesma representação quando disponível.
 - A lista detalhada é limitada a 1.000 itens por container. Em MPEG-TS, uma unidade
-  PES pode carregar múltiplos access units e não é apresentada como frame; detectar
-  frames TS exigiria parsing adicional de bitstream.
+  PES pode carregar múltiplos access units e só é apresentada como frame quando a
+  leitura derivada do `ffprobe` fornece essa evidência.
 - A ajuda visual de Profile/Level cobre AVC compacto e HEVC `hvc1`/`hev1`; outros
   codec strings continuam visíveis sem interpretação adicional.
 - Não há diagnóstico automático, inspeção de samples/bitstream completa, parsing de
   RPU Dolby Vision ou endpoint lazy por container. HDR10+ é apenas uma presença
   observada no segmento, não seus parâmetros por quadro.
+- O resumo de GOP mede keyframes observados; não classifica GOP aberto/fechado e usa
+  `+` quando o próximo keyframe está fora do segmento ou do limite coletado.
 - A expansão defensiva de `SegmentTimeline` para o snapshot é limitada a 10.000
   segmentos por representação; `r=-1` sem limite temporal conhecido materializa
   somente a primeira referência e gera aviso no manifesto.
 
 ## Próximo passo exato
 
-**Fase 7** (mediante aprovação): skills e API para agentes, baseadas no schema 1.4 e
+**Fase 7** (mediante aprovação): skills e API para agentes, baseadas no schema 1.6 e
 nos endpoints reais; catálogo versionado, exemplos verificáveis e evals.

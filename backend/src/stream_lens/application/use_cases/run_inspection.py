@@ -23,6 +23,7 @@ from stream_lens.application.ports.repositories import InspectionRepository
 from stream_lens.application.use_cases.create_inspection import InspectionError
 from stream_lens.domain.entities.inspection import Inspection, InspectionStatus
 from stream_lens.domain.services.redaction import redact_url
+from stream_lens.domain.services.timeline_health import apply_timing_health
 from stream_lens.domain.value_objects.containers import SegmentContainer
 from stream_lens.domain.value_objects.manifest_summary import summary_from_unified
 from stream_lens.domain.value_objects.media import (
@@ -180,12 +181,12 @@ class RunInspection:
                 if not cap.ok or not cap.file:
                     continue
                 path = self._workspace / inspection_id / cap.file
+                key = (cap.rep_id, cap.group_kind)
+                init_file = init_files.get(key)
                 probe: dict | None = None
                 try:
                     data = path.read_bytes()
                     init_data = None
-                    key = (cap.rep_id, cap.group_kind)
-                    init_file = init_files.get(key)
                     if not cap.is_init and init_file:
                         if key not in init_cache:
                             try:
@@ -205,7 +206,16 @@ class RunInspection:
                     data = b""
                 if self._probe is not None:
                     try:
-                        probe = self._probe.probe_file(str(path))
+                        probe_init_path = None
+                        if not cap.is_init and init_file and analysis.kind == "mp4":
+                            probe_init_path = str(
+                                self._workspace / inspection_id / init_file
+                            )
+                        probe = self._probe.probe_file(
+                            str(path),
+                            init_path=probe_init_path,
+                            include_frames=not cap.is_init,
+                        )
                     except Exception:
                         # A coleta derivada é opcional; não afeta a análise determinística.
                         probe = None
@@ -261,6 +271,7 @@ class RunInspection:
                 failed=failed,
                 total_bytes=sum(c.byte_size or 0 for c in captured if c.ok),
             )
+        timed_containers = apply_timing_health(tuple(containers), tuple(captured))
         snapshot = build_snapshot(
             inspection,
             url,
@@ -268,7 +279,7 @@ class RunInspection:
             capture=report,
             segments=captured,
             timeline=timelines,
-            containers=containers,
+            containers=timed_containers,
         )
         self._repository.save(inspection, snapshot)
         return inspection

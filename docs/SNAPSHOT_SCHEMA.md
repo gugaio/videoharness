@@ -1,8 +1,9 @@
 # SNAPSHOT_SCHEMA.md
 
-**Status: implementado (Fase 6 + extensão de samples) — `schema_version` 1.4,
-analyzer 0.6.0** (1.3 + bloco aditivo `analysis.samples`). Contrato validado por
-testes de round-trip, captura e parsers estruturais offline.
+**Status: implementado (Fase 6 + extensões de observabilidade) — `schema_version` 1.6,
+analyzer 0.8.0** (schema 1.5 acrescido do bloco `analysis.timing`). Contrato
+validado por testes de round-trip, captura, parsers estruturais e adapter derivado
+offline.
 
 ## Princípios
 
@@ -242,6 +243,87 @@ fragmento. MPEG-TS materializa unidades PES e usa a escala fixa de 90 kHz de PTS
   múltiplos access units. A UI preserva essa distinção e o chama de unidade PES.
 - `samples_truncated: true` indica que a lista atingiu o limite defensivo; contagens
   totais continuam disponíveis em `fmp4.sample_counts` ou `ts.pids[].pes_count`.
+
+## Bloco 1.5 (extensão — frames I/P/B e GOP derivados)
+
+Para cada segmento de vídeo legível, o adapter opcional executa
+`ffprobe -show_frames`. Em fMP4, o init capturado da mesma representação é
+concatenado ao fragmento via stdin para fornecer a configuração do codec. A lista é
+derivada e não substitui `analysis.samples`.
+
+```json
+"probe": {
+  "provenance": "derived (ffprobe)",
+  "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+  "frames": [
+    {
+      "index": 0, "stream_index": 0, "pict_type": "I",
+      "key_frame": true, "byte_size": 2991,
+      "pts": 0, "pts_time": "0.000000",
+      "dts": 0, "dts_time": "0.000000",
+      "duration": null, "duration_time": null
+    }
+  ],
+  "frames_truncated": false,
+  "gop": {
+    "starts_with_key_frame": true,
+    "first_key_frame_index": 0,
+    "key_frame_count": 1,
+    "i_frame_count": 1,
+    "p_frame_count": 4,
+    "b_frame_count": 7,
+    "unknown_frame_count": 0,
+    "intervals": [],
+    "trailing_gop": {
+      "start_frame_index": 0,
+      "observed_frame_count": 12,
+      "observed_duration_seconds": 1.0
+    },
+    "truncated": false
+  },
+  "streams": []
+}
+```
+
+- `pict_type` é `I`, `P`, `B` ou `null`, conforme reportado pelo decoder do
+  `ffprobe`; não é inferido dos sample flags.
+- `pts_time`/`dts_time` são segundos reportados pelo probe; os campos inteiros
+  preservam os timestamps originais quando disponíveis.
+- A lista é limitada a 1.000 frames e a entrada combinada a 40 MiB.
+- `gop.intervals` contém apenas intervalos completos entre dois keyframes observados,
+  com quantidade de frames e duração. `trailing_gop` é o trecho iniciado no último
+  keyframe sem o próximo ponto de fechamento; a UI usa `+` para comunicar esse
+  limite inferior.
+- O resumo é útil para observar espaçamento de pontos de acesso, mas não diagnostica
+  playback nem classifica GOP aberto/fechado.
+- Se o probe estiver ausente, falhar ou não produzir frames, a UI continua usando os
+  samples fMP4 ou unidades PES determinísticos do bloco 1.4.
+
+## Bloco 1.6 (extensão — Timeline Health)
+
+`analysis.timing` é uma medição determinística por track/PID. Ela separa ausência de
+evidência de continuidade e compara somente a fronteira DTS anterior observável da
+mesma representação.
+
+```json
+"timing": {
+  "declared_duration_seconds": 1.0,
+  "tracks": [{
+    "track_id": 1, "pid": null, "timescale": 90000,
+    "start_dts": 90000, "end_dts": 180000,
+    "start_pts": 90000, "end_pts": 180000,
+    "observed_duration_seconds": 1.0,
+    "boundary_delta_seconds": 0.005556
+  }],
+  "provenance": "deterministic (container timestamps)"
+}
+```
+
+- `boundary_delta_seconds > 0` é gap; `< 0` é overlap; `0` é fronteira contínua.
+- `null` é não comparável, por exemplo quando a última PES não fornece duração.
+- PTS fica visível para investigar reorder; a continuidade usa DTS.
+- Ainda não há comparação entre rendições, A/V ou PCR: essas são extensões futuras
+  documentadas em [OBSERVABILITY.md](OBSERVABILITY.md).
 
 ## Carregamento sob demanda
 

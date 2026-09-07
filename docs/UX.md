@@ -30,12 +30,20 @@ Presentation → Manifest → Track group → Representation → Segment → Par
 4. A seleção expande abaixo da própria representação: breadcrumb curto
    representação → segmento → container, fatos do segmento e então a estrutura do
    container.
-5. Antes da estrutura, o segmento mostra uma faixa horizontal de frames/samples
-   fMP4 ou unidades PES TS. Largura e altura comunicam o tamanho relativo; a cor
-   distingue quadro-chave (I/IDR/CRA), inter-frame (P/B) ou tipo não sinalizado.
-   Cada bloco mostra PTS/DTS na escala disponível.
+5. Antes da estrutura, o segmento mostra uma faixa horizontal. Quando `show_frames`
+   está disponível, cada bloco é um frame I, P ou B reportado pelo `ffprobe`, com
+   cor própria, largura/altura pelo tamanho do pacote e PTS/DTS. Caso contrário, a
+   faixa usa samples fMP4 ou unidades PES TS como fallback estrutural e não inventa
+   uma distinção P/B que o container não fornece.
+   Acima dos frames derivados, o resumo de GOP destaca se há ponto de acesso no
+   início, contagem I/P/B e intervalo entre keyframes em frames e segundos. Um `+`
+   marca o trecho final cujo próximo keyframe não foi observado; a UI não classifica
+   GOP aberto/fechado nem transforma a medida em diagnóstico automático.
+   O painel “Saúde temporal” mostra PTS/DTS, duração dos bytes, duração do manifesto
+   e a fronteira com o segmento anterior. Gap, overlap e “não comparável” ficam
+   explícitos, sem atribuir causa automaticamente.
    fMP4 então mostra resumo e árvore de boxes; MPEG-TS mostra resumo e tabela de PIDs.
-   `ffprobe` permanece separado e identificado como derivado.
+   Toda informação do `ffprobe` permanece identificada como derivada.
 6. Capabilities, dados específicos do protocolo e JSON bruto ficam recolhidos em
    “Dados técnicos e JSON”.
 

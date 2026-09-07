@@ -90,6 +90,6 @@ def test_snapshot_schema_e_campos_top_level(tmp_path):
     )
     assert result.status.value == "completed"
     payload = snapshot_to_dict(repo.get_snapshot(inspection.inspection_id))
-    assert payload["schema_version"] == "1.4"
+    assert payload["schema_version"] == "1.6"
     assert payload["media"]["protocol"] == "HLS"
     assert payload["media"]["capabilities"]["segment_download"]["status"] == "not_collected"

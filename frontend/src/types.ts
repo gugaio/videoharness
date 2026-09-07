@@ -211,6 +211,24 @@ export interface ContainerSampleDTO {
   is_sync: boolean | null
 }
 
+export interface TimingTrackDTO {
+  track_id: number | null
+  pid: number | null
+  timescale: number | null
+  start_dts: number | null
+  end_dts: number | null
+  start_pts: number | null
+  end_pts: number | null
+  observed_duration_seconds: number | null
+  boundary_delta_seconds: number | null
+}
+
+export interface ContainerTimingDTO {
+  declared_duration_seconds: number | null
+  tracks: TimingTrackDTO[]
+  provenance: string
+}
+
 export interface ProbeStreamDTO {
   codec_name: string | null
   codec_type: string | null
@@ -227,6 +245,46 @@ export interface ProbeStreamDTO {
   hdr_side_data?: string[]
 }
 
+export interface ProbeFrameDTO {
+  index: number
+  stream_index: number | null
+  pict_type: 'I' | 'P' | 'B' | null
+  key_frame: boolean | null
+  byte_size: number | null
+  pts: number | null
+  pts_time: string | null
+  dts: number | null
+  dts_time: string | null
+  duration: number | null
+  duration_time: string | null
+}
+
+export interface ProbeGopIntervalDTO {
+  start_frame_index: number
+  next_key_frame_index: number
+  frame_count: number
+  duration_seconds: number | null
+}
+
+export interface ProbeTrailingGopDTO {
+  start_frame_index: number
+  observed_frame_count: number
+  observed_duration_seconds: number | null
+}
+
+export interface ProbeGopDTO {
+  starts_with_key_frame: boolean | null
+  first_key_frame_index: number | null
+  key_frame_count: number
+  i_frame_count: number
+  p_frame_count: number
+  b_frame_count: number
+  unknown_frame_count: number
+  intervals: ProbeGopIntervalDTO[]
+  trailing_gop: ProbeTrailingGopDTO | null
+  truncated: boolean
+}
+
 export interface ProbeDTO {
   provenance: string
   format_name: string | null
@@ -234,6 +292,9 @@ export interface ProbeDTO {
   size: string | null
   bit_rate: string | null
   streams: ProbeStreamDTO[]
+  frames: ProbeFrameDTO[]
+  frames_truncated: boolean
+  gop: ProbeGopDTO | null
 }
 
 export interface ContainerDTO {
@@ -249,6 +310,7 @@ export interface ContainerDTO {
     ts: TsInfoDTO | null
     samples: ContainerSampleDTO[]
     samples_truncated: boolean
+    timing?: ContainerTimingDTO | null
     error: string | null
   }
   probe: ProbeDTO | null

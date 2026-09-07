@@ -1052,6 +1052,84 @@ code {
   margin-top: 0;
 }
 
+.gop-summary {
+  margin-top: 0.85rem;
+  padding: 0.8rem;
+  border: 1px solid rgba(89, 224, 189, 0.2);
+  border-radius: 0.45rem;
+  background: rgba(89, 224, 189, 0.035);
+}
+
+.gop-summary-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.gop-summary-heading h6 {
+  margin: 0.1rem 0 0;
+  font-size: 0.82rem;
+}
+
+.gop-summary-heading > span {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.62rem;
+}
+
+.gop-facts {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(7rem, 1fr));
+  margin: 0.7rem 0 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.gop-facts > div {
+  min-width: 0;
+  padding: 0.55rem 0.65rem;
+  border-left: 1px solid var(--line);
+}
+
+.gop-facts > div:first-child {
+  border-left: 0;
+}
+
+.gop-facts dt {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.56rem;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.gop-facts dd {
+  margin: 0.22rem 0 0;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.gop-note {
+  margin: 0.65rem 0 0;
+  color: var(--text-soft);
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
+.timing-health {
+  margin-top: 1.25rem;
+}
+
+.timing-health-note {
+  max-width: 76ch;
+  margin: 0.5rem 0 0.75rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
 .sample-legend {
   display: flex;
   align-items: center;
@@ -1094,6 +1172,11 @@ code {
 .sample-type-key.type-interframe {
   border-color: hsl(200 78% 52%);
   background: hsl(200 70% 35%);
+}
+
+.sample-type-key.type-bframe {
+  border-color: hsl(274 67% 63%);
+  background: hsl(274 48% 38%);
 }
 
 .sample-type-key.type-unknown {
@@ -1507,6 +1590,18 @@ code {
     border-top: 1px solid var(--line);
     border-left: 0;
   }
+
+  .gop-facts {
+    grid-template-columns: repeat(3, minmax(7rem, 1fr));
+  }
+
+  .gop-facts > div:nth-child(4) {
+    border-left: 0;
+  }
+
+  .gop-facts > div:nth-child(n + 4) {
+    border-top: 1px solid var(--line);
+  }
 }
 
 @media (max-width: 680px) {
@@ -1589,6 +1684,28 @@ code {
   .container-facts > div:nth-child(n + 3),
   .segment-facts > div:nth-child(n + 3),
   .technical-meta > div:nth-child(n + 3) {
+    border-top: 1px solid var(--line);
+  }
+
+  .gop-summary-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .gop-facts {
+    grid-template-columns: repeat(2, minmax(7rem, 1fr));
+  }
+
+  .gop-facts > div {
+    border-left: 1px solid var(--line);
+  }
+
+  .gop-facts > div:nth-child(odd) {
+    border-left: 0;
+  }
+
+  .gop-facts > div:nth-child(n + 3) {
     border-top: 1px solid var(--line);
   }
 

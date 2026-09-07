@@ -58,6 +58,16 @@ e unidades PES MPEG-TS no schema 1.4; a UI os mostra horizontalmente com tamanho
 relativo, PTS/DTS e cor por classificação sync quando o container a declara. PES permanece
 identificado como unidade, sem ser apresentado indevidamente como frame.
 
+**Extensão aprovada**: ✅ no schema 1.5, o adapter opcional usa `show_frames` e o
+init correspondente para expor frames I/P/B derivados com tamanho, PTS e DTS. A UI
+prefere essa classificação quando presente, resume GOPs/keyframes observados e
+mantém samples/PES como fallback. Intervalos incompletos e open/closed GOP não são
+apresentados como conclusões.
+
+**Extensão aprovada**: ✅ no schema 1.6, Timeline Health expõe continuidade de DTS,
+duração observada e duração declarada por track/PID. A documentação de observabilidade
+define a sequência de métricas futuras e os limites verificáveis por QA.
+
 ## Fase 7 — Skills e API para agentes
 
 Skill principal revisada para endpoints/schemas reais; referências HLS/DASH/TS/ISOBMFF coerentes com o suporte atual; catálogo versionado; endpoints de skills; compatibilidade com `schema_version`; exemplos com fixtures; evals; testes de referências/paths/versões; ação "Use with an agent" na UI; `capabilities` e `recommended_skills` no snapshot. Agente carrega só módulos relevantes.

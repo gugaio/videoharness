@@ -1,10 +1,10 @@
 # API.md
 
-Contrato atual do backend. **Fase 6 concluída + extensão de samples (v0.6)**: captura limitada de
+Contrato atual do backend. **Fase 6 concluída + extensões de observabilidade (v0.8)**: captura limitada de
 segmentos, timeline normalizada e inspeção estrutural de containers no snapshot
-**schema 1.4**. O estágio `inspecting_containers` ocorre depois da captura; o
+**schema 1.6**. O estágio `inspecting_containers` ocorre depois da captura; o
 resultado inclui análise determinística fMP4/MPEG-TS, samples/PES temporizados e
-`ffprobe` opcional derivado.
+frames I/P/B, resumo de GOP derivado e Timeline Health determinístico.
 Inspeções assíncronas com polling, manifestos remotos `http(s)` via safe fetcher
 (SSRF, redirects, limites, redaction) e fixtures locais `fixture://`. O contrato
 completo do snapshot está em [SNAPSHOT_SCHEMA.md](SNAPSHOT_SCHEMA.md).
@@ -73,8 +73,8 @@ fragmento; mensagem com estágio, sem segredos), `404`, `410`.
 
 ```json
 {
-  "schema_version": "1.4",
-  "analyzer_version": "0.6.0",
+  "schema_version": "1.6",
+  "analyzer_version": "0.8.0",
   "inspection_id": "…",
   "created_at": "ISO-8601",
   "expires_at": "ISO-8601",

@@ -114,6 +114,40 @@ class Fmp4Info:
 
 
 @dataclass(frozen=True, slots=True)
+class TimingTrack:
+    """Janela temporal observada de um track/PID no segmento.
+
+    `boundary_delta_seconds` compara o início de DTS deste segmento ao fim
+    observável do anterior, na mesma representação. Positivo significa gap;
+    negativo, sobreposição. `None` significa que os bytes não permitiram uma
+    comparação — nunca equivale a continuidade.
+    """
+
+    track_id: int | None = None
+    pid: int | None = None
+    timescale: int | None = None
+    start_dts: int | None = None
+    end_dts: int | None = None
+    start_pts: int | None = None
+    end_pts: int | None = None
+    observed_duration_seconds: float | None = None
+    boundary_delta_seconds: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ContainerTiming:
+    """Evidências temporais determinísticas de um container capturado.
+
+    Não é um diagnóstico: valores ausentes preservam o limite dos bytes e das
+    amostras observadas. A comparação entre rendições entra em fase posterior.
+    """
+
+    declared_duration_seconds: float | None = None
+    tracks: tuple[TimingTrack, ...] = ()
+    provenance: str = "deterministic (container timestamps)"
+
+
+@dataclass(frozen=True, slots=True)
 class ContainerAnalysis:
     """Resultado da inspeção de um container capturado."""
 
@@ -122,6 +156,7 @@ class ContainerAnalysis:
     ts: TsInfo | None = None
     samples: tuple[ContainerSample, ...] = ()
     samples_truncated: bool = False
+    timing: ContainerTiming | None = None
     error: str | None = None
 
 

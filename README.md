@@ -9,10 +9,12 @@ compartilhável dentro de um TTL.
 
 **Fase 6 concluída + visualização de frames/samples.** Backend
 FastAPI + CLI + frontend React; uma inspeção percorre manifesto, captura uma janela e
-analisa cada segmento fMP4/CMAF ou MPEG-TS. O snapshot 1.4 inclui árvore de boxes ou
-estatísticas TS, samples fMP4 e unidades PES com tamanho/PTS/DTS e, quando declarado
-nos bytes, sinal HDR, HDR estático e presença de HDR10+; `ffprobe` continua opcional
-e derivado. A captura tem
+analisa cada segmento fMP4/CMAF ou MPEG-TS. O snapshot 1.6 inclui árvore de boxes ou
+estatísticas TS, samples fMP4 e unidades PES com tamanho/PTS/DTS. Quando o `ffprobe`
+consegue ler o vídeo, inclui também frames I/P/B exatos e seus tempos; essa leitura
+permanece opcional e derivada e alimenta um resumo de GOP/keyframes observado. O
+snapshot ainda preserva sinal HDR, HDR estático e presença de HDR10+ observados nos
+bytes. A captura tem
 orçamento padrão de **500 MB** por inspeção e **20 MB** por segmento. URLs `http(s)`
 passam pelo safe fetcher (SSRF, redirects revalidados, limites, redaction). Também há
 Docker Compose (UI `:8080`, API `:8000`). DASH aceita `SegmentTemplate` com
@@ -48,6 +50,8 @@ make cli inspect url=https://exemplo.com/master.m3u8
 - `docs/SNAPSHOT_SCHEMA.md` — contrato canônico do snapshot
 - `docs/ROADMAP.md` — fases, gates e progresso
 - `docs/PROJECT_STATE.md` — estado atual e próximo passo
+- `docs/OBSERVABILITY.md` — trilha de medições para investigação e otimização
+- `docs/TIMELINE_HEALTH.md` — métricas temporais, limites e roteiro de QA
 - `docs/adr/` — decisões arquiteturais
 
 ## Layout

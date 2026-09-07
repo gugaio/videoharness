@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import struct
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -302,6 +303,18 @@ class TestIntegracaoSnapshot:
             ),
             clock=clock,
         )
+        probe_calls: list[tuple[str, str | None, bool]] = []
+
+        class RecordingProbe:
+            def probe_file(
+                self,
+                path: str,
+                init_path: str | None = None,
+                include_frames: bool = False,
+            ):
+                probe_calls.append((path, init_path, include_frames))
+                return None
+
         runner = RunInspection(
             fetcher=DispatchingManifestFetcher(LocalFixtureFetcher(FIXTURES), _NullHttp()),
             inspector=_InspectorStub(),
@@ -309,6 +322,7 @@ class TestIntegracaoSnapshot:
             capture_service=service,
             workspace=tmp_path,
             container_analyzer=analyzer,
+            media_probe=RecordingProbe(),
         )
 
         for url in (
@@ -316,6 +330,7 @@ class TestIntegracaoSnapshot:
             "fixture://hls-fmp4/master.m3u8",
             "fixture://dash-mpd/stream.mpd",
         ):
+            first_call = len(probe_calls)
             insp0 = create.execute(url)
             result = asyncio.run(runner.execute(insp0.inspection_id, url))
             assert result.status.value == "completed", url
@@ -331,6 +346,17 @@ class TestIntegracaoSnapshot:
             ]
             assert timed_units, url
             assert all(sample.timescale for sample in timed_units), url
+            media_containers = [container for container in snap.containers if not container.is_init]
+            assert all(container.analysis.timing is not None for container in media_containers)
+            current_calls = probe_calls[first_call:]
+            assert any(include_frames for _, _, include_frames in current_calls)
+            if "hls-ts" in url:
+                assert all(init_path is None for _, init_path, _ in current_calls)
+            else:
+                assert any(
+                    include_frames and init_path is not None
+                    for _, init_path, include_frames in current_calls
+                )
             # round-trip
             payload = snapshot_to_dict(snap)
             for c in payload["containers"]:
@@ -372,6 +398,172 @@ class _InspectorStub:
 
 
 class TestFfprobe:
+    def test_gop_parcial_nao_inventa_intervalo(self):
+        from stream_lens.adapters.outbound.containers.ffprobe_probe import _summarize_gop
+
+        gop = _summarize_gop(
+            [
+                {"index": 0, "pict_type": "B", "key_frame": False, "pts_time": "0"},
+                {"index": 1, "pict_type": "P", "key_frame": False, "pts_time": "0.04"},
+                {"index": 2, "pict_type": "I", "key_frame": True, "pts_time": "0.08"},
+            ],
+            truncated=False,
+        )
+
+        assert gop["starts_with_key_frame"] is False
+        assert gop["first_key_frame_index"] == 2
+        assert gop["key_frame_count"] == 1
+        assert gop["intervals"] == []
+        assert gop["trailing_gop"] == {
+            "start_frame_index": 2,
+            "observed_frame_count": 1,
+            "observed_duration_seconds": None,
+        }
+
+    def test_limita_lista_de_frames(self):
+        from stream_lens.adapters.outbound.containers.ffprobe_probe import (
+            _MAX_FRAMES,
+            _summarize_frames,
+        )
+
+        frames, truncated = _summarize_frames(
+            {"frames": [{"pict_type": "P"}] * (_MAX_FRAMES + 1)}
+        )
+
+        assert len(frames) == _MAX_FRAMES
+        assert truncated is True
+
+    def test_recusa_entrada_combinada_acima_do_limite(self, monkeypatch, tmp_path):
+        import stream_lens.adapters.outbound.containers.ffprobe_probe as mod
+
+        init = tmp_path / "init.mp4"
+        fragment = tmp_path / "segment.m4s"
+        init.write_bytes(b"init")
+        fragment.write_bytes(b"fragment")
+        monkeypatch.setattr(mod.shutil, "which", lambda _binary: "/fake/ffprobe")
+        monkeypatch.setattr(mod, "_MAX_COMBINED_BYTES", 5)
+
+        probe = mod.FFprobeMediaProbe()
+
+        assert probe.probe_file(str(fragment), init_path=str(init)) is None
+
+    def test_probe_frames_combina_init_e_fragmento(self, monkeypatch, tmp_path):
+        import json
+
+        import stream_lens.adapters.outbound.containers.ffprobe_probe as mod
+
+        init = tmp_path / "init.mp4"
+        fragment = tmp_path / "segment.m4s"
+        init.write_bytes(b"init")
+        fragment.write_bytes(b"fragment")
+        calls = []
+        responses = [
+            {
+                "format": {"format_name": "mov,mp4"},
+                "streams": [{"index": 0, "codec_type": "video"}],
+            },
+            {
+                "frames": [
+                    {
+                        "stream_index": 0,
+                        "pict_type": "I",
+                        "key_frame": 1,
+                        "pkt_size": "1800",
+                        "pts": 0,
+                        "pts_time": "0.000000",
+                        "pkt_dts": 0,
+                        "pkt_dts_time": "0.000000",
+                    },
+                    {
+                        "stream_index": 0,
+                        "pict_type": "B",
+                        "key_frame": "0",
+                        "pkt_size": "420",
+                        "best_effort_timestamp": 3000,
+                        "best_effort_timestamp_time": "0.033333",
+                    },
+                    {
+                        "stream_index": 0,
+                        "pict_type": "P",
+                        "key_frame": 0,
+                        "pkt_size": "700",
+                        "pts": 6000,
+                        "pts_time": "0.066667",
+                    },
+                    {
+                        "stream_index": 0,
+                        "pict_type": "I",
+                        "key_frame": 1,
+                        "pkt_size": "1700",
+                        "pts": 9000,
+                        "pts_time": "0.100000",
+                    },
+                ],
+            },
+        ]
+
+        def fake_run(args, **kwargs):
+            calls.append((args, kwargs))
+            payload = responses[len(calls) - 1]
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout=json.dumps(payload).encode(),
+                stderr=b"",
+            )
+
+        monkeypatch.setattr(mod.shutil, "which", lambda _binary: "/fake/ffprobe")
+        monkeypatch.setattr(mod.subprocess, "run", fake_run)
+
+        probe = mod.FFprobeMediaProbe()
+        result = probe.probe_file(
+            str(fragment), init_path=str(init), include_frames=True
+        )
+
+        assert result is not None
+        assert [frame["pict_type"] for frame in result["frames"]] == [
+            "I",
+            "B",
+            "P",
+            "I",
+        ]
+        assert [frame["key_frame"] for frame in result["frames"]] == [
+            True,
+            False,
+            False,
+            True,
+        ]
+        assert result["frames"][0]["pts"] == 0
+        assert result["frames"][1]["pts"] == 3000
+        assert result["frames_truncated"] is False
+        assert result["gop"] == {
+            "starts_with_key_frame": True,
+            "first_key_frame_index": 0,
+            "key_frame_count": 2,
+            "i_frame_count": 2,
+            "p_frame_count": 1,
+            "b_frame_count": 1,
+            "unknown_frame_count": 0,
+            "intervals": [
+                {
+                    "start_frame_index": 0,
+                    "next_key_frame_index": 3,
+                    "frame_count": 3,
+                    "duration_seconds": 0.1,
+                }
+            ],
+            "trailing_gop": {
+                "start_frame_index": 3,
+                "observed_frame_count": 1,
+                "observed_duration_seconds": None,
+            },
+            "truncated": False,
+        }
+        assert len(calls) == 2
+        assert all(call[0][-1] == "pipe:0" for call in calls)
+        assert all(call[1]["input"] == b"initfragment" for call in calls)
+        assert "-show_frames" in calls[1][0]
+
     def test_resumo_preserva_cor_e_side_data_hdr_reconhecido(self):
         from stream_lens.adapters.outbound.containers.ffprobe_probe import _summarize
 

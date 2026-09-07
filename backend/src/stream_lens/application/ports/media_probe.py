@@ -12,4 +12,9 @@ class MediaProbe(Protocol):
     uma ferramenta externa e pode estar ausente (capabilidade not_collected).
     """
 
-    def probe_file(self, path: str) -> dict | None: ...
+    def probe_file(
+        self,
+        path: str,
+        init_path: str | None = None,
+        include_frames: bool = False,
+    ) -> dict | None: ...

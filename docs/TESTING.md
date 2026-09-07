@@ -1,6 +1,6 @@
 # TESTING.md
 
-**Status: Fase 6 + extensão concluída — 123 testes backend (pytest) + 31 frontend (vitest),
+**Status: Fase 6 + extensões concluídas — 129 testes backend (pytest) + 33 frontend (vitest),
 todos offline; o teste opcional de ffprobe é pulado quando o binário não existe.**
 
 ## Princípios
@@ -35,6 +35,12 @@ TS (PAT/PMT/PES/PCR) e fMP4 (init e fragmentos). Sem mídia protegida por copyri
 - Metadados HDR estáticos e assinatura HDR10+ em bytes sintéticos.
 - Samples fMP4 com tamanho/duração/flags/composition offset e unidades PES TS com
   tamanho/PTS, além da escala visual e dos tempos no componente React.
+- `show_frames` com init + fragmento via stdin, classificação I/P/B, preservação de
+  timestamp zero e preferência visual pelos frames derivados com fallback estrutural.
+- Resumo de GOP com pares de keyframes, distribuição I/P/B, trecho final incompleto
+  e ausência explícita de intervalo quando só um ponto de acesso foi observado.
+- Timeline Health: duração observada, duração declarada, gap, overlap e fronteira
+  não comparável quando a mídia não fornece fim de DTS.
 
 ## Comandos (raiz do repositório)
 

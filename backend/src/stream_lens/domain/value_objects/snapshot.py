@@ -14,8 +14,8 @@ from stream_lens.domain.value_objects.segments import (
     RepresentationTimeline,
 )
 
-SCHEMA_VERSION = "1.4"
-ANALYZER_VERSION = "0.6.0"
+SCHEMA_VERSION = "1.6"
+ANALYZER_VERSION = "0.8.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,5 +45,5 @@ class Snapshot:
     capture: CaptureReport | None = None  # janela/limites aplicados (schema 1.1)
     segments: tuple[CapturedSegment, ...] = ()  # bytes capturados (schema 1.1)
     timeline: tuple[RepresentationTimeline, ...] = ()  # timeline normalizada (1.1)
-    containers: tuple[SegmentContainer, ...] = ()  # estrutura, samples/PES e HDR (1.4)
+    containers: tuple[SegmentContainer, ...] = ()  # estrutura, frames/samples, HDR e timing (1.6)
     warnings: list[str] = field(default_factory=list)
