@@ -25,7 +25,11 @@ from stream_lens.adapters.outbound.filesystem.inspection_repository import (
 from stream_lens.adapters.outbound.manifests.manifest_inspector import (
     DeclarativeManifestInspector,
 )
-from stream_lens.adapters.outbound.segments.capture_service import SegmentCaptureService
+from stream_lens.adapters.outbound.segments.capture_service import (
+    CapturePlan,
+    SegmentCaptureService,
+)
+from stream_lens.application.ports.manifest_fetcher import FetchedManifest
 from stream_lens.application.use_cases.create_inspection import CreateInspection
 from stream_lens.application.use_cases.run_inspection import RunInspection
 from stream_lens.domain.value_objects.segments import CaptureLimits
@@ -106,6 +110,26 @@ class TestCapturaDasTresCombinacoes:
         assert inits, "init segment (EXT-X-MAP) deveria ser capturado"
         assert any("init_" in (s.file or "") for s in inits)
 
+    def test_hls_preserva_media_sequence_na_janela_e_timeline(self):
+        service = _service(FIXTURES_ROOT)
+        fetched = FetchedManifest(
+            url="fixture://hls-ts/video/live.m3u8",
+            text=(
+                "#EXTM3U\n#EXT-X-TARGETDURATION:5\n"
+                "#EXT-X-MEDIA-SEQUENCE:372661281\n"
+                "#EXTINF:4.800,\na.ts\n#EXTINF:4.800,\nb.ts\n"
+            ),
+        )
+        plan = CapturePlan()
+        service._add_hls_playlist_segments(plan, "v720", "video", fetched)
+
+        assert [item.segment_sequence for item in plan.planned] == [372661281, 372661282]
+        timeline = service.timeline(plan, [])
+        assert [entry.segment_sequence for entry in timeline[0].entries] == [
+            372661281,
+            372661282,
+        ]
+
     def test_dash_template_enumerado_pela_janela(self, runner_factory):
         create, runner, repo = runner_factory()
         insp0 = create.execute("fixture://dash-mpd/stream.mpd")
@@ -116,6 +140,7 @@ class TestCapturaDasTresCombinacoes:
         assert any(s.is_init and s.uri.endswith("init_v360.mp4") for s in v360)
         media = sorted(s.index for s in v360 if not s.is_init)
         assert media == [1, 2]  # janela 10s / segs de 4s
+        assert [s.segment_sequence for s in v360 if not s.is_init] == [1, 2]
 
     def test_dash_time_e_resolvido_a_partir_do_segment_timeline(self):
         mpd = """<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static">
@@ -326,7 +351,7 @@ class TestProgressoEContrato:
         insp0 = create.execute("fixture://hls-fmp4/video/360p.m3u8")
         _run(runner, insp0.inspection_id, "fixture://hls-fmp4/video/360p.m3u8")
         payload = snapshot_to_dict(repo.get_snapshot(insp0.inspection_id))
-        assert payload["schema_version"] == "1.8"
+        assert payload["schema_version"] == "1.12"
         assert payload["capture"]["planned"] == 3
         assert payload["capture"]["captured"] == 3
         assert payload["capture"]["window_seconds"] == 10.0

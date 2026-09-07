@@ -34,9 +34,60 @@ class PlannedSegment:
     uri: str  # absoluta (resolvida contra a base do manifesto)
     index: int  # ordem declarada na representação
     start_number: int | None = None  # DASH $Number$
+    # Identidade canônica para parear rendições: EXT-X-MEDIA-SEQUENCE no HLS
+    # ou $Number$ (quando disponível) no DASH. Não é o índice local da janela.
+    segment_sequence: int | None = None
     declared_duration_seconds: float | None = None
     byte_range: tuple[int, int] | None = None  # (offset, length)
     is_init: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryObservation:
+    """Medição observada de uma única requisição HTTP.
+
+    Não guarda headers arbitrários nem URLs de redirect: apenas sinais de
+    cache seguros e valores de tempo medidos pelo cliente. ``None`` significa
+    que a fonte (por exemplo, fixture local) não forneceu essa evidência.
+    """
+
+    http_status: int | None = None
+    ttfb_ms: int | None = None
+    download_duration_ms: int | None = None
+    effective_throughput_bps: int | None = None
+    redirect_count: int | None = None
+    cache_control: tuple[str, ...] = ()
+    cache_max_age_seconds: int | None = None
+    cache_age_seconds: int | None = None
+    cache_etag_present: bool | None = None
+    provenance: str = "observed (HTTP client)"
+
+
+@dataclass(frozen=True, slots=True)
+class LivePlaylistObservation:
+    """Uma leitura de playlist live, sem inferir saúde ou latência de player."""
+
+    rep_id: str | None
+    playlist_url: str
+    observed_at: datetime
+    media_sequence: int | None = None
+    last_segment_sequence: int | None = None
+    target_duration_seconds: float | None = None
+    playlist_window_duration_seconds: float | None = None
+    live_edge_program_date_time: datetime | None = None
+    live_edge_distance_seconds: float | None = None
+    delivery: DeliveryObservation | None = None
+    advancement: str = "not measured (single playlist observation)"
+    provenance: str = "declared (HLS playlist)"
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryReport:
+    """Evidência HTTP dos manifestos e, quando aplicável, das playlists live."""
+
+    manifest_requests: tuple[tuple[str, DeliveryObservation | None], ...] = ()
+    live_playlists: tuple[LivePlaylistObservation, ...] = ()
+    live_note: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +99,7 @@ class CapturedSegment:
     uri: str  # serializada redacted
     index: int
     is_init: bool
+    segment_sequence: int | None = None
     declared_duration_seconds: float | None = None
     byte_range: tuple[int, int] | None = None
     byte_size: int | None = None
@@ -56,6 +108,7 @@ class CapturedSegment:
     fetched_at: datetime | None = None
     file: str | None = None  # nome relativo dentro de segments/ da inspeção
     error: str | None = None  # sem segredos; falha de segmento ≠ inspeção falha
+    delivery: DeliveryObservation | None = None
 
     @property
     def ok(self) -> bool:
@@ -70,6 +123,9 @@ class TimelineEntry:
     start_seconds: float | None  # None = duração declarada desconhecida
     duration_seconds: float | None
     status: str  # captured | failed | planned | init
+    # HLS: EXT-X-MEDIA-SEQUENCE; DASH: $Number$ quando conhecido.
+    # Permite distinguir a mesma posição local de segmentos de instantes distintos.
+    segment_sequence: int | None = None
     discontinuity: bool = False  # EXT-X-DISCONTINUITY / quebra declarada
 
 
@@ -88,7 +144,11 @@ class RepresentationTimeline:
 
 @dataclass(frozen=True, slots=True)
 class AbrSegmentAlignment:
-    """Comparação de um segmento de rendição com o mesmo índice de referência.
+    """Comparação de um par de segmentos entre referência e rendição.
+
+    ``index`` identifica o segmento da referência; ``candidate_index`` identifica
+    o da outra rendição. Quando ``segment_sequence`` existe, o par foi formado
+    por essa identidade canônica, não pela posição local da janela.
 
     Os deltas declarados vêm do manifesto normalizado. O delta de keyframe só
     existe quando ambos os fragments fornecem um keyframe com PTS via ffprobe.
@@ -96,6 +156,8 @@ class AbrSegmentAlignment:
     """
 
     index: int
+    candidate_index: int | None = None
+    segment_sequence: int | None = None
     declared_start_delta_seconds: float | None = None
     declared_duration_delta_seconds: float | None = None
     keyframe_pts_delta_seconds: float | None = None
@@ -109,6 +171,9 @@ class AbrAlignment:
     reference_rep_id: str
     rep_id: str
     segments: tuple[AbrSegmentAlignment, ...] = ()
+    comparison_basis: str = "capture-window index (sequence unavailable)"
+    unmatched_reference_segments: int = 0
+    unmatched_candidate_segments: int = 0
     comparable_declared_segments: int = 0
     comparable_keyframes: int = 0
     max_abs_declared_start_delta_seconds: float | None = None
@@ -152,6 +217,77 @@ class RepresentationBitrate:
     peak_bitrate_bps: int | None = None
     lowest_bitrate_bps: int | None = None
     bitrate_provenance: str = "calculated (captured segment bytes / duration)"
+
+
+@dataclass(frozen=True, slots=True)
+class EffectiveStreamConfiguration:
+    """Configuração que o ffprobe observou em uma stream de um segmento.
+
+    É uma leitura derivada do decoder, não uma promessa de compatibilidade com
+    dispositivos. ``start_time_seconds`` pertence apenas ao arquivo combinado
+    observado (init + fragmento quando fMP4), e só pode ser comparado com outra
+    stream do mesmo segmento.
+    """
+
+    stream_index: int | None
+    kind: str
+    codec_name: str | None = None
+    profile: str | None = None
+    level: int | None = None
+    pixel_format: str | None = None
+    width: int | None = None
+    height: int | None = None
+    frame_rate: str | None = None
+    sample_rate: int | None = None
+    channels: int | None = None
+    channel_layout: str | None = None
+    start_time_seconds: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BitstreamSegmentObservation:
+    """Configuração efetiva e relação temporal A/V de um segmento observado.
+
+    PTS bruto e segundos normalizados tornam o cálculo do delta auditável.
+    ``av_start_provenance`` distingue timestamp de apresentação do fallback de
+    ``ffprobe.start_time``; estes dois nunca são misturados no mesmo cálculo.
+    """
+
+    index: int
+    segment_sequence: int | None = None
+    streams: tuple[EffectiveStreamConfiguration, ...] = ()
+    video_start_pts: int | None = None
+    video_start_seconds: float | None = None
+    audio_start_pts: int | None = None
+    audio_start_seconds: float | None = None
+    # áudio - vídeo; positivo = o áudio começa depois do vídeo neste container.
+    av_start_delta_seconds: float | None = None
+    av_start_provenance: str = "not available"
+
+
+@dataclass(frozen=True, slots=True)
+class BitstreamConfigurationChange:
+    """Campos de configuração diferentes entre dois segmentos observados."""
+
+    from_index: int
+    to_index: int
+    changed_fields: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RepresentationBitstream:
+    """Evidência derivada de codec/áudio para uma representação capturada.
+
+    Mudanças só comparam segmentos onde o ffprobe produziu configuração. A
+    ausência de uma observação é preservada por ``observed_segments`` e não é
+    tratada como estabilidade ou incompatibilidade.
+    """
+
+    group_kind: str
+    rep_id: str
+    observed_segments: tuple[BitstreamSegmentObservation, ...] = ()
+    configuration_changes: tuple[BitstreamConfigurationChange, ...] = ()
+    provenance: str = "derived (ffprobe stream configuration)"
 
 
 @dataclass(frozen=True, slots=True)

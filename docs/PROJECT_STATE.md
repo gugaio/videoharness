@@ -3,10 +3,20 @@
 Fotografia concisa do estado atual. Atualizada ao final de cada fase. Histórico
 arquitetural fica nos ADRs; histórico de mudanças no Git.
 
-**Data**: 2026-09-06 · **Fase concluída**: 6 + extensões aprovadas · **Produto
+**Data**: 2026-09-07 · **Fase concluída**: 6 + extensões aprovadas · **Produto
 funcional**: ✅ v1.0 — captura limitada + inspeção estrutural fMP4/MPEG-TS,
 Timeline Health, matriz ABR, bitrate por segmento, visualização de frames/samples e HDR
-(snapshot 1.8, analyzer 1.0.0)
+(entrega HTTP/live, matriz ABR por sequência e configuração efetiva de bitstream/A/V;
+snapshot 1.12, analyzer 1.4.0)
+
+## Entrega mais recente (O5 — Bitstream e sincronismo A/V)
+
+Para cada segmento de mídia que o `ffprobe` lê, expõe a configuração efetiva de
+vídeo e áudio (codec, profile, level, pixel format, geometria, frame rate, sample
+rate e canais), as mudanças entre segmentos observados e o delta A/V por PTS de
+apresentação dentro do mesmo container, com os PTS bruto/normalizado usados no
+cálculo. Tudo é evidência derivada: não há conclusão sobre
+compatibilidade de device, drift ou lipsync percebido pelo player.
 
 ## Entrega mais recente (extensão da Fase 6)
 
@@ -23,9 +33,11 @@ evidência são distintos na UI; não há diagnóstico automático.
 
 ## Entrega mais recente (O2 — Matriz ABR)
 
-Compara rendições do mesmo grupo por índice de segmento. Deltas de início e duração
-vêm da timeline declarada; PTS de keyframe só entra quando ambos os fragments foram
-observados pelo `ffprobe`. A matriz não declara compatibilidade de switching.
+Compara rendições do mesmo grupo pela identidade canônica de segmento: `MEDIA-SEQUENCE`
+no HLS e número disponível no DASH. A posição local da janela é fallback apenas
+quando a sequência não existe. Janelas live diferentes ficam explícitas por contagem
+de segmentos sem par; só a interseção alimenta duração e PTS de keyframe. A matriz
+não declara compatibilidade de switching.
 
 ## Entrega mais recente (O3 — Bitrate por segmento)
 
@@ -35,7 +47,16 @@ duração declarada no manifesto. A UI resume média ponderada, mínimo, pico e 
 relação com o bitrate declarado. Tamanho de frame/sample/PES fica explícito como
 indicador de distribuição de payload, não como medição de complexidade ou qualidade.
 
-**Validação atual**: 133 testes backend e 35 frontend; lint, typecheck e build de
+## Entrega mais recente (O4 — Entrega HTTP e live)
+
+Para cada resposta HTTP de segmento observada, preserva TTFB, tempo total,
+throughput efetivo, status final, redirects e sinais de cache sem armazenar valores
+sensíveis de headers. A leitura de playlist HLS live guarda sequence e janela; só
+calcula a distância da borda quando `PROGRAM-DATE-TIME` permite, e declara que o
+avanço não é mensurável com uma única leitura. Não é telemetria ou diagnóstico de
+player.
+
+**Validação atual**: 144 testes backend e 37 frontend; lint, typecheck e build de
 produção do frontend passam.
 
 ## Status atual
@@ -159,5 +180,5 @@ implícito e `S@r`, e `Representation/BaseURL` direto é capturável como segmen
 
 ## Próximo passo exato
 
-**Fase 7** (mediante aprovação): skills e API para agentes, baseadas no schema 1.8 e
+**Fase 7** (mediante aprovação): skills e API para agentes, baseadas no schema 1.12 e
 nos endpoints reais; catálogo versionado, exemplos verificáveis e evals.

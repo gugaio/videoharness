@@ -9,12 +9,20 @@ compartilhável dentro de um TTL.
 
 **Fase 6 concluída + extensões de observabilidade.** Backend
 FastAPI + CLI + frontend React; uma inspeção percorre manifesto, captura uma janela e
-analisa cada segmento fMP4/CMAF ou MPEG-TS. O snapshot 1.8 inclui árvore de boxes ou
+analisa cada segmento fMP4/CMAF ou MPEG-TS. O snapshot 1.12 inclui árvore de boxes ou
 estatísticas TS, samples fMP4 e unidades PES com tamanho/PTS/DTS. Quando o `ffprobe`
 consegue ler o vídeo, inclui também frames I/P/B exatos e seus tempos; essa leitura
 permanece opcional e derivada e alimenta um resumo de GOP/keyframes observado. A UI
-também compara o alinhamento ABR e calcula bitrate por segmento a partir de bytes e
-duração, deixando claro quando a duração vem do container ou do manifesto. O
+também compara o alinhamento ABR, calcula bitrate por segmento a partir de bytes e
+duração, pareia ABR por sequência de segmento (sem confundir janelas live deslocadas),
+e expõe TTFB, download, throughput, redirects e sinais seguros de cache
+quando a captura HTTP os observa. Para HLS live, preserva janela/sequence da
+playlist e só calcula distância da borda com `PROGRAM-DATE-TIME`; não confunde essa
+amostra com telemetria do player. Também expõe a configuração efetiva que o
+`ffprobe` observou por segmento (codec/profile/level, pixel format, vídeo e áudio),
+mudanças entre segmentos e o delta A/V calculado por PTS de apresentação dentro
+do mesmo container, sem prometer
+compatibilidade de device ou sincronismo percebido. O
 snapshot ainda preserva sinal HDR, HDR estático e presença de HDR10+ observados nos
 bytes. A captura tem
 orçamento padrão de **500 MB** por inspeção e **20 MB** por segmento. URLs `http(s)`
@@ -56,6 +64,8 @@ make cli inspect url=https://exemplo.com/master.m3u8
 - `docs/TIMELINE_HEALTH.md` — métricas temporais, limites e roteiro de QA
 - `docs/ABR_ALIGNMENT.md` — evidências de alinhamento para troca adaptativa
 - `docs/BITRATE_PER_SEGMENT.md` — taxa calculada, distribuição de payload e roteiro de QA
+- `docs/HTTP_LIVE_DELIVERY.md` — entrega HTTP, live edge, limites e roteiro de QA
+- `docs/BITSTREAM_OBSERVABILITY.md` — configuração efetiva, delta A/V, limites e roteiro de QA
 - `docs/adr/` — decisões arquiteturais
 
 ## Layout

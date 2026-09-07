@@ -9,6 +9,8 @@ import type {
   UnifiedMedia,
   AbrAlignment,
   RepresentationBitrate,
+  DeliveryReport,
+  RepresentationBitstream,
 } from '../types'
 
 const timeline: RepresentationTimeline[] = [
@@ -55,6 +57,8 @@ const capture: CaptureReport = {
 
 const abrAlignment: AbrAlignment[] = [{
   group_kind: 'video', reference_rep_id: 'v360', rep_id: 'v720', segments: [],
+  comparison_basis: 'canonical segment sequence',
+  unmatched_reference_segments: 1, unmatched_candidate_segments: 1,
   comparable_declared_segments: 2, comparable_keyframes: 1,
   max_abs_declared_start_delta_seconds: 0,
   max_abs_declared_duration_delta_seconds: 0,
@@ -72,6 +76,35 @@ const bitrateObservations: RepresentationBitrate[] = [{
     bitrate_ratio_to_declared: 0.0051, unit_count: 0, average_unit_bytes: null,
     largest_unit_bytes: null, unit_provenance: null,
   }],
+}]
+
+const delivery: DeliveryReport = {
+  manifest_requests: [{ url: 'https://cdn.example/live.m3u8', delivery: { http_status: 200, ttfb_ms: 18, download_duration_ms: 24, effective_throughput_bps: 80_000, redirect_count: 0, cache_control: ['public'], cache_max_age_seconds: 10, cache_age_seconds: 2, cache_etag_present: true, provenance: 'observed (HTTP client)' } }],
+  live_note: null,
+  live_playlists: [{ rep_id: 'v360', playlist_url: 'https://cdn.example/live.m3u8', observed_at: '2026-01-01T00:00:20Z', media_sequence: 12, last_segment_sequence: 13, target_duration_seconds: 4, playlist_window_duration_seconds: 8, live_edge_program_date_time: '2026-01-01T00:00:16Z', live_edge_distance_seconds: 4, delivery: null, advancement: 'not measured (single playlist observation)', provenance: 'declared (HLS playlist)' }],
+}
+
+const bitstreamObservations: RepresentationBitstream[] = [{
+  group_kind: 'video', rep_id: 'v360', provenance: 'derived (ffprobe stream configuration)',
+  observed_segments: [{
+    index: 1, segment_sequence: 101,
+    video_start_pts: 90_000, video_start_seconds: 0,
+    audio_start_pts: 2_304, audio_start_seconds: 0.048,
+    av_start_delta_seconds: 0.048, av_start_provenance: 'derived (ffprobe presentation timestamps)',
+    streams: [
+      { stream_index: 0, kind: 'video', codec_name: 'h264', profile: 'High', level: 41, pixel_format: 'yuv420p', width: 1280, height: 720, frame_rate: '30000/1001', sample_rate: null, channels: null, channel_layout: null, start_time_seconds: 0 },
+      { stream_index: 1, kind: 'audio', codec_name: 'aac', profile: 'LC', level: null, pixel_format: null, width: null, height: null, frame_rate: null, sample_rate: 48000, channels: 2, channel_layout: 'stereo', start_time_seconds: 0.048 },
+    ],
+  }, {
+    index: 2, segment_sequence: 102,
+    video_start_pts: 93_000, video_start_seconds: 0.033333,
+    audio_start_pts: null, audio_start_seconds: null,
+    av_start_delta_seconds: null, av_start_provenance: 'not available',
+    streams: [
+      { stream_index: 0, kind: 'video', codec_name: 'h264', profile: 'Main', level: 41, pixel_format: 'yuv420p', width: 1280, height: 720, frame_rate: '30000/1001', sample_rate: null, channels: null, channel_layout: null, start_time_seconds: 0 },
+    ],
+  }],
+  configuration_changes: [{ from_index: 1, to_index: 2, changed_fields: ['profile', 'streams'] }],
 }]
 
 const media: UnifiedMedia = {
@@ -118,11 +151,13 @@ describe('TimelineView', () => {
   it('separa alinhamento declarado de evidência derivada de keyframe', () => {
     render(<TimelineView media={media} timeline={timeline} segments={segments} capture={capture} abrAlignment={abrAlignment} />)
     const matrix = screen.getByRole('heading', { name: 'Matriz de alinhamento ABR' }).closest('section')!
-    expect(within(matrix).getByText('2 segmentos')).toBeInTheDocument()
+    expect(within(matrix).getByText('2 pares')).toBeInTheDocument()
+    expect(within(matrix).getByText('pareado por sequência do segmento')).toBeInTheDocument()
+    expect(within(matrix).getByText(/janela diferente: 1 sem par na referência; 1 na rendição/)).toBeInTheDocument()
     expect(within(matrix).getByText('0.033s')).toBeInTheDocument()
     expect(within(matrix).getByText(/ausência de keyframe não confirma/)).toBeInTheDocument()
     expect(within(matrix).getByText('Maior desvio no início')).toBeInTheDocument()
-    expect(within(matrix).getByRole('tooltip', { name: /início declarados no manifesto/ })).toBeInTheDocument()
+    expect(within(matrix).getByRole('tooltip', { name: /inícios declarados.*MEDIA-SEQUENCE/ })).toBeInTheDocument()
   })
 
   it('explica bitrate calculado sem chamar tamanho de payload de complexidade', () => {
@@ -131,6 +166,26 @@ describe('TimelineView', () => {
     expect(within(panel).getAllByText('4 kbps')).toHaveLength(3)
     expect(within(panel).getByText(/não mede a complexidade nem a qualidade/)).toBeInTheDocument()
     expect(within(panel).getByRole('tooltip', { name: /bytes dos segmentos capturados dividido/ })).toBeInTheDocument()
+  })
+
+  it('separa medição HTTP da evidência live e explica a ausência de avanço', () => {
+    render(<TimelineView media={media} timeline={timeline} segments={[{ ...segments[1], delivery: { http_status: 200, ttfb_ms: 18, download_duration_ms: 24, effective_throughput_bps: 80_000, redirect_count: 0, cache_control: ['public'], cache_max_age_seconds: 10, cache_age_seconds: 2, cache_etag_present: true, provenance: 'observed (HTTP client)' } }]} capture={capture} delivery={delivery} />)
+    const panel = screen.getByRole('heading', { name: 'Entrega HTTP e live' }).closest('section')!
+    expect(within(panel).getByText('18 ms')).toBeInTheDocument()
+    expect(within(panel).getByText('80 kbps')).toBeInTheDocument()
+    expect(within(panel).getByText('not measured (single playlist observation)')).toBeInTheDocument()
+    expect(within(panel).getByRole('tooltip', { name: /Tempo entre iniciar a requisição/ })).toBeInTheDocument()
+  })
+
+  it('expõe configuração efetiva e delta A/V sem prometer compatibilidade', () => {
+    render(<TimelineView media={media} timeline={timeline} segments={segments} capture={capture} bitstreamObservations={bitstreamObservations} />)
+    const panel = screen.getByRole('heading', { name: 'Bitstream e sincronismo A/V' }).closest('section')!
+    expect(within(panel).getByText('profile · streams presentes')).toBeInTheDocument()
+    expect(within(panel).getByText('0.048s')).toBeInTheDocument()
+    expect(within(panel).getByText('90000 (0.000000s)')).toBeInTheDocument()
+    expect(within(panel).getByText('2304 (0.048000s)')).toBeInTheDocument()
+    expect(within(panel).getByText(/não mede compatibilidade de dispositivo nem o sincronismo percebido/i)).toBeInTheDocument()
+    expect(within(panel).getByRole('tooltip', { name: /PTS de apresentação inicial do áudio/ })).toBeInTheDocument()
   })
 
   it('resume a captura sem separar a timeline da visão principal', () => {

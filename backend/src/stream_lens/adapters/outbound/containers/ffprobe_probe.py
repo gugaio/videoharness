@@ -20,6 +20,7 @@ _METADATA_ARGS = [
     "-show_streams",
 ]
 _MAX_FRAMES = 1_000
+_MAX_AV_TIMING_FRAMES = 1_000
 _MAX_COMBINED_BYTES = 40 * 1024 * 1024
 _FRAME_ARGS = [
     "-v", "error",
@@ -32,6 +33,17 @@ _FRAME_ARGS = [
         "frame=stream_index,pict_type,key_frame,pkt_size,pts,pts_time,"
         "best_effort_timestamp,best_effort_timestamp_time,pkt_dts,pkt_dts_time,"
         "pkt_duration,pkt_duration_time,duration,duration_time"
+    ),
+]
+_AV_TIMING_FRAME_ARGS = [
+    "-v", "error",
+    "-print_format", "json",
+    "-read_intervals", f"%+#{_MAX_AV_TIMING_FRAMES + 1}",
+    "-show_frames",
+    "-show_entries",
+    (
+        "frame=media_type,stream_index,pts,pts_time,"
+        "best_effort_timestamp,best_effort_timestamp_time"
     ),
 ]
 
@@ -80,9 +92,9 @@ class FFprobeMediaProbe:
         summary["frames"] = []
         summary["frames_truncated"] = False
         summary["gop"] = None
-        if include_frames and any(
-            stream.get("codec_type") == "video" for stream in summary["streams"]
-        ):
+        summary["av_timing"] = None
+        kinds = {stream.get("codec_type") for stream in summary["streams"]}
+        if include_frames and "video" in kinds:
             frame_data = self._run_json(_FRAME_ARGS, source, input_bytes)
             if frame_data is not None:
                 frames, truncated = _summarize_frames(frame_data)
@@ -90,6 +102,10 @@ class FFprobeMediaProbe:
                 summary["frames_truncated"] = truncated
                 if frames:
                     summary["gop"] = _summarize_gop(frames, truncated)
+        if include_frames and {"video", "audio"} <= kinds:
+            av_timing_data = self._run_json(_AV_TIMING_FRAME_ARGS, source, input_bytes)
+            if av_timing_data is not None:
+                summary["av_timing"] = _summarize_av_timing(av_timing_data)
         return summary
 
     def _run_json(
@@ -124,11 +140,15 @@ def _summarize(data: dict) -> dict:
                 "codec_name": s.get("codec_name"),
                 "codec_type": s.get("codec_type"),
                 "profile": s.get("profile"),
+                "level": s.get("level"),
+                "pix_fmt": s.get("pix_fmt"),
                 "width": s.get("width"),
                 "height": s.get("height"),
                 "r_frame_rate": s.get("r_frame_rate"),
                 "sample_rate": s.get("sample_rate"),
                 "channels": s.get("channels"),
+                "channel_layout": s.get("channel_layout"),
+                "start_time": s.get("start_time"),
                 "color_range": s.get("color_range"),
                 "color_space": s.get("color_space"),
                 "color_transfer": s.get("color_transfer"),
@@ -205,6 +225,40 @@ def _summarize_frames(data: dict) -> tuple[list[dict], bool]:
             }
         )
     return frames, len(raw_frames) > _MAX_FRAMES
+
+
+def _summarize_av_timing(data: dict) -> dict | None:
+    """Seleciona o menor timestamp de apresentação por tipo de mídia.
+
+    ``best_effort_timestamp`` tem preferência porque o decoder já resolveu a
+    ordem de apresentação de vídeo com B-frames. O PTS bruto correspondente é
+    preservado junto de segundos normalizados para deixar o cálculo auditável.
+    """
+
+    earliest: dict[str, tuple[int | None, float, str]] = {}
+    for frame in data.get("frames", [])[:_MAX_AV_TIMING_FRAMES]:
+        kind = frame.get("media_type")
+        if kind not in {"video", "audio"}:
+            continue
+        pts = frame.get("best_effort_timestamp")
+        if pts is None:
+            pts = frame.get("pts")
+        seconds = frame.get("best_effort_timestamp_time")
+        if seconds is None:
+            seconds = frame.get("pts_time")
+        seconds_value = _as_float(seconds)
+        if seconds_value is None:
+            continue
+        candidate = (_as_int(pts), seconds_value, str(seconds))
+        previous = earliest.get(kind)
+        if previous is None or candidate[1] < previous[1]:
+            earliest[kind] = candidate
+    if not earliest:
+        return None
+    return {
+        kind: {"pts": pts, "pts_time": seconds}
+        for kind, (pts, _seconds_value, seconds) in earliest.items()
+    } | {"provenance": "derived (ffprobe presentation timestamps)"}
 
 
 def _summarize_gop(frames: list[dict], truncated: bool) -> dict:

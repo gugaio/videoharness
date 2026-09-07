@@ -17,12 +17,15 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import re
+import time
 from urllib.parse import urljoin, urlsplit
 
 import httpx
 
 from stream_lens.application.ports.manifest_fetcher import FetchedManifest
 from stream_lens.application.use_cases.create_inspection import InspectionError
+from stream_lens.domain.value_objects.segments import DeliveryObservation
 
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 DEFAULT_MAX_BYTES = 2_000_000
@@ -96,7 +99,8 @@ class SafeHttpFetcher:
 
     async def fetch(self, url: str) -> FetchedManifest:
         current = _validate_remote_url(url)
-        for _hop in range(self._max_redirects + 1):
+        started = time.perf_counter()
+        for hop in range(self._max_redirects + 1):
             parts = urlsplit(current)
             await self._policy.check_host(parts.hostname or "")
 
@@ -115,12 +119,23 @@ class SafeHttpFetcher:
                 raise InspectionError(
                     "fetching_manifest", f"HTTP {response.status_code} ao obter manifesto"
                 )
-            body = await self._read_capped(response)
+            body, ttfb_ms = await self._read_capped(response, started)
             try:
                 text = body.decode("utf-8", errors="replace")
             except UnicodeDecodeError as exc:  # praticamente inalcançável com replace
                 raise InspectionError("fetching_manifest", "resposta não é texto") from exc
-            return FetchedManifest(url=current, text=text, content_type=content_type)
+            return FetchedManifest(
+                url=current,
+                text=text,
+                content_type=content_type,
+                delivery=_delivery_from_response(
+                    response,
+                    started=started,
+                    ttfb_ms=ttfb_ms,
+                    byte_size=len(body),
+                    redirect_count=hop,
+                ),
+            )
 
         raise InspectionError(
             "fetching_manifest", f"excedeu o limite de {self._max_redirects} redirects"
@@ -136,11 +151,16 @@ class SafeHttpFetcher:
                 "fetching_manifest", f"falha de rede: {type(exc).__name__}"
             ) from exc
 
-    async def _read_capped(self, response: httpx.Response) -> bytes:
+    async def _read_capped(
+        self, response: httpx.Response, started: float
+    ) -> tuple[bytes, int | None]:
         chunks: list[bytes] = []
         total = 0
+        ttfb_ms: int | None = None
         try:
             async for chunk in response.aiter_bytes():
+                if chunk and ttfb_ms is None:
+                    ttfb_ms = _elapsed_ms(started)
                 total += len(chunk)
                 if total > self._max_bytes:
                     raise InspectionError(
@@ -150,7 +170,52 @@ class SafeHttpFetcher:
                 chunks.append(chunk)
         finally:
             await response.aclose()
-        return b"".join(chunks)
+        return b"".join(chunks), ttfb_ms
+
+
+_SAFE_CACHE_DIRECTIVES = {
+    "public", "private", "no-cache", "no-store", "must-revalidate", "immutable"
+}
+_MAX_AGE_RE = re.compile(r"(?:^|,)\s*(?:s-)?max-age\s*=\s*(\d+)", re.IGNORECASE)
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(0, round((time.perf_counter() - started) * 1000))
+
+
+def _delivery_from_response(
+    response: httpx.Response,
+    *,
+    started: float,
+    ttfb_ms: int | None,
+    byte_size: int,
+    redirect_count: int,
+) -> DeliveryObservation:
+    """Reduz headers HTTP a sinais de cache seguros para o snapshot público."""
+    raw_cache_control = response.headers.get("cache-control", "")
+    directives = tuple(
+        token.strip().lower().split("=", 1)[0]
+        for token in raw_cache_control.split(",")
+        if token.strip().lower().split("=", 1)[0] in _SAFE_CACHE_DIRECTIVES
+    )
+    match = _MAX_AGE_RE.search(raw_cache_control)
+    age = response.headers.get("age")
+    try:
+        cache_age = max(0, int(age)) if age is not None else None
+    except ValueError:
+        cache_age = None
+    elapsed = _elapsed_ms(started)
+    return DeliveryObservation(
+        http_status=response.status_code,
+        ttfb_ms=ttfb_ms,
+        download_duration_ms=elapsed,
+        effective_throughput_bps=(round(byte_size * 8_000 / elapsed) if elapsed > 0 else None),
+        redirect_count=redirect_count,
+        cache_control=directives,
+        cache_max_age_seconds=int(match.group(1)) if match else None,
+        cache_age_seconds=cache_age,
+        cache_etag_present="etag" in response.headers,
+    )
 
 
 def _validate_remote_url(url: str) -> str:

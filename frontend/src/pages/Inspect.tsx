@@ -202,6 +202,8 @@ export function Inspect() {
           containers={containers}
           abrAlignment={snapshot.data.abr_alignment ?? []}
           bitrateObservations={snapshot.data.bitrate_observations ?? []}
+          delivery={snapshot.data.delivery ?? null}
+          bitstreamObservations={snapshot.data.bitstream_observations ?? []}
           capture={snapshot.data.capture}
         />
       ) : null}

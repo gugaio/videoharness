@@ -12,12 +12,14 @@ from stream_lens.domain.value_objects.segments import (
     AbrAlignment,
     CapturedSegment,
     CaptureReport,
+    DeliveryReport,
     RepresentationBitrate,
+    RepresentationBitstream,
     RepresentationTimeline,
 )
 
-SCHEMA_VERSION = "1.8"
-ANALYZER_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.12"
+ANALYZER_VERSION = "1.4.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +50,9 @@ class Snapshot:
     segments: tuple[CapturedSegment, ...] = ()  # bytes capturados (schema 1.1)
     timeline: tuple[RepresentationTimeline, ...] = ()  # timeline normalizada (1.1)
     containers: tuple[SegmentContainer, ...] = ()  # estrutura, frames/samples, HDR e timing (1.6)
-    abr_alignment: tuple[AbrAlignment, ...] = ()  # manifesto + keyframes observados (1.7)
+    abr_alignment: tuple[AbrAlignment, ...] = ()  # manifesto + keyframes observados (1.10)
     bitrate_observations: tuple[RepresentationBitrate, ...] = ()  # bytes/duração e payloads (1.8)
+    delivery: DeliveryReport | None = None  # HTTP e playlists live observadas (1.9)
+    # configuração efetiva/A-V (1.12)
+    bitstream_observations: tuple[RepresentationBitstream, ...] = ()
     warnings: list[str] = field(default_factory=list)

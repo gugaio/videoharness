@@ -23,6 +23,9 @@ from stream_lens.application.ports.repositories import InspectionRepository
 from stream_lens.application.use_cases.create_inspection import InspectionError
 from stream_lens.domain.entities.inspection import Inspection, InspectionStatus
 from stream_lens.domain.services.abr_alignment import measure_abr_alignment
+from stream_lens.domain.services.bitstream_observability import (
+    measure_bitstream_observability,
+)
 from stream_lens.domain.services.redaction import redact_url
 from stream_lens.domain.services.segment_bitrate import measure_segment_bitrate
 from stream_lens.domain.services.timeline_health import apply_timing_health
@@ -33,7 +36,7 @@ from stream_lens.domain.value_objects.media import (
     CapabilityStatus,
     UnifiedManifest,
 )
-from stream_lens.domain.value_objects.segments import CaptureReport
+from stream_lens.domain.value_objects.segments import CaptureReport, DeliveryReport
 from stream_lens.domain.value_objects.snapshot import (
     ANALYZER_VERSION,
     SCHEMA_VERSION,
@@ -52,6 +55,8 @@ def build_snapshot(
     containers=(),
     abr_alignment=(),
     bitrate_observations=(),
+    delivery: DeliveryReport | None = None,
+    bitstream_observations=(),
     warnings: list[str] | None = None,
 ) -> Snapshot:
     """Constrói o snapshot canônico a partir de uma inspeção concluída."""
@@ -76,6 +81,8 @@ def build_snapshot(
         containers=tuple(containers),
         abr_alignment=tuple(abr_alignment),
         bitrate_observations=tuple(bitrate_observations),
+        delivery=delivery,
+        bitstream_observations=tuple(bitstream_observations),
         warnings=warnings if warnings is not None else list(inspection.warnings),
     )
 
@@ -147,7 +154,7 @@ class RunInspection:
             inspection.start_stage(InspectionStatus.RESOLVING_SEGMENTS)
             self._repository.save(inspection)
             try:
-                plan = await self._capture.plan(media, fetched.url)
+                plan = await self._capture.plan(media, fetched.url, root_fetched=fetched)
             except Exception as exc:
                 inspection.warnings.append(
                     f"resolução de segmentos falhou: {type(exc).__name__}: {exc}"[:200]
@@ -282,6 +289,23 @@ class RunInspection:
         bitrate_observations = measure_segment_bitrate(
             media, tuple(captured), timed_containers
         )
+        segment_sequences = {
+            (item.rep_id, item.group_kind, item.index): item.segment_sequence
+            for item in captured
+            if not item.is_init
+        }
+        bitstream_observations = measure_bitstream_observability(
+            timed_containers, segment_sequences
+        )
+        delivery = DeliveryReport(
+            manifest_requests=tuple(plan.manifest_requests),
+            live_playlists=tuple(plan.live_playlists),
+            live_note=(
+                "not collected (no live HLS media playlist observed)"
+                if media.is_live and not plan.live_playlists
+                else None
+            ),
+        )
         snapshot = build_snapshot(
             inspection,
             url,
@@ -292,6 +316,8 @@ class RunInspection:
             containers=timed_containers,
             abr_alignment=abr_alignment,
             bitrate_observations=bitrate_observations,
+            delivery=delivery,
+            bitstream_observations=bitstream_observations,
         )
         self._repository.save(inspection, snapshot)
         return inspection

@@ -30,8 +30,12 @@ from stream_lens.adapters.outbound.segments.serialization import (
     capture_report_to_dict,
     captured_from_dict,
     captured_to_dict,
+    delivery_report_from_dict,
+    delivery_report_to_dict,
     representation_bitrate_from_dict,
     representation_bitrate_to_dict,
+    representation_bitstream_from_dict,
+    representation_bitstream_to_dict,
     timeline_from_dict,
     timeline_to_dict,
 )
@@ -220,6 +224,11 @@ def snapshot_to_dict(snapshot: Snapshot) -> dict:
         "bitrate_observations": [
             representation_bitrate_to_dict(item) for item in snapshot.bitrate_observations
         ],
+        "delivery": delivery_report_to_dict(snapshot.delivery) if snapshot.delivery else None,
+        "bitstream_observations": [
+            representation_bitstream_to_dict(item)
+            for item in snapshot.bitstream_observations
+        ],
         "warnings": list(snapshot.warnings),
     }
 
@@ -251,6 +260,11 @@ def _snapshot_from_dict(data: dict) -> Snapshot:
         bitrate_observations=tuple(
             representation_bitrate_from_dict(item)
             for item in data.get("bitrate_observations", [])
+        ),
+        delivery=delivery_report_from_dict(data["delivery"]) if data.get("delivery") else None,
+        bitstream_observations=tuple(
+            representation_bitstream_from_dict(item)
+            for item in data.get("bitstream_observations", [])
         ),
         warnings=list(data.get("warnings", [])),
     )

@@ -15,6 +15,10 @@ from stream_lens.adapters.outbound.fetching.safe_http_fetcher import (
     NetworkPolicy,
     SafeHttpFetcher,
 )
+from stream_lens.adapters.outbound.fetching.safe_http_segment_fetcher import (
+    SafeHttpSegmentFetcher,
+    SegmentHttpError,
+)
 from stream_lens.application.use_cases.create_inspection import InspectionError
 
 
@@ -72,6 +76,9 @@ class _ManifestHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/vnd.apple.mpegurl")
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "public, max-age=30")
+            self.send_header("Age", "4")
+            self.send_header("ETag", '"fixture-v1"')
             self.end_headers()
             self.wfile.write(body)
         elif self.path == "/redirect":
@@ -101,6 +108,13 @@ class _ManifestHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.send_header("Content-Length", "0")
             self.end_headers()
+        elif self.path == "/segment.ts":
+            body = b"x" * 188
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "public, max-age=10")
+            self.end_headers()
+            self.wfile.write(body)
         elif self.path == "/notamanifest":
             body = b"<html>nope</html>"
             self.send_response(200)
@@ -134,6 +148,12 @@ class TestSafeHttpFetcher:
         fetched = await fetcher.fetch(f"{local_server}/master.m3u8")
         assert fetched.text.startswith("#EXTM3U")
         assert fetched.content_type == "application/vnd.apple.mpegurl"
+        assert fetched.delivery is not None
+        assert fetched.delivery.http_status == 200
+        assert fetched.delivery.cache_control == ("public",)
+        assert fetched.delivery.cache_max_age_seconds == 30
+        assert fetched.delivery.cache_age_seconds == 4
+        assert fetched.delivery.cache_etag_present is True
 
     async def test_segue_redirect_com_revalidacao(self, fetcher, local_server):
         fetched = await fetcher.fetch(f"{local_server}/redirect")
@@ -166,3 +186,29 @@ class TestSafeHttpFetcher:
         strict = SafeHttpFetcher(policy=NetworkPolicy(allow_loopback=False))
         with pytest.raises(InspectionError, match="não permitido"):
             await strict.fetch("http://127.0.0.1:9/manifest.m3u8")
+
+
+class TestSafeHttpSegmentFetcher:
+    async def test_mede_entrega_e_sinais_de_cache(self, local_server):
+        fetcher = SafeHttpSegmentFetcher(policy=NetworkPolicy(allow_loopback=True))
+        try:
+            fetched = await fetcher.fetch(f"{local_server}/segment.ts")
+        finally:
+            await fetcher.aclose()
+
+        assert fetched.data == b"x" * 188
+        assert fetched.delivery is not None
+        assert fetched.delivery.http_status == 200
+        assert fetched.delivery.download_duration_ms is not None
+        assert fetched.delivery.effective_throughput_bps is not None
+        assert fetched.delivery.cache_control == ("public",)
+
+    async def test_preserva_status_http_em_falha_de_segmento(self, local_server):
+        fetcher = SafeHttpSegmentFetcher(policy=NetworkPolicy(allow_loopback=True))
+        try:
+            with pytest.raises(SegmentHttpError) as raised:
+                await fetcher.fetch(f"{local_server}/notfound")
+        finally:
+            await fetcher.aclose()
+
+        assert raised.value.delivery.http_status == 404

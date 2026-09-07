@@ -108,6 +108,7 @@ export interface CapturedSegment {
   uri: string
   index: number
   is_init: boolean
+  segment_sequence?: number | null
   declared_duration_seconds: number | null
   byte_range: ByteRange | null
   byte_size: number | null
@@ -116,6 +117,41 @@ export interface CapturedSegment {
   fetched_at: string | null
   file: string | null
   error: string | null
+  delivery?: DeliveryObservation | null
+}
+
+export interface DeliveryObservation {
+  http_status: number | null
+  ttfb_ms: number | null
+  download_duration_ms: number | null
+  effective_throughput_bps: number | null
+  redirect_count: number | null
+  cache_control: string[]
+  cache_max_age_seconds: number | null
+  cache_age_seconds: number | null
+  cache_etag_present: boolean | null
+  provenance: string
+}
+
+export interface LivePlaylistObservation {
+  rep_id: string | null
+  playlist_url: string
+  observed_at: string
+  media_sequence: number | null
+  last_segment_sequence: number | null
+  target_duration_seconds: number | null
+  playlist_window_duration_seconds: number | null
+  live_edge_program_date_time: string | null
+  live_edge_distance_seconds: number | null
+  delivery: DeliveryObservation | null
+  advancement: string
+  provenance: string
+}
+
+export interface DeliveryReport {
+  manifest_requests: { url: string; delivery: DeliveryObservation | null }[]
+  live_playlists: LivePlaylistObservation[]
+  live_note: string | null
 }
 
 export interface CaptureReport {
@@ -131,6 +167,7 @@ export interface CaptureReport {
 
 export interface TimelineEntry {
   index: number
+  segment_sequence?: number | null
   start_seconds: number | null
   duration_seconds: number | null
   status: 'captured' | 'failed' | 'planned' | 'init'
@@ -145,6 +182,8 @@ export interface RepresentationTimeline {
 
 export interface AbrSegmentAlignment {
   index: number
+  candidate_index?: number | null
+  segment_sequence?: number | null
   declared_start_delta_seconds: number | null
   declared_duration_delta_seconds: number | null
   keyframe_pts_delta_seconds: number | null
@@ -155,6 +194,9 @@ export interface AbrAlignment {
   reference_rep_id: string
   rep_id: string
   segments: AbrSegmentAlignment[]
+  comparison_basis?: string
+  unmatched_reference_segments?: number
+  unmatched_candidate_segments?: number
   comparable_declared_segments: number
   comparable_keyframes: number
   max_abs_declared_start_delta_seconds: number | null
@@ -275,13 +317,19 @@ export interface ContainerTimingDTO {
 }
 
 export interface ProbeStreamDTO {
+  index?: number | null
   codec_name: string | null
   codec_type: string | null
   profile: string | null
+  level?: number | null
+  pix_fmt?: string | null
   width: number | null
   height: number | null
+  r_frame_rate?: string | null
   sample_rate: string | null
   channels: number | null
+  channel_layout?: string | null
+  start_time?: string | null
   color_range?: string | null
   color_space?: string | null
   color_transfer?: string | null
@@ -361,6 +409,48 @@ export interface ContainerDTO {
   probe: ProbeDTO | null
 }
 
+export interface EffectiveStreamConfiguration {
+  stream_index: number | null
+  kind: 'video' | 'audio'
+  codec_name: string | null
+  profile: string | null
+  level: number | null
+  pixel_format: string | null
+  width: number | null
+  height: number | null
+  frame_rate: string | null
+  sample_rate: number | null
+  channels: number | null
+  channel_layout: string | null
+  start_time_seconds: number | null
+}
+
+export interface BitstreamSegmentObservation {
+  index: number
+  segment_sequence: number | null
+  streams: EffectiveStreamConfiguration[]
+  video_start_pts: number | null
+  video_start_seconds: number | null
+  audio_start_pts: number | null
+  audio_start_seconds: number | null
+  av_start_delta_seconds: number | null
+  av_start_provenance: string
+}
+
+export interface BitstreamConfigurationChange {
+  from_index: number
+  to_index: number
+  changed_fields: string[]
+}
+
+export interface RepresentationBitstream {
+  group_kind: string
+  rep_id: string
+  observed_segments: BitstreamSegmentObservation[]
+  configuration_changes: BitstreamConfigurationChange[]
+  provenance: string
+}
+
 export interface Snapshot {
   schema_version: string
   analyzer_version: string
@@ -376,5 +466,7 @@ export interface Snapshot {
   containers: ContainerDTO[]
   abr_alignment?: AbrAlignment[]
   bitrate_observations?: RepresentationBitrate[]
+  delivery?: DeliveryReport | null
+  bitstream_observations?: RepresentationBitstream[]
   warnings: string[]
 }

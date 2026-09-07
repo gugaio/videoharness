@@ -16,18 +16,29 @@ o valor; nunca devem ser exibidos como estado saudável.
 1. **Timeline Health** — duração real, PTS/DTS, `tfdt` e fronteiras. ✅ Implementado.
    Explica gaps,
    overlaps, drift e falhas de append/seek.
-2. **Matriz ABR** — alinhamento temporal e de keyframes entre rendições. ✅ Implementado.
-   Explica
-   falhas de switching e tela preta em troca de qualidade.
+2. **Matriz ABR** — ✅ Implementado. Pareia rendições pela sequência canônica do
+   segmento (`MEDIA-SEQUENCE` no HLS; número no DASH), expõe janelas live com
+   segmentos sem par e compara duração/keyframe apenas na interseção. Ajuda a
+   distinguir um deslocamento de coleta de uma evidência real de desalinhamento
+   que pode afetar switching ou causar tela preta.
 3. **Bitrate por segmento** — ✅ Implementado para a janela capturada. Taxa calculada
    por bytes/duração, pico, faixa e comparação com o bitrate declarado; tamanho de
    frame/sample/PES é apresentado apenas como indicador de distribuição de payload.
    Ajuda a investigar buffering, degraus ineficientes e custo de entrega, sem alegar
    medir complexidade de codec ou qualidade visual.
-4. **Entrega HTTP e live** — TTFB, throughput, cache, disponibilidade e live edge.
-   Explica startup lento, rebuffer e atraso live.
-5. **Bitstream e áudio** — configuração efetiva, mudanças, A/V timing e sinais de
-   compatibilidade. Explica falhas por dispositivo e áudio fora de sincronia.
+4. **Entrega HTTP e live** — ✅ Implementado para cada requisição HTTP observada
+   na janela: TTFB, tempo de download, throughput efetivo, status final, redirects
+   e sinais de cache seguros. Para HLS live, registra janela/sequence declaradas e
+   calcula distância da borda somente com `PROGRAM-DATE-TIME`; avanço exige duas
+   leituras e permanece explicitamente não medido. Ajuda a investigar startup lento,
+   rebuffer e atraso live sem alegar experiência do player. Veja
+   [HTTP_LIVE_DELIVERY.md](HTTP_LIVE_DELIVERY.md).
+5. **Bitstream e áudio** — ✅ Implementado como evidência derivada por segmento:
+   configuração efetiva de vídeo/áudio, mudanças entre segmentos observados e
+   delta de início A/V no mesmo container. Ajuda a investigar transições de
+   encoder, configuração inesperada e timestamps que pedem correlação; não
+   infere compatibilidade de dispositivo ou sincronismo percebido. Veja
+   [BITSTREAM_OBSERVABILITY.md](BITSTREAM_OBSERVABILITY.md).
 6. **DRM, anúncios e timed metadata** — CENC/CBCS, KID, SCTE-35, `emsg`, ID3 e
    fronteiras. Explica falhas em breaks e rotação de chave.
 7. **Findings e histórico** — regras com evidências, comparação de snapshots e

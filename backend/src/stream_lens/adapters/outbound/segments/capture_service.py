@@ -17,18 +17,21 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urljoin
 
 import m3u8
 
-from stream_lens.application.ports.manifest_fetcher import ManifestFetcher
+from stream_lens.application.ports.manifest_fetcher import FetchedManifest, ManifestFetcher
 from stream_lens.application.ports.providers import Clock
 from stream_lens.application.ports.segment_fetcher import SegmentFetcher
 from stream_lens.domain.value_objects.media import Representation, UnifiedManifest
 from stream_lens.domain.value_objects.segments import (
     CapturedSegment,
     CaptureLimits,
+    DeliveryObservation,
+    LivePlaylistObservation,
     PlannedSegment,
     RepresentationTimeline,
     TimelineEntry,
@@ -46,6 +49,8 @@ class CapturePlan:
     # rep_id -> {index: discontinuity} para marcar a timeline
     discontinuities: dict[str, dict[int, bool]] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    manifest_requests: list[tuple[str, DeliveryObservation | None]] = field(default_factory=list)
+    live_playlists: list[LivePlaylistObservation] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,12 +80,27 @@ class SegmentCaptureService:
 
     # ------------------------------------------------------------------ plan
 
-    async def plan(self, media: UnifiedManifest, base_url: str) -> CapturePlan:
+    async def plan(
+        self, media: UnifiedManifest, base_url: str, root_fetched: FetchedManifest | None = None
+    ) -> CapturePlan:
+        """Resolve a janela e preserva a evidência de entrega já observada.
+
+        ``root_fetched`` é opcional para manter o serviço testável isoladamente;
+        quando ausente, não inventamos uma medição de manifesto.
+        """
         if media.kind == "hls_media_playlist":
-            return self._plan_hls_media(media, base_url)
+            plan = self._plan_hls_media(media, base_url)
+            if root_fetched is not None:
+                plan.manifest_requests.append((root_fetched.url, root_fetched.delivery))
+                self._record_live_playlist(plan, None, root_fetched)
+            return plan
         if media.kind == "hls_master_playlist":
-            return await self._plan_hls_master(media, base_url)
-        return self._plan_dash(media, base_url)
+            plan = await self._plan_hls_master(media, base_url)
+        else:
+            plan = self._plan_dash(media, base_url)
+        if root_fetched is not None:
+            plan.manifest_requests.insert(0, (root_fetched.url, root_fetched.delivery))
+        return plan
 
     def _plan_hls_media(self, media: UnifiedManifest, base_url: str) -> CapturePlan:
         plan = CapturePlan()
@@ -107,6 +127,7 @@ class SegmentCaptureService:
                     is_init=True,
                 )
             )
+        media_sequence = media.protocol_specific.get("hls", {}).get("media_sequence")
         for index, seg in enumerate(rep.segments):
             if seg.discontinuity:
                 plan.discontinuities.setdefault(rep.id, {})[index] = True
@@ -118,6 +139,9 @@ class SegmentCaptureService:
                     group_kind=kind,
                     uri=_resolve(base_url, seg.uri or ""),
                     index=index,
+                    segment_sequence=(media_sequence + index)
+                    if isinstance(media_sequence, int)
+                    else None,
                     declared_duration_seconds=seg.duration_seconds,
                 )
             )
@@ -146,9 +170,8 @@ class SegmentCaptureService:
             except Exception as exc:  # falha de rendição não derruba a inspeção
                 plan.warnings.append(f"rendição '{rep_id}' inacessível: {_short(exc)}")
                 continue
-            self._add_hls_playlist_segments(
-                plan, rep_id, kind, fetched.url, fetched.text, from_master=True
-            )
+            plan.manifest_requests.append((fetched.url, fetched.delivery))
+            self._add_hls_playlist_segments(plan, rep_id, kind, fetched, from_master=True)
         return plan
 
     def _add_hls_playlist_segments(
@@ -156,17 +179,19 @@ class SegmentCaptureService:
         plan: CapturePlan,
         rep_id: str,
         group_kind: str,
-        playlist_url: str,
-        playlist_text: str,
+        fetched: FetchedManifest,
         from_master: bool = False,
     ) -> None:
-        playlist = m3u8.loads(playlist_text)
+        playlist_url = fetched.url
+        playlist = m3u8.loads(fetched.text)
+        self._record_live_playlist(plan, rep_id, fetched, playlist)
         segments = list(playlist.segments)
         if not segments:
             plan.warnings.append(f"rendição '{rep_id}' sem segmentos declarados")
             return
 
         is_live = not playlist.is_endlist
+        media_sequence = getattr(playlist, "media_sequence", None)
         chosen = _window_segments(
             segments,
             lambda s: s.duration,
@@ -213,6 +238,9 @@ class SegmentCaptureService:
                     group_kind=group_kind,
                     uri=_resolve(playlist_url, seg.uri or ""),
                     index=index,
+                    segment_sequence=(media_sequence + index)
+                    if isinstance(media_sequence, int)
+                    else None,
                     declared_duration_seconds=seg.duration,
                     byte_range=byte_range,
                 )
@@ -271,10 +299,59 @@ class SegmentCaptureService:
                             uri=_resolve(base_url, candidate.uri),
                             index=candidate.index,
                             start_number=candidate.number,
+                            segment_sequence=candidate.number,
                             declared_duration_seconds=candidate.duration_seconds,
                         )
                     )
         return plan
+
+    def _record_live_playlist(
+        self,
+        plan: CapturePlan,
+        rep_id: str | None,
+        fetched: FetchedManifest,
+        playlist=None,
+    ) -> None:
+        """Guarda somente fatos de uma playlist HLS live observada uma vez."""
+        playlist = playlist or m3u8.loads(fetched.text)
+        if playlist.is_endlist:
+            return
+        segments = list(playlist.segments)
+        observed_at = self._clock.now()
+        edge_time: datetime | None = None
+        if segments:
+            last = segments[-1]
+            value = getattr(last, "current_program_date_time", None) or getattr(
+                last, "program_date_time", None
+            )
+            if isinstance(value, datetime) and getattr(last, "duration", None) is not None:
+                edge_time = value + timedelta(seconds=last.duration)
+        edge_distance: float | None = None
+        if (
+            edge_time is not None
+            and edge_time.tzinfo is not None
+            and observed_at.tzinfo is not None
+        ):
+            edge_distance = (observed_at - edge_time).total_seconds()
+        media_sequence = getattr(playlist, "media_sequence", None)
+        plan.live_playlists.append(
+            LivePlaylistObservation(
+                rep_id=rep_id,
+                playlist_url=fetched.url,
+                observed_at=observed_at,
+                media_sequence=media_sequence,
+                last_segment_sequence=(media_sequence + len(segments) - 1)
+                if isinstance(media_sequence, int) and segments
+                else None,
+                target_duration_seconds=getattr(playlist, "target_duration", None),
+                playlist_window_duration_seconds=sum(
+                    float(segment.duration or 0) for segment in segments
+                ) or None,
+                live_edge_program_date_time=edge_time,
+                live_edge_distance_seconds=edge_distance,
+                delivery=fetched.delivery,
+            )
+        )
 
     # --------------------------------------------------------------- capture
 
@@ -320,10 +397,13 @@ class SegmentCaptureService:
                 uri=planned.uri,
                 index=planned.index,
                 is_init=planned.is_init,
+                segment_sequence=planned.segment_sequence,
                 declared_duration_seconds=planned.declared_duration_seconds,
                 byte_range=planned.byte_range,
                 error=_short(exc),
                 fetched_at=self._clock.now(),
+                http_status=getattr(getattr(exc, "delivery", None), "http_status", None),
+                delivery=getattr(exc, "delivery", None),
             )
 
         size = len(fetched.data)
@@ -339,6 +419,7 @@ class SegmentCaptureService:
             uri=planned.uri,
             index=planned.index,
             is_init=planned.is_init,
+            segment_sequence=planned.segment_sequence,
             declared_duration_seconds=planned.declared_duration_seconds,
             byte_range=planned.byte_range,
             byte_size=size,
@@ -346,6 +427,7 @@ class SegmentCaptureService:
             http_status=fetched.status,
             fetched_at=self._clock.now(),
             file=f"segments/{name}",
+            delivery=fetched.delivery,
         )
 
     # --------------------------------------------------------------- timeline
@@ -377,6 +459,7 @@ class SegmentCaptureService:
                         start_seconds=start if duration is not None else None,
                         duration_seconds=duration,
                         status=status,
+                        segment_sequence=planned.segment_sequence,
                         discontinuity=plan.discontinuities.get(rep_id, {}).get(
                             planned.index, False
                         ),

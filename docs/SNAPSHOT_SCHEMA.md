@@ -1,7 +1,7 @@
 # SNAPSHOT_SCHEMA.md
 
-**Status: implementado (Fase 6 + extensões de observabilidade) — `schema_version` 1.8,
-analyzer 1.0.0** (schema 1.7 acrescido de `bitrate_observations`). Contrato
+**Status: implementado (Fase 6 + extensões de observabilidade) — `schema_version` 1.12,
+analyzer 1.4.0** (schema 1.11 passa a calcular A/V por PTS de apresentação). Contrato
 validado por testes de round-trip, captura, parsers estruturais e adapter derivado
 offline.
 
@@ -325,18 +325,27 @@ mesma representação.
 - A matriz ABR compara rendições de vídeo equivalentes; A/V e PCR continuam extensões
   futuras documentadas em [OBSERVABILITY.md](OBSERVABILITY.md).
 
-## Bloco 1.7 (extensão — matriz ABR)
+## Bloco 1.7 (extensão — matriz ABR; pareamento corrigido no 1.10)
 
 `abr_alignment` compara rendições do mesmo `group_kind` contra a primeira timeline
-do grupo, na ordem preservada pelo manifesto. Cada linha compara somente segmentos
-com o mesmo `index`: os deltas de início/duração são declarativos; o delta de PTS de
-keyframe é derivado e só existe se os dois fragments o fornecerem.
+do grupo, na ordem preservada pelo manifesto. A partir do schema 1.10, cada linha
+compara segmentos com a mesma `segment_sequence`: `EXT-X-MEDIA-SEQUENCE` no HLS e
+o número de segmento disponível no DASH. O índice continua preservado para navegar
+na janela de cada rendição, mas não define equivalência entre janelas live.
+
+Os deltas de duração são declarativos; o delta de PTS de keyframe é derivado e só
+existe se os dois fragments do mesmo par o fornecerem. Quando a sequência não está
+disponível em um snapshot, o contrato identifica explicitamente o fallback pelo
+índice local.
 
 ```json
 "abr_alignment": [{
   "group_kind": "video",
   "reference_rep_id": "v360",
   "rep_id": "v720",
+  "comparison_basis": "canonical segment sequence",
+  "unmatched_reference_segments": 1,
+  "unmatched_candidate_segments": 1,
   "comparable_declared_segments": 2,
   "comparable_keyframes": 1,
   "max_abs_declared_start_delta_seconds": 0.0,
@@ -347,6 +356,12 @@ keyframe é derivado e só existe se os dois fragments o fornecerem.
 
 Valores `null` e contagem zero significam que não havia um par comparável na janela;
 não são veredito sobre switching seguro ou inseguro.
+
+`timeline.entries[]` e `segments[]` também trazem `segment_sequence` quando o
+manifesto a declara. Em HLS ela é a `MEDIA-SEQUENCE` efetiva de cada fragmento; em
+DASH é o `$Number$` disponível. Assim, QA pode rastrear exatamente quais índices
+locais formaram cada par em `abr_alignment.segments[]` (`index`, `candidate_index`
+e `segment_sequence`).
 
 ## Bloco 1.8 (extensão — bitrate por segmento)
 
@@ -377,6 +392,81 @@ e sua proveniência fica explícita.
   são uma métrica de complexidade de codec, VMAF/qualidade ou taxa de entrega HTTP.
 - Segmentos sem bytes, sem duração aproveitável ou `init` ficam fora do cálculo;
   ausência de observação não é taxa zero.
+
+## Bloco 1.9 (extensão — entrega HTTP e live)
+
+`segments[].delivery` contém a medição do cliente para aquela requisição HTTP.
+`delivery.manifest_requests` registra leituras de manifesto/playlist, e
+`delivery.live_playlists` só contém playlists HLS live efetivamente observadas.
+
+```json
+"delivery": {
+  "manifest_requests": [{"url": "https://cdn.example/live.m3u8", "delivery": null}],
+  "live_playlists": [{
+    "rep_id": "v720", "media_sequence": 120, "last_segment_sequence": 125,
+    "target_duration_seconds": 4.0, "playlist_window_duration_seconds": 24.0,
+    "live_edge_program_date_time": "2026-01-01T00:00:20+00:00",
+    "live_edge_distance_seconds": 3.2,
+    "advancement": "not measured (single playlist observation)"
+  }]
+}
+```
+
+- Uma medição HTTP contém status final, TTFB, download total, throughput efetivo,
+  redirects e somente sinais seguros de cache. Ela é da captura, não do player.
+- Cache não persiste valores de ETag, cookies, headers arbitrários ou URLs de
+  redirects. `delivery: null` significa que não houve medição HTTP, por exemplo em
+  fixture local; não equivale a zero.
+- Distância live requer que PDT permita datar o último segmento e usa o relógio da captura. Avanço
+  não é inferido de uma única leitura; DASH dinâmico não recebe cálculo equivalente.
+  Detalhes e roteiro QA: [HTTP_LIVE_DELIVERY.md](HTTP_LIVE_DELIVERY.md).
+
+## Bloco 1.12 (extensão — configuração efetiva e início A/V por PTS)
+
+`bitstream_observations` reduz o resultado derivado de `ffprobe.streams` para
+configuração rastreável por segmento. Só entram segmentos de mídia que o probe
+conseguiu ler; init isolado não é prova de configuração efetiva no fragmento.
+
+```json
+"bitstream_observations": [{
+  "group_kind": "video", "rep_id": "v720",
+  "observed_segments": [{
+    "index": 1, "segment_sequence": 120,
+    "streams": [
+      {"stream_index": 0, "kind": "video", "codec_name": "h264",
+       "profile": "High", "level": 41, "pixel_format": "yuv420p",
+       "width": 1280, "height": 720, "frame_rate": "30000/1001"},
+      {"stream_index": 1, "kind": "audio", "codec_name": "aac",
+       "profile": "LC", "sample_rate": 48000, "channels": 2,
+       "channel_layout": "stereo"}
+    ],
+    "video_start_pts": 90000, "video_start_seconds": 0.0,
+    "audio_start_pts": 2304, "audio_start_seconds": 0.048,
+    "av_start_delta_seconds": 0.048,
+    "av_start_provenance": "derived (ffprobe presentation timestamps)"
+  }],
+  "configuration_changes": [{
+    "from_index": 1, "to_index": 2, "changed_fields": ["profile"]
+  }],
+  "provenance": "derived (ffprobe stream configuration)"
+}]
+```
+
+- `av_start_delta_seconds = audio_start_seconds - video_start_seconds`, usando o
+  menor PTS de apresentação que o decoder reportou para cada tipo de mídia. PTS
+  bruto e segundos normalizados ficam lado a lado porque áudio e vídeo podem usar
+  timebases diferentes. Positivo significa áudio depois do vídeo.
+- Se não houver um par de PTS utilizável, o fallback só usa `start_time` das duas
+  streams e `av_start_provenance` declara `stream start_time fallback`. `null`
+  não é zero: falta uma das streams ou um timestamp aproveitável.
+- `configuration_changes` compara somente segmentos consecutivos que têm
+  observação derivada. Uma lacuna de probe não afirma estabilidade nem produz uma
+  mudança artificial.
+- Os tempos de início são locais ao arquivo/fragmento sondado; não são drift,
+  lipsync percebido, nem métrica comparável entre rendições ou segmentos.
+- O bloco não substitui `media.*.codecs` (declaração do manifesto), `analysis.timing`
+  (timestamps determinísticos) ou uma avaliação de compatibilidade. Detalhes e
+  roteiro QA: [BITSTREAM_OBSERVABILITY.md](BITSTREAM_OBSERVABILITY.md).
 
 ## Carregamento sob demanda
 

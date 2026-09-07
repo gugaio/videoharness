@@ -7,17 +7,29 @@ decide se viram `partial`, não `failed` da inspeção.
 
 from __future__ import annotations
 
+import time
+
 import httpx
 
 from stream_lens.adapters.outbound.fetching.safe_http_fetcher import (
     _REDIRECT_STATUSES,
     NetworkPolicy,
+    _delivery_from_response,
+    _elapsed_ms,
     _validate_remote_url,
 )
 from stream_lens.application.ports.segment_fetcher import FetchedBytes
 from stream_lens.application.use_cases.create_inspection import InspectionError
 
 DEFAULT_MAX_SEGMENT_BYTES = 20_000_000
+
+
+class SegmentHttpError(InspectionError):
+    """Falha HTTP de segmento que ainda preserva a resposta observada."""
+
+    def __init__(self, message: str, delivery) -> None:
+        super().__init__("capturing_segments", message)
+        self.delivery = delivery
 
 
 class SafeHttpSegmentFetcher:
@@ -53,7 +65,8 @@ class SafeHttpSegmentFetcher:
             headers["Range"] = f"bytes={offset}-{offset + length - 1}"
 
         current = _validate_remote_url(url)
-        for _hop in range(self._max_redirects + 1):
+        started = time.perf_counter()
+        for hop in range(self._max_redirects + 1):
             parts = httpx.URL(current)
             await self._policy.check_host(parts.host)
             try:
@@ -67,8 +80,8 @@ class SafeHttpSegmentFetcher:
                 ) from exc
 
             if response.status_code in _REDIRECT_STATUSES:
-                # redirects de segmento normalmente carregam query com token:
-                # revalidamos destino, mas não propagamos headers de Range
+                # Redirects de segmento normalmente carregam query com token;
+                # o destino é revalidado e nunca persistido no relatório.
                 location = response.headers.get("location")
                 await response.aclose()
                 if not location:
@@ -79,16 +92,26 @@ class SafeHttpSegmentFetcher:
                 continue
 
             if response.status_code >= 400:
+                delivery = _delivery_from_response(
+                    response,
+                    started=started,
+                    ttfb_ms=None,
+                    byte_size=0,
+                    redirect_count=hop,
+                )
                 await response.aclose()
-                raise InspectionError(
-                    "capturing_segments", f"HTTP {response.status_code} ao obter segmento"
+                raise SegmentHttpError(
+                    f"HTTP {response.status_code} ao obter segmento", delivery
                 )
 
             body = b""
             total = 0
             chunks: list[bytes] = []
+            ttfb_ms: int | None = None
             try:
                 async for chunk in response.aiter_bytes():
+                    if chunk and ttfb_ms is None:
+                        ttfb_ms = _elapsed_ms(started)
                     total += len(chunk)
                     if total > self._max_bytes:
                         raise InspectionError(
@@ -104,6 +127,13 @@ class SafeHttpSegmentFetcher:
                 data=body,
                 status=response.status_code,
                 content_type=response.headers.get("content-type"),
+                delivery=_delivery_from_response(
+                    response,
+                    started=started,
+                    ttfb_ms=ttfb_ms,
+                    byte_size=len(body),
+                    redirect_count=hop,
+                ),
             )
 
         raise InspectionError(

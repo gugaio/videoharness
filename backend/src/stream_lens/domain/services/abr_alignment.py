@@ -18,8 +18,10 @@ def measure_abr_alignment(
     """Compara rendições do mesmo grupo contra a primeira referência observada.
 
     A primeira timeline do grupo define a referência de forma estável, preservando
-    a ordem declarada pelo manifesto/captura. Não compara áudio com vídeo nem
-    supõe que índices diferentes representem o mesmo instante.
+    a ordem declarada pelo manifesto/captura. Quando as duas timelines preservam
+    uma sequência canônica, os pares são formados por ela: ``EXT-X-MEDIA-SEQUENCE``
+    no HLS ou número de segmento no DASH. O índice local só é fallback para
+    snapshots antigos ou fontes sem essa identidade.
     """
 
     by_group: dict[str, list[RepresentationTimeline]] = {}
@@ -31,26 +33,33 @@ def measure_abr_alignment(
         if len(group) < 2:
             continue
         reference = group[0]
-        reference_entries = _media_entries(reference)
         for candidate in group[1:]:
-            candidate_entries = _media_entries(candidate)
-            common_indexes = sorted(reference_entries.keys() & candidate_entries.keys())
+            pairs, comparison_basis, unmatched_reference, unmatched_candidate = _pairs(
+                reference, candidate
+            )
             samples: list[AbrSegmentAlignment] = []
-            for index in common_indexes:
-                ref_entry = reference_entries[index]
-                candidate_entry = candidate_entries[index]
+            for ref_entry, candidate_entry, sequence in pairs:
                 samples.append(
                     AbrSegmentAlignment(
-                        index=index,
-                        declared_start_delta_seconds=_delta(
-                            ref_entry.start_seconds, candidate_entry.start_seconds
+                        index=ref_entry.index,
+                        candidate_index=candidate_entry.index,
+                        segment_sequence=sequence,
+                        # Um par com a mesma sequence descreve a mesma fronteira
+                        # declarada; start_seconds é relativo a cada janela e não
+                        # deve criar um falso delta quando elas estão deslocadas.
+                        declared_start_delta_seconds=(
+                            0.0
+                            if sequence is not None
+                            else _delta(ref_entry.start_seconds, candidate_entry.start_seconds)
                         ),
                         declared_duration_delta_seconds=_delta(
                             ref_entry.duration_seconds, candidate_entry.duration_seconds
                         ),
                         keyframe_pts_delta_seconds=_delta(
-                            _first_keyframe_pts(containers, reference.rep_id, index),
-                            _first_keyframe_pts(containers, candidate.rep_id, index),
+                            _first_keyframe_pts(containers, reference.rep_id, ref_entry.index),
+                            _first_keyframe_pts(
+                                containers, candidate.rep_id, candidate_entry.index
+                            ),
                         ),
                     )
                 )
@@ -68,6 +77,9 @@ def measure_abr_alignment(
                     reference_rep_id=reference.rep_id,
                     rep_id=candidate.rep_id,
                     segments=tuple(samples),
+                    comparison_basis=comparison_basis,
+                    unmatched_reference_segments=unmatched_reference,
+                    unmatched_candidate_segments=unmatched_candidate,
                     comparable_declared_segments=len(declared),
                     comparable_keyframes=len(keyframes),
                     max_abs_declared_start_delta_seconds=_max_abs(
@@ -84,8 +96,56 @@ def measure_abr_alignment(
     return tuple(result)
 
 
-def _media_entries(timeline: RepresentationTimeline) -> dict[int, TimelineEntry]:
-    return {entry.index: entry for entry in timeline.entries if entry.status != "init"}
+def _media_entries(timeline: RepresentationTimeline) -> tuple[TimelineEntry, ...]:
+    return tuple(entry for entry in timeline.entries if entry.status != "init")
+
+
+def _pairs(
+    reference: RepresentationTimeline, candidate: RepresentationTimeline
+) -> tuple[
+    tuple[tuple[TimelineEntry, TimelineEntry, int | None], ...], str, int, int
+]:
+    """Encontra pares sem confundir a posição local com a identidade do conteúdo."""
+    reference_entries = _media_entries(reference)
+    candidate_entries = _media_entries(candidate)
+    reference_sequences = {
+        entry.segment_sequence: entry
+        for entry in reference_entries
+        if entry.segment_sequence is not None
+    }
+    candidate_sequences = {
+        entry.segment_sequence: entry
+        for entry in candidate_entries
+        if entry.segment_sequence is not None
+    }
+    if reference_sequences and candidate_sequences:
+        common_sequences = sorted(reference_sequences.keys() & candidate_sequences.keys())
+        return (
+            tuple(
+                (
+                    reference_sequences[sequence],
+                    candidate_sequences[sequence],
+                    sequence,
+                )
+                for sequence in common_sequences
+            ),
+            "canonical segment sequence",
+            len(reference_entries) - len(common_sequences),
+            len(candidate_entries) - len(common_sequences),
+        )
+
+    reference_indexes = {entry.index: entry for entry in reference_entries}
+    candidate_indexes = {entry.index: entry for entry in candidate_entries}
+    common_indexes = sorted(reference_indexes.keys() & candidate_indexes.keys())
+    return (
+        tuple(
+            (reference_indexes[index], candidate_indexes[index], None)
+            for index in common_indexes
+        ),
+        "capture-window index (sequence unavailable)",
+        len(reference_entries) - len(common_indexes),
+        len(candidate_entries) - len(common_indexes),
+    )
 
 
 def _delta(reference: float | None, candidate: float | None) -> float | None:

@@ -398,6 +398,41 @@ class _InspectorStub:
 
 
 class TestFfprobe:
+    def test_av_timing_usa_menor_pts_de_apresentacao_por_stream(self):
+        from stream_lens.adapters.outbound.containers.ffprobe_probe import (
+            _summarize_av_timing,
+        )
+
+        timing = _summarize_av_timing(
+            {
+                "frames": [
+                    {
+                        "media_type": "video",
+                        "pts": 9_000,
+                        "pts_time": "0.100000",
+                        "best_effort_timestamp": 0,
+                        "best_effort_timestamp_time": "0.000000",
+                    },
+                    {
+                        "media_type": "audio",
+                        "pts": 2_304,
+                        "pts_time": "0.048000",
+                    },
+                    {
+                        "media_type": "video",
+                        "pts": 3_000,
+                        "pts_time": "0.033333",
+                    },
+                ]
+            }
+        )
+
+        assert timing == {
+            "video": {"pts": 0, "pts_time": "0.000000"},
+            "audio": {"pts": 2_304, "pts_time": "0.048000"},
+            "provenance": "derived (ffprobe presentation timestamps)",
+        }
+
     def test_gop_parcial_nao_inventa_intervalo(self):
         from stream_lens.adapters.outbound.containers.ffprobe_probe import _summarize_gop
 
@@ -571,6 +606,7 @@ class TestFfprobe:
             "streams": [{
                 "index": 0, "codec_type": "video", "color_primaries": "bt2020",
                 "color_transfer": "smpte2084", "bits_per_raw_sample": "10",
+                "level": 153, "pix_fmt": "yuv420p10le", "start_time": "1.5",
                 "side_data_list": [
                     {"side_data_type": "Mastering display metadata"},
                     {"side_data_type": "Content light level metadata"},
@@ -582,6 +618,9 @@ class TestFfprobe:
         assert stream["color_primaries"] == "bt2020"
         assert stream["color_transfer"] == "smpte2084"
         assert stream["bits_per_raw_sample"] == "10"
+        assert stream["level"] == 153
+        assert stream["pix_fmt"] == "yuv420p10le"
+        assert stream["start_time"] == "1.5"
         assert stream["hdr_side_data"] == [
             "Mastering display metadata",
             "Content light level metadata",

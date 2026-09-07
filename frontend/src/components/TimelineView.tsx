@@ -1,6 +1,8 @@
 import { useId, useMemo, useState } from 'react'
 import type {
   AbrAlignment,
+  RepresentationBitstream,
+  DeliveryReport,
   RepresentationBitrate,
   CapturedSegment,
   CaptureReport,
@@ -96,8 +98,9 @@ function AbrAlignmentMatrix({ alignments }: { alignments: AbrAlignment[] }) {
         <span>{alignments.length} {alignments.length === 1 ? 'comparação' : 'comparações'}</span>
       </header>
       <p>
-        Deltas absolutos máximos na janela. Manifesto e keyframes são evidências distintas;
-        ausência de keyframe não confirma nem descarta uma troca segura.
+        Deltas absolutos máximos entre pares da mesma sequência do segmento. Manifesto e
+        keyframes são evidências distintas; ausência de keyframe não confirma nem descarta
+        uma troca segura.
       </p>
       <div className="table-scroll">
         <table className="structure-table">
@@ -105,11 +108,11 @@ function AbrAlignmentMatrix({ alignments }: { alignments: AbrAlignment[] }) {
             <th>Referência → rendição</th>
             <AlignmentMetricHeader
               label="Segmentos comparados"
-              help="Quantidade de segmentos com o mesmo índice e início/duração declarados nos dois manifestos."
+              help="Quantidade de pares com a mesma identidade declarada: MEDIA-SEQUENCE no HLS ou número de segmento no DASH. A posição visual dentro de uma janela live não é usada para parear segmentos quando essa identidade existe."
             />
             <AlignmentMetricHeader
               label="Maior desvio no início"
-              help="Maior diferença absoluta entre os instantes de início declarados no manifesto, dentro da janela capturada. 0.000s indica que todos os pares comparados começam no mesmo instante declarado."
+              help="Maior diferença entre inícios declarados. Em pares HLS pela mesma MEDIA-SEQUENCE, 0.000s significa a mesma fronteira declarada; não é influenciado por uma janela live que começou um segmento antes ou depois."
             />
             <AlignmentMetricHeader
               label="Maior desvio na duração"
@@ -117,13 +120,21 @@ function AbrAlignmentMatrix({ alignments }: { alignments: AbrAlignment[] }) {
             />
             <AlignmentMetricHeader
               label="Maior desvio no keyframe"
-              help="Maior diferença absoluta entre o PTS do primeiro keyframe que o ffprobe observou nos dois fragments. “Não observado” não é uma conclusão sobre a segurança da troca."
+              help="Maior diferença absoluta entre o PTS do primeiro keyframe que o ffprobe observou em fragments da mesma sequência. “Não observado” não é uma conclusão sobre a segurança da troca."
             />
           </tr></thead>
           <tbody>{alignments.map((item) => (
             <tr key={`${item.reference_rep_id}-${item.rep_id}`}>
-              <td><code>{item.reference_rep_id}</code> → <code>{item.rep_id}</code></td>
-              <td>{item.comparable_declared_segments} segmentos</td>
+              <td><code>{item.reference_rep_id}</code> → <code>{item.rep_id}</code><br />
+                <small>{item.comparison_basis === 'canonical segment sequence'
+                  ? 'pareado por sequência do segmento'
+                  : 'pareado por índice local (sequência indisponível)'}</small>
+              </td>
+              <td>{item.comparable_declared_segments} {item.comparable_declared_segments === 1 ? 'par' : 'pares'}
+                {(item.unmatched_reference_segments ?? 0) + (item.unmatched_candidate_segments ?? 0) > 0 ? <><br />
+                  <small>janela diferente: {item.unmatched_reference_segments ?? 0} sem par na referência; {item.unmatched_candidate_segments ?? 0} na rendição</small>
+                </> : null}
+              </td>
               <td>{formatDelta(item.max_abs_declared_start_delta_seconds)}</td>
               <td>{formatDelta(item.max_abs_declared_duration_delta_seconds)}</td>
               <td>{item.comparable_keyframes > 0
@@ -191,6 +202,117 @@ function BitrateObservations({ observations }: { observations: RepresentationBit
           </table>
         </div>
       </details>
+    </section>
+  )
+}
+
+function formatMilliseconds(value: number | null): string {
+  return value === null ? 'não observado' : `${value} ms`
+}
+
+function formatPresentationTimestamp(pts: number | null, seconds: number | null): string {
+  if (pts === null || seconds === null) return 'não observado'
+  return `${pts} (${seconds.toFixed(6)}s)`
+}
+
+const CONFIGURATION_FIELD_LABELS: Record<string, string> = {
+  streams: 'streams presentes',
+  codec_name: 'codec',
+  profile: 'profile',
+  level: 'level',
+  pixel_format: 'formato de pixel',
+  width: 'largura',
+  height: 'altura',
+  frame_rate: 'frame rate',
+  sample_rate: 'sample rate',
+  channels: 'canais',
+  channel_layout: 'layout de canais',
+}
+
+function streamConfigurationLabel(stream: RepresentationBitstream['observed_segments'][number]['streams'][number]): string {
+  const parts = [stream.codec_name, stream.profile, stream.level !== null ? `level ${stream.level}` : null]
+  if (stream.kind === 'video') {
+    if (stream.width !== null && stream.height !== null) parts.push(`${stream.width}×${stream.height}`)
+    if (stream.pixel_format) parts.push(stream.pixel_format)
+    if (stream.frame_rate) parts.push(`${stream.frame_rate} fps`)
+  } else {
+    if (stream.sample_rate !== null) parts.push(`${(stream.sample_rate / 1000).toFixed(1)} kHz`)
+    if (stream.channels !== null) parts.push(`${stream.channels} canais`)
+    if (stream.channel_layout) parts.push(stream.channel_layout)
+  }
+  return parts.filter(Boolean).join(' · ') || 'detalhes não observados'
+}
+
+function BitstreamObservations({ observations }: { observations: RepresentationBitstream[] }) {
+  if (observations.length === 0) return null
+  const observedSegments = observations.reduce((total, item) => total + item.observed_segments.length, 0)
+  const changes = observations.flatMap((item) => item.configuration_changes.map((change) => ({ ...change, rep_id: item.rep_id })))
+  return (
+    <section className="bitstream-observations" aria-labelledby="bitstream-observations-heading">
+      <header><div><span className="eyebrow">Decoder observado</span><h3 id="bitstream-observations-heading">Bitstream e sincronismo A/V</h3></div><span>{observedSegments} segmentos com configuração efetiva</span></header>
+      <p>Configuração que o ffprobe conseguiu ler no arquivo capturado. O delta A/V usa PTS de apresentação: áudio menos vídeo no mesmo container; positivo significa que o áudio inicia depois. Quando não há par de PTS, o fallback de <code>start_time</code> fica declarado. Não mede compatibilidade de dispositivo nem o sincronismo percebido no player.</p>
+      {changes.length > 0 ? <details className="bitrate-details" open>
+        <summary>Ver mudanças de configuração observadas ({changes.length})</summary>
+        <div className="table-scroll"><table className="structure-table bitrate-table"><thead><tr>
+          <th>Rendição</th>
+          <AlignmentMetricHeader label="Transição" help="Comparação entre dois segmentos para os quais o ffprobe trouxe configuração. Segmentos sem leitura derivada não são tratados como estáveis." />
+          <AlignmentMetricHeader label="Campos diferentes" help="Campos de codec, vídeo ou áudio cujo valor mudou entre os dois segmentos observados. A lista é evidência para investigar transições de encoder, não uma conclusão sobre a causa de uma falha." />
+        </tr></thead><tbody>{changes.map((change) => <tr key={`${change.rep_id}-${change.from_index}-${change.to_index}`}><td><code>{change.rep_id}</code></td><td>{change.from_index} → {change.to_index}</td><td>{change.changed_fields.map((field) => CONFIGURATION_FIELD_LABELS[field] ?? field).join(' · ')}</td></tr>)}</tbody></table></div>
+      </details> : <p className="delivery-note">Nenhuma mudança de configuração foi observada entre os segmentos com leitura derivada. Isso não cobre segmentos sem resposta do ffprobe.</p>}
+      <details className="bitrate-details">
+        <summary>Ver configuração e tempo por segmento</summary>
+        <div className="table-scroll"><table className="structure-table bitrate-table"><thead><tr>
+          <th>Rendição / segmento</th>
+          <AlignmentMetricHeader label="Vídeo efetivo" help="Codec, profile, level, resolução, formato de pixel e frame rate retornados pelo ffprobe para este arquivo. Podem divergir do CODECS do manifesto; ambos ficam disponíveis para comparação." />
+          <AlignmentMetricHeader label="Áudio efetivo" help="Codec, profile, taxa de amostragem, quantidade e layout de canais retornados pelo ffprobe. A ausência pode significar uma representação somente de vídeo ou leitura indisponível." />
+          <AlignmentMetricHeader label="PTS vídeo usado" help="Menor timestamp de apresentação do vídeo que o ffprobe observou, com o PTS bruto e sua conversão em segundos. Para vídeo com B-frames, o probe prioriza o timestamp de apresentação já resolvido pelo decoder." />
+          <AlignmentMetricHeader label="PTS áudio usado" help="Menor timestamp de apresentação do áudio que o ffprobe observou, com o PTS bruto e sua conversão em segundos. PTS brutos de áudio e vídeo podem ter escalas diferentes; o delta usa segundos normalizados." />
+          <AlignmentMetricHeader label="Delta A/V" help="PTS de apresentação inicial do áudio menos o do vídeo, em segundos, no mesmo arquivo capturado. Se ambos os PTS não estiverem disponíveis, o valor pode usar start_time como fallback explicitamente identificado. Não compare este número entre segmentos ou rendições." />
+        </tr></thead><tbody>{observations.flatMap((item) => item.observed_segments.map((segment) => {
+          const video = segment.streams.filter((stream) => stream.kind === 'video').map(streamConfigurationLabel).join(' / ')
+          const audio = segment.streams.filter((stream) => stream.kind === 'audio').map(streamConfigurationLabel).join(' / ')
+          return <tr key={`${item.rep_id}-${segment.index}`}><td><code>{item.rep_id}</code> · {segment.index}{segment.segment_sequence !== null ? <><br /><small>seq. {segment.segment_sequence}</small></> : null}</td><td>{video || 'não observado'}</td><td>{audio || 'não observado'}</td><td>{formatPresentationTimestamp(segment.video_start_pts, segment.video_start_seconds)}</td><td>{formatPresentationTimestamp(segment.audio_start_pts, segment.audio_start_seconds)}</td><td>{formatDelta(segment.av_start_delta_seconds)}<br /><small>{segment.av_start_provenance.includes('presentation') ? 'PTS de apresentação' : segment.av_start_provenance.includes('fallback') ? 'fallback start_time' : 'sem par comparável'}</small></td></tr>
+        }))}</tbody></table></div>
+      </details>
+    </section>
+  )
+}
+
+function cacheLabel(item: { cache_control: string[]; cache_max_age_seconds: number | null; cache_age_seconds: number | null; cache_etag_present: boolean | null }): string {
+  const parts = [...item.cache_control]
+  if (item.cache_max_age_seconds !== null) parts.push(`max-age ${item.cache_max_age_seconds}s`)
+  if (item.cache_age_seconds !== null) parts.push(`idade ${item.cache_age_seconds}s`)
+  if (item.cache_etag_present) parts.push('ETag presente')
+  return parts.length > 0 ? parts.join(' · ') : 'não observado'
+}
+
+function DeliveryObservations({ delivery, segments }: { delivery: DeliveryReport | null; segments: CapturedSegment[] }) {
+  const segmentRequests = segments.filter((item) => item.delivery != null)
+  const manifests = delivery?.manifest_requests ?? []
+  const live = delivery?.live_playlists ?? []
+  if (segmentRequests.length === 0 && manifests.length === 0 && live.length === 0 && !delivery?.live_note) return null
+  return (
+    <section className="delivery-observations" aria-labelledby="delivery-observations-heading">
+      <header><div><span className="eyebrow">Cliente de captura</span><h3 id="delivery-observations-heading">Entrega HTTP e live</h3></div><span>{segmentRequests.length} segmentos com medição HTTP</span></header>
+      <p>Tempos são medidos por esta captura, não pelo player. Headers são reduzidos a sinais de cache seguros; ausência de valor não indica uma entrega saudável.</p>
+      {segmentRequests.length > 0 && <details className="bitrate-details" open>
+        <summary>Ver entrega por segmento</summary>
+        <div className="table-scroll"><table className="structure-table bitrate-table"><thead><tr>
+          <th>Segmento</th>
+          <AlignmentMetricHeader label="TTFB" help="Tempo entre iniciar a requisição e receber o primeiro byte do corpo. Inclui a cadeia de redirects observada; não mede o tempo de início do player." />
+          <AlignmentMetricHeader label="Download" help="Tempo total da requisição até o fim da leitura do corpo no cliente de captura." />
+          <AlignmentMetricHeader label="Throughput efetivo" help="Bytes recebidos divididos pelo tempo total de download desta requisição. É uma amostra de rede, não a banda disponível para o player." />
+          <AlignmentMetricHeader label="HTTP e cache" help="Status final, quantidade de redirects e sinais seguros derivados de Cache-Control, Age e presença de ETag. Valores de headers arbitrários não são persistidos." />
+        </tr></thead><tbody>{segmentRequests.map((segment) => {
+          const item = segment.delivery!
+          return <tr key={`${segment.rep_id}-${segment.index}-${segment.is_init}`}><td><code>{segment.rep_id}</code> · {segment.is_init ? 'init' : segment.index}</td><td>{formatMilliseconds(item.ttfb_ms)}</td><td>{formatMilliseconds(item.download_duration_ms)}</td><td>{formatBandwidth(item.effective_throughput_bps)}</td><td>{item.http_status ?? 'não observado'}{item.redirect_count !== null ? ` · ${item.redirect_count} redirects` : ''}<br /><small>{cacheLabel(item)}</small></td></tr>
+        })}</tbody></table></div>
+      </details>}
+      {live.length > 0 && <details className="bitrate-details" open>
+        <summary>Ver evidência live das playlists</summary>
+        <div className="table-scroll"><table className="structure-table bitrate-table"><thead><tr><th>Playlist</th><AlignmentMetricHeader label="Janela declarada" help="Soma das durações EXTINF presentes na playlist obtida. Não é o buffer do player." /><AlignmentMetricHeader label="Distância da live edge" help="Só aparece quando PROGRAM-DATE-TIME permite associar um horário ao último segmento: horário da captura menos o fim declarado desse segmento. Relógios do servidor e do cliente podem divergir." /><AlignmentMetricHeader label="Avanço" help="Medir avanço requer ao menos duas leituras da mesma playlist. Esta captura faz uma única leitura por playlist, por isso não calcula avanço." /></tr></thead><tbody>{live.map((item) => <tr key={`${item.rep_id}-${item.playlist_url}`}><td><code>{item.rep_id ?? 'media'}</code><br /><small>seq. {item.media_sequence ?? 'não declarada'}–{item.last_segment_sequence ?? 'não declarada'}</small></td><td>{formatDuration(item.playlist_window_duration_seconds)}<br /><small>target {formatDuration(item.target_duration_seconds)}</small></td><td>{item.live_edge_distance_seconds === null ? 'não observada' : formatDuration(item.live_edge_distance_seconds)}</td><td>{item.advancement}</td></tr>)}</tbody></table></div>
+      </details>}
+      {delivery?.live_note && <p className="delivery-note">Live: {delivery.live_note}</p>}
     </section>
   )
 }
@@ -362,6 +484,9 @@ function SegmentDetail({
   onClose: () => void
 }) {
   const itemLabel = entry.status === 'init' ? 'Init segment' : `Segmento ${entry.index}`
+  const sequenceLabel = entry.segment_sequence === null || entry.segment_sequence === undefined
+    ? null
+    : `Sequência do segmento: ${entry.segment_sequence}`
 
   return (
     <section className="segment-detail" aria-label={`Detalhes de ${itemLabel.toLowerCase()}`}>
@@ -379,6 +504,7 @@ function SegmentDetail({
             )}
           </nav>
           <h4>{container ? `Container ${container.analysis.kind.toUpperCase()}` : itemLabel}</h4>
+          {sequenceLabel && <small>{sequenceLabel}</small>}
         </div>
         <button type="button" className="icon-button" aria-label="Fechar detalhes do segmento" onClick={onClose}>
           ×
@@ -565,6 +691,8 @@ export function TimelineView({
   containers = [],
   abrAlignment = [],
   bitrateObservations = [],
+  delivery = null,
+  bitstreamObservations = [],
   capture,
 }: {
   media?: UnifiedMedia | null
@@ -573,6 +701,8 @@ export function TimelineView({
   containers?: ContainerDTO[]
   abrAlignment?: AbrAlignment[]
   bitrateObservations?: RepresentationBitrate[]
+  delivery?: DeliveryReport | null
+  bitstreamObservations?: RepresentationBitstream[]
   capture: CaptureReport | null
 }) {
   const [selected, setSelected] = useState<string | null>(null)
@@ -604,6 +734,8 @@ export function TimelineView({
 
       <AbrAlignmentMatrix alignments={abrAlignment} />
       <BitrateObservations observations={bitrateObservations} />
+      <DeliveryObservations delivery={delivery} segments={segments} />
+      <BitstreamObservations observations={bitstreamObservations} />
 
       <div className="track-groups">
         {groups.map((group) => {

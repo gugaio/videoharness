@@ -915,7 +915,9 @@ code {
 }
 
 .abr-alignment,
-.bitrate-observations {
+.bitrate-observations,
+.delivery-observations,
+.bitstream-observations {
   margin: 1.25rem 0;
   padding: 1rem;
   border: 1px solid var(--line-strong);
@@ -924,7 +926,9 @@ code {
 }
 
 .abr-alignment > header,
-.bitrate-observations > header {
+.bitrate-observations > header,
+.delivery-observations > header,
+.bitstream-observations > header {
   display: flex;
   align-items: start;
   justify-content: space-between;
@@ -932,7 +936,9 @@ code {
 }
 
 .abr-alignment h3,
-.bitrate-observations h3 {
+.bitrate-observations h3,
+.delivery-observations h3,
+.bitstream-observations h3 {
   margin: 0;
   font-size: 1rem;
 }
@@ -940,7 +946,11 @@ code {
 .abr-alignment > header > span,
 .abr-alignment > p,
 .bitrate-observations > header > span,
-.bitrate-observations > p {
+.bitrate-observations > p,
+.delivery-observations > header > span,
+.delivery-observations > p,
+.bitstream-observations > header > span,
+.bitstream-observations > p {
   color: var(--muted);
   font-size: 0.8125rem;
 }
@@ -993,9 +1003,16 @@ code {
 }
 
 .abr-alignment > p,
-.bitrate-observations > p {
+.bitrate-observations > p,
+.delivery-observations > p,
+.bitstream-observations > p {
   max-width: 78ch;
   margin: 0.5rem 0 0.75rem;
+}
+
+.delivery-note {
+  margin-top: 0.75rem !important;
+  color: var(--warning) !important;
 }
 
 .bitrate-table small {

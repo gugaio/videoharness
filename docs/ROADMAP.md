@@ -78,6 +78,23 @@ concordam e identificando o fallback do manifesto. Picos, faixa e comparação c
 bitrate declarado ficam visíveis; tamanho de unidade é indicador de payload, não
 uma alegação de complexidade de codec.
 
+**Extensão aprovada**: ✅ no schema 1.9, entrega HTTP expõe TTFB, tempo de
+download, throughput efetivo, status, redirects e sinais de cache seguros por
+requisição observada. HLS live preserva sequence e janela declarada; distância da
+borda só existe com `PROGRAM-DATE-TIME`, e avanço não é inferido de uma leitura.
+
+**Extensão aprovada**: ✅ no schema 1.10, a matriz ABR pareia segmentos pela
+identidade canônica (`MEDIA-SEQUENCE` HLS ou número DASH), não pela posição local
+da janela. Segmentos sem equivalente aparecem como janela diferente e não produzem
+falso desvio de keyframe.
+
+**Extensão aprovada**: ✅ no schema 1.12, a configuração efetiva derivada de
+`ffprobe` registra codec/profile/level, pixel format, vídeo e áudio por segmento,
+expõe mudanças entre segmentos observados e o delta A/V por PTS de apresentação
+somente dentro do mesmo container, incluindo os dois PTS usados no cálculo. Usa
+`start_time` apenas como fallback explicitamente marcado; não declara
+compatibilidade de device ou problema de lipsync.
+
 ## Fase 7 — Skills e API para agentes
 
 Skill principal revisada para endpoints/schemas reais; referências HLS/DASH/TS/ISOBMFF coerentes com o suporte atual; catálogo versionado; endpoints de skills; compatibilidade com `schema_version`; exemplos com fixtures; evals; testes de referências/paths/versões; ação "Use with an agent" na UI; `capabilities` e `recommended_skills` no snapshot. Agente carrega só módulos relevantes.
