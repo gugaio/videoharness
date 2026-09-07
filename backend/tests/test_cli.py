@@ -28,7 +28,7 @@ class TestCliInspect:
         code = main(["inspect", "fixture://hls-ts/master.m3u8", "--output", str(output)])
         assert code == 0
         payload = json.loads(output.read_text(encoding="utf-8"))
-        assert payload["schema_version"] == "1.12"
+        assert payload["schema_version"] == "1.13"
         assert payload["manifest"]["kind"] == "hls_master_playlist"
         assert "concluída" in capsys.readouterr().out
 

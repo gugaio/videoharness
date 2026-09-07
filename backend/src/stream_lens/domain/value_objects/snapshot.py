@@ -18,8 +18,8 @@ from stream_lens.domain.value_objects.segments import (
     RepresentationTimeline,
 )
 
-SCHEMA_VERSION = "1.12"
-ANALYZER_VERSION = "1.4.0"
+SCHEMA_VERSION = "1.13"
+ANALYZER_VERSION = "1.5.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +45,7 @@ class Snapshot:
     expires_at: datetime
     source: SourceInfo
     manifest: ManifestSummary
-    media: UnifiedManifest | None = None  # modelo unificado (schema 1.0)
+    media: UnifiedManifest | None = None  # modelo unificado + DRM DASH (1.13)
     capture: CaptureReport | None = None  # janela/limites aplicados (schema 1.1)
     segments: tuple[CapturedSegment, ...] = ()  # bytes capturados (schema 1.1)
     timeline: tuple[RepresentationTimeline, ...] = ()  # timeline normalizada (1.1)

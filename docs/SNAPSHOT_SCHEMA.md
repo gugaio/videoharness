@@ -1,7 +1,7 @@
 # SNAPSHOT_SCHEMA.md
 
-**Status: implementado (Fase 6 + extensões de observabilidade) — `schema_version` 1.12,
-analyzer 1.4.0** (schema 1.11 passa a calcular A/V por PTS de apresentação). Contrato
+**Status: implementado (Fase 6 + extensões de observabilidade) — `schema_version` 1.13,
+analyzer 1.5.0** (schema 1.13 estrutura a sinalização DRM declarada no DASH). Contrato
 validado por testes de round-trip, captura, parsers estruturais e adapter derivado
 offline.
 
@@ -135,7 +135,8 @@ offline.
   plano de captura; `SegmentTimeline` → referências concretas, expandindo `S@r`
   (`r=-1` usa o próximo `S@t` ou o fim conhecido do Period); `SegmentList` → URIs
   explícitas. Um `Representation/BaseURL` sem lista/template vira um segmento único.
-- `ContentProtection` → `drm_systems` (UUIDs conhecidos mapeados: widevine/playready/fairplay/mp4-protection).
+- `ContentProtection` → resumo legado `drm_systems` e declarações estruturadas
+  `dash_drm`, preservando escopo, sistema, esquema, KIDs e resumo seguro de PSSH.
 - `type="dynamic"` → `is_live`.
 
 A materialização defensiva de uma `SegmentTimeline` é limitada a 10.000 segmentos
@@ -467,6 +468,43 @@ conseguiu ler; init isolado não é prova de configuração efetiva no fragmento
 - O bloco não substitui `media.*.codecs` (declaração do manifesto), `analysis.timing`
   (timestamps determinísticos) ou uma avaliação de compatibilidade. Detalhes e
   roteiro QA: [BITSTREAM_OBSERVABILITY.md](BITSTREAM_OBSERVABILITY.md).
+
+## Bloco 1.13 (DRM 1 — sinalização declarada no DASH)
+
+`media.dash_drm` materializa cada `ContentProtection` no local exato em que aparece
+no MPD. O bloco é aditivo: snapshots anteriores continuam válidos e HLS retorna a
+coleção vazia.
+
+```json
+"dash_drm": [{
+  "scope": "adaptation_set",
+  "period_index": 0,
+  "period_id": "p0",
+  "adaptation_set_id": "video",
+  "representation_id": null,
+  "group_kind": "video",
+  "system": "widevine",
+  "scheme_id_uri": "urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed",
+  "value": "cenc",
+  "default_kids": ["11111111-2222-3333-4444-555555555555"],
+  "pssh": [{
+    "encoded_length": 12,
+    "decoded_size": 9,
+    "sha256": "…",
+    "status": "valid"
+  }],
+  "provenance": "declared (DASH ContentProtection)"
+}]
+```
+
+- `scope` é `period`, `adaptation_set` ou `representation`; a declaração não é
+  duplicada nos descendentes para simular herança.
+- `default_kids` contém identificadores normalizados, não chaves de conteúdo.
+- `pssh.status` é `valid`, `empty` ou `invalid_base64`. O conteúdo base64 nunca é
+  persistido; tamanho e SHA-256 permitem correlação segura.
+- O bloco prova apenas o que o MPD declarou. Não testa init/mídia cifrada, licença,
+  CDM ou compatibilidade de device.
+- Detalhes, limites e roteiro QA: [DASH_DRM.md](DASH_DRM.md).
 
 ## Carregamento sob demanda
 

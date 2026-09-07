@@ -39,8 +39,11 @@ o valor; nunca devem ser exibidos como estado saudável.
    encoder, configuração inesperada e timestamps que pedem correlação; não
    infere compatibilidade de dispositivo ou sincronismo percebido. Veja
    [BITSTREAM_OBSERVABILITY.md](BITSTREAM_OBSERVABILITY.md).
-6. **DRM, anúncios e timed metadata** — CENC/CBCS, KID, SCTE-35, `emsg`, ID3 e
-   fronteiras. Explica falhas em breaks e rotação de chave.
+6. **DRM, anúncios e timed metadata** — DRM 1 ✅ implementado para DASH: preserva
+   `ContentProtection` por escopo, sistema, KID e resumo seguro de PSSH. Ajuda a
+   identificar sinalização ausente ou divergente sem confundir manifesto com
+   licença/device. Inspeção CENC/CBCS do init/mídia, rotação, SCTE-35, `emsg`, ID3 e
+   fronteiras permanecem em fases posteriores. Veja [DASH_DRM.md](DASH_DRM.md).
 7. **Findings e histórico** — regras com evidências, comparação de snapshots e
    pacote de incidente. Acelera triagem sem esconder os dados brutos.
 8. **Telemetria de player** — CMCD/traces correlacionados. Confirma impacto real em

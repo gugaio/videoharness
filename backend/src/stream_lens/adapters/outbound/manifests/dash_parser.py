@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import dataclasses
+import hashlib
 import math
 import xml.etree.ElementTree as ET
+from collections.abc import Iterator
 from urllib.parse import urljoin
 
+from stream_lens.domain.services.redaction import redact_url
 from stream_lens.domain.value_objects.media import (
     Capability,
     CapabilityStatus,
+    DashDrmDeclaration,
+    DashPsshDeclaration,
     DrmSystem,
     MediaKind,
     Representation,
@@ -42,6 +49,12 @@ def _find(el: ET.Element, name: str) -> ET.Element | None:
     return None
 
 
+def _children(el: ET.Element, name: str) -> Iterator[ET.Element]:
+    for child in el:
+        if _local(child.tag) == name:
+            yield child
+
+
 def _text(el: ET.Element, name: str) -> str | None:
     child = _find(el, name)
     if child is None or child.text is None:
@@ -51,9 +64,11 @@ def _text(el: ET.Element, name: str) -> str | None:
 
 _KNOWN_DRM = {
     "urn:mpeg:dash:mp4protection:2011": "mp4-protection",
+    "urn:uuid:1077efec-c0b2-4d02-ace3-3c1e52e2fb4b": "common-pssh",
     "urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed": "widevine",
     "urn:uuid:9a04f079-9840-4286-ab92-e65be0885f95": "playready",
-    "urn:uuid:f239e769-efa3-4850-9c16-a903c6932efb": "fairplay",
+    "urn:uuid:94ce86fb-07ff-4f43-adb8-93d2fa968ca2": "fairplay",
+    "urn:uuid:f239e769-efa3-4850-9c16-a903c6932efb": "adobe-primetime",
 }
 
 
@@ -65,6 +80,7 @@ def parse_dash(content: str) -> UnifiedManifest:
 
     groups: list[TrackGroup] = []
     drm: list[DrmSystem] = []
+    dash_drm: list[DashDrmDeclaration] = []
     warnings: list[str] = []
     has_segment_timeline = False
     periods = list(_iter(root, "Period"))
@@ -72,11 +88,35 @@ def parse_dash(content: str) -> UnifiedManifest:
     mpd_base = _text(root, "BaseURL")
 
     for period_index, period in enumerate(periods):
+        period_id = period.get("id")
+        for cp in _children(period, "ContentProtection"):
+            drm.append(_drm_system(cp))
+            dash_drm.append(
+                _dash_drm_declaration(
+                    cp,
+                    scope="period",
+                    period_index=period_index,
+                    period_id=period_id,
+                )
+            )
         period_duration = _period_duration(periods, period_index, mpd_duration)
         period_base = _join_ref(mpd_base, _text(period, "BaseURL"))
         period_template = _find(period, "SegmentTemplate")
         for aset in _iter(period, "AdaptationSet"):
             kind = _media_kind(aset)
+            adaptation_set_id = aset.get("id")
+            for cp in _children(aset, "ContentProtection"):
+                drm.append(_drm_system(cp))
+                dash_drm.append(
+                    _dash_drm_declaration(
+                        cp,
+                        scope="adaptation_set",
+                        period_index=period_index,
+                        period_id=period_id,
+                        adaptation_set_id=adaptation_set_id,
+                        group_kind=kind.value,
+                    )
+                )
             roles = tuple(
                 f"{role.get('schemeIdUri', '')}:{role.get('value', '')}".strip(":")
                 for role in _iter(aset, "Role")
@@ -90,6 +130,19 @@ def parse_dash(content: str) -> UnifiedManifest:
             )
             aset_base = _join_ref(period_base, _text(aset, "BaseURL"))
             for rep_el in _iter(aset, "Representation"):
+                for cp in _children(rep_el, "ContentProtection"):
+                    drm.append(_drm_system(cp))
+                    dash_drm.append(
+                        _dash_drm_declaration(
+                            cp,
+                            scope="representation",
+                            period_index=period_index,
+                            period_id=period_id,
+                            adaptation_set_id=adaptation_set_id,
+                            representation_id=rep_el.get("id"),
+                            group_kind=kind.value,
+                        )
+                    )
                 rep, timeline_used, rep_warnings = _parse_representation(
                     rep_el,
                     aset_codecs,
@@ -106,8 +159,6 @@ def parse_dash(content: str) -> UnifiedManifest:
                     continue
                 reps.append(dataclasses.replace(rep, roles=roles) if roles else rep)
 
-            for cp in _iter(aset, "ContentProtection"):
-                drm.append(_drm_system(cp))
             if not reps:
                 warnings.append(
                     f"AdaptationSet '{aset.get('id') or aset.get('contentType')}' "
@@ -129,6 +180,7 @@ def parse_dash(content: str) -> UnifiedManifest:
         is_live=is_live,
         track_groups=tuple(groups),
         drm_systems=tuple(drm),
+        dash_drm=tuple(dash_drm),
         protocol_specific={
             "dash": {
                 "mpd_type": root.get("type", "static"),
@@ -375,11 +427,73 @@ def _media_kind(aset: ET.Element) -> MediaKind:
 
 
 def _drm_system(cp: ET.Element) -> DrmSystem:
-    scheme = cp.get("schemeIdUri") or ""
-    system = _KNOWN_DRM.get(scheme.strip().lower(), scheme or "unknown")
-    default_kid = cp.get("cenc:defaultKID") or cp.get("{urn:mpeg:cenc:2013}defaultKID")
+    raw_scheme = (cp.get("schemeIdUri") or "").strip()
+    scheme = redact_url(raw_scheme)
+    system = _KNOWN_DRM.get(raw_scheme.lower(), scheme or "unknown")
+    default_kid = _default_kid_value(cp)
     details = f"scheme={scheme}" + (f" kid={default_kid}" if default_kid else "")
     return DrmSystem(system=system, details=details)
+
+
+def _dash_drm_declaration(
+    cp: ET.Element,
+    *,
+    scope: str,
+    period_index: int,
+    period_id: str | None,
+    adaptation_set_id: str | None = None,
+    representation_id: str | None = None,
+    group_kind: str | None = None,
+) -> DashDrmDeclaration:
+    raw_scheme = (cp.get("schemeIdUri") or "").strip()
+    scheme = redact_url(raw_scheme)
+    system = _KNOWN_DRM.get(raw_scheme.lower(), scheme or "unknown")
+    default_kid = _default_kid_value(cp)
+    return DashDrmDeclaration(
+        scope=scope,
+        period_index=period_index,
+        period_id=period_id,
+        adaptation_set_id=adaptation_set_id,
+        representation_id=representation_id,
+        group_kind=group_kind,
+        system=system,
+        scheme_id_uri=scheme,
+        value=cp.get("value"),
+        default_kids=_normalize_kids(default_kid),
+        pssh=tuple(_summarize_pssh(item) for item in _children(cp, "pssh")),
+    )
+
+
+def _normalize_kids(value: str | None) -> tuple[str, ...]:
+    if not value:
+        return ()
+    return tuple(token.strip("{}").lower() for token in value.split() if token.strip("{}"))
+
+
+def _default_kid_value(cp: ET.Element) -> str | None:
+    return (
+        cp.get("{urn:mpeg:cenc:2013}default_KID")
+        or cp.get("{urn:mpeg:cenc:2013}defaultKID")
+        or cp.get("cenc:default_KID")
+        or cp.get("cenc:defaultKID")
+    )
+
+
+def _summarize_pssh(element: ET.Element) -> DashPsshDeclaration:
+    encoded = "".join((element.text or "").split())
+    if not encoded:
+        return DashPsshDeclaration(encoded_length=0, status="empty")
+    try:
+        decoded = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError):
+        return DashPsshDeclaration(
+            encoded_length=len(encoded), status="invalid_base64"
+        )
+    return DashPsshDeclaration(
+        encoded_length=len(encoded),
+        decoded_size=len(decoded),
+        sha256=hashlib.sha256(decoded).hexdigest(),
+    )
 
 
 def _sub_ids(template: str, el: ET.Element) -> str:

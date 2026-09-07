@@ -6,8 +6,23 @@ arquitetural fica nos ADRs; histórico de mudanças no Git.
 **Data**: 2026-09-07 · **Fase concluída**: 6 + extensões aprovadas · **Produto
 funcional**: ✅ v1.0 — captura limitada + inspeção estrutural fMP4/MPEG-TS,
 Timeline Health, matriz ABR, bitrate por segmento, visualização de frames/samples e HDR
-(entrega HTTP/live, matriz ABR por sequência e configuração efetiva de bitstream/A/V;
-snapshot 1.12, analyzer 1.4.0)
+(entrega HTTP/live, matriz ABR por sequência, configuração efetiva de bitstream/A/V
+e DRM declarado no DASH; snapshot 1.13, analyzer 1.5.0)
+
+## Aprimoramento mais recente (strings de codec de áudio)
+
+As representações de áudio agora interpretam `mp4a.40.2` como AAC-LC, explicando
+`mp4a`, o Object Type Indication `40` e o Audio Object Type `2`. `ac-3` e `ec-3`
+também recebem nomes e tooltips próprios para Dolby Digital e Dolby Digital Plus,
+sem inferir canais, Atmos, bitrate ou compatibilidade de device.
+
+## Entrega mais recente (DRM 1 — manifesto DASH)
+
+Cada `ContentProtection` do MPD agora preserva escopo, sistema, esquema, KIDs e um
+resumo seguro do PSSH. A UI explica cada conceito e separa claramente sinalização
+de manifesto de aquisição de licença e compatibilidade de device. O conteúdo PSSH
+não é armazenado; somente validade, tamanho e hash são persistidos. HLS ficou fora
+desta fase conforme o uso atual do produto.
 
 ## Entrega mais recente (O5 — Bitstream e sincronismo A/V)
 
@@ -56,7 +71,7 @@ calcula a distância da borda quando `PROGRAM-DATE-TIME` permite, e declara que 
 avanço não é mensurável com uma única leitura. Não é telemetria ou diagnóstico de
 player.
 
-**Validação atual**: 144 testes backend e 37 frontend; lint, typecheck e build de
+**Validação atual**: 147 testes backend e 43 frontend; lint, typecheck e build de
 produção do frontend passam.
 
 ## Status atual
@@ -167,8 +182,8 @@ implícito e `S@r`, e `Representation/BaseURL` direto é capturável como segmen
 - A lista detalhada é limitada a 1.000 itens por container. Em MPEG-TS, uma unidade
   PES pode carregar múltiplos access units e só é apresentada como frame quando a
   leitura derivada do `ffprobe` fornece essa evidência.
-- A ajuda visual de Profile/Level cobre AVC compacto e HEVC `hvc1`/`hev1`; outros
-  codec strings continuam visíveis sem interpretação adicional.
+- A ajuda visual cobre AVC compacto, HEVC `hvc1`/`hev1`, `mp4a.40[.AOT]`, `ac-3` e
+  `ec-3`; outros codec strings continuam visíveis sem interpretação adicional.
 - Não há diagnóstico automático, inspeção de samples/bitstream completa, parsing de
   RPU Dolby Vision ou endpoint lazy por container. HDR10+ é apenas uma presença
   observada no segmento, não seus parâmetros por quadro.
@@ -180,5 +195,5 @@ implícito e `S@r`, e `Representation/BaseURL` direto é capturável como segmen
 
 ## Próximo passo exato
 
-**Fase 7** (mediante aprovação): skills e API para agentes, baseadas no schema 1.12 e
-nos endpoints reais; catálogo versionado, exemplos verificáveis e evals.
+**DRM 2** (mediante aprovação): inspecionar `sinf`/`schm`/`schi`/`tenc`/`pssh` nos
+init segments fMP4 e comparar esquema, KID, IV e pattern encryption com o MPD.

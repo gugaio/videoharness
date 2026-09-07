@@ -89,6 +89,38 @@ class DrmSystem:
 
 
 @dataclass(frozen=True, slots=True)
+class DashPsshDeclaration:
+    """Resumo seguro de um elemento ``cenc:pssh`` declarado no MPD.
+
+    O payload base64 não é persistido. Tamanho e hash permitem correlacionar
+    declarações sem transformar o snapshot em transporte de init data DRM.
+    """
+
+    encoded_length: int
+    decoded_size: int | None = None
+    sha256: str | None = None
+    status: str = "valid"  # valid | empty | invalid_base64
+
+
+@dataclass(frozen=True, slots=True)
+class DashDrmDeclaration:
+    """Um ``ContentProtection`` DASH com escopo e proveniência explícitos."""
+
+    scope: str  # period | adaptation_set | representation
+    period_index: int
+    period_id: str | None
+    adaptation_set_id: str | None
+    representation_id: str | None
+    group_kind: str | None
+    system: str
+    scheme_id_uri: str
+    value: str | None = None
+    default_kids: tuple[str, ...] = ()
+    pssh: tuple[DashPsshDeclaration, ...] = ()
+    provenance: str = "declared (DASH ContentProtection)"
+
+
+@dataclass(frozen=True, slots=True)
 class TrackGroup:
     """Grupo de mídia: rendições alternativas do mesmo conteúdo/kind."""
 
@@ -107,6 +139,7 @@ class UnifiedManifest:
     is_live: bool
     track_groups: tuple[TrackGroup, ...] = ()
     drm_systems: tuple[DrmSystem, ...] = ()
+    dash_drm: tuple[DashDrmDeclaration, ...] = ()
     # preservado sem forjar equivalência: {"hls": {...}} ou {"dash": {...}}
     protocol_specific: dict = field(default_factory=dict)
     # o que esta versão do analyzer suporta sobre este manifesto

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { ApiError, getInspection, getSnapshot } from '../api'
+import { DrmOverview } from '../components/DrmOverview'
 import { TimelineView } from '../components/TimelineView'
 
 const KIND_LABELS: Record<string, string> = {
@@ -194,6 +195,8 @@ export function Inspect() {
         </div>
       )}
 
+      {snapshot.data?.media && <DrmOverview media={snapshot.data.media} />}
+
       {snapshot.data && (timeline.length > 0 || snapshot.data.media?.track_groups.length) ? (
         <TimelineView
           media={snapshot.data.media}
@@ -249,7 +252,7 @@ export function Inspect() {
             </div>
           </dl>
 
-          {snapshot.data.media?.drm_systems.length ? (
+          {snapshot.data.media?.drm_systems.length && !snapshot.data.media.dash_drm?.length ? (
             <p className="technical-note">
               DRM sinalizado: {snapshot.data.media.drm_systems.map((item) => item.system).join(', ')}
             </p>

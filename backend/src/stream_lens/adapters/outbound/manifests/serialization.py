@@ -6,6 +6,8 @@ from stream_lens.domain.services.redaction import redact_url
 from stream_lens.domain.value_objects.media import (
     Capability,
     CapabilityStatus,
+    DashDrmDeclaration,
+    DashPsshDeclaration,
     DrmSystem,
     MediaKind,
     Representation,
@@ -108,6 +110,7 @@ def media_to_dict(media: UnifiedManifest) -> dict:
         "drm_systems": [
             {"system": d.system, "details": d.details} for d in media.drm_systems
         ],
+        "dash_drm": [_dash_drm_to_dict(item) for item in media.dash_drm],
         "protocol_specific": media.protocol_specific,
         "capabilities": {
             key: {"status": cap.status.value, "reason": cap.reason}
@@ -135,6 +138,9 @@ def media_from_dict(data: dict) -> UnifiedManifest:
             DrmSystem(system=d["system"], details=d.get("details"))
             for d in data.get("drm_systems", [])
         ),
+        dash_drm=tuple(
+            _dash_drm_from_dict(item) for item in data.get("dash_drm", [])
+        ),
         protocol_specific=data.get("protocol_specific", {}),
         capabilities={
             key: Capability(
@@ -144,4 +150,54 @@ def media_from_dict(data: dict) -> UnifiedManifest:
             for key, v in data.get("capabilities", {}).items()
         },
         warnings=tuple(data.get("warnings", [])),
+    )
+
+
+def _dash_drm_to_dict(item: DashDrmDeclaration) -> dict:
+    return {
+        "scope": item.scope,
+        "period_index": item.period_index,
+        "period_id": item.period_id,
+        "adaptation_set_id": item.adaptation_set_id,
+        "representation_id": item.representation_id,
+        "group_kind": item.group_kind,
+        "system": item.system,
+        "scheme_id_uri": redact_url(item.scheme_id_uri),
+        "value": item.value,
+        "default_kids": list(item.default_kids),
+        "pssh": [
+            {
+                "encoded_length": pssh.encoded_length,
+                "decoded_size": pssh.decoded_size,
+                "sha256": pssh.sha256,
+                "status": pssh.status,
+            }
+            for pssh in item.pssh
+        ],
+        "provenance": item.provenance,
+    }
+
+
+def _dash_drm_from_dict(data: dict) -> DashDrmDeclaration:
+    return DashDrmDeclaration(
+        scope=data["scope"],
+        period_index=data["period_index"],
+        period_id=data.get("period_id"),
+        adaptation_set_id=data.get("adaptation_set_id"),
+        representation_id=data.get("representation_id"),
+        group_kind=data.get("group_kind"),
+        system=data["system"],
+        scheme_id_uri=data["scheme_id_uri"],
+        value=data.get("value"),
+        default_kids=tuple(data.get("default_kids", [])),
+        pssh=tuple(
+            DashPsshDeclaration(
+                encoded_length=pssh["encoded_length"],
+                decoded_size=pssh.get("decoded_size"),
+                sha256=pssh.get("sha256"),
+                status=pssh.get("status", "valid"),
+            )
+            for pssh in data.get("pssh", [])
+        ),
+        provenance=data.get("provenance", "declared (DASH ContentProtection)"),
     )

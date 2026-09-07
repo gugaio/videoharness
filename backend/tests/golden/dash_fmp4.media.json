@@ -9,6 +9,7 @@
       "status": "not_applicable"
     }
   },
+  "dash_drm": [],
   "drm_systems": [],
   "is_live": false,
   "kind": "dash_mpd",

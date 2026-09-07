@@ -88,7 +88,7 @@ class TestCreateInspectionAsync:
         snapshot = await client.get(detail["snapshot_url"])
         assert snapshot.status_code == 200
         snap = snapshot.json()
-        assert snap["schema_version"] == "1.12"
+        assert snap["schema_version"] == "1.13"
         assert snap["source"]["display_url"] == "fixture://hls-ts/master.m3u8"
 
     async def test_fluxo_dash(self, client):

@@ -15,6 +15,7 @@ import type {
 } from '../types'
 import {
   decodeCodecList,
+  describeAudioFormat,
   describeAvcLevel,
   describeAvcProfile,
   describeHevcLevel,
@@ -452,6 +453,51 @@ function CodecSummary({ value }: { value: string }) {
                   <strong>O que significa Level {hevc.level}?</strong>
                   <span>{describeHevcLevel(hevc.level)}</span>
                   <span>{hevc.tier === 'H' ? 'High Tier' : 'Main Tier'} é sinalizado separadamente; level limita resolução, fps, bitrate e buffer, não a qualidade.</span>
+                </span>
+              </span>
+            </div>
+          )
+        }
+
+        if (codec.audio) {
+          const audio = codec.audio
+          const formatTooltipId = `${tooltipBaseId}-audio-${index}`
+          return (
+            <div
+              className="codec-summary"
+              key={`${codec.raw}-${index}`}
+              aria-label={`${codec.raw}: ${codec.family}, formato ${audio.format}`}
+            >
+              <code
+                className="codec-string"
+                title={audio.objectTypeHex
+                  ? `${audio.prefix} identifica MPEG-4 Audio; ${audio.objectTypeHex} é o Object Type Indication hexadecimal; ${audio.audioObjectTypeId ? `${audio.audioObjectTypeId} é o Audio Object Type decimal` : 'o Audio Object Type não foi declarado'}`
+                  : `${audio.prefix} identifica ${audio.format}`}
+              >
+                {audio.objectTypeHex ? (
+                  <>
+                    {audio.prefix}.<span className="codec-object-type-byte">{audio.objectTypeHex}</span>
+                    {audio.audioObjectTypeId && <>.<span className="codec-audio-object-type-byte">{audio.audioObjectTypeId}</span></>}
+                  </>
+                ) : codec.raw}
+              </code>
+              <span className="codec-family">{codec.family}</span>
+              <span className="codec-pill codec-audio codec-pill-help" tabIndex={0} aria-describedby={formatTooltipId}>
+                Formato <strong>{audio.format}</strong>
+                <span className="codec-tooltip codec-tooltip-audio" id={formatTooltipId} role="tooltip">
+                  <strong>Como ler {codec.raw}?</strong>
+                  <span>{describeAudioFormat(audio.format)}</span>
+                  {audio.objectTypeHex ? (
+                    <span>
+                      <code>mp4a</code> é a entrada MPEG-4 Audio; <code>{audio.objectTypeHex}</code> é o Object Type Indication hexadecimal;{' '}
+                      {audio.audioObjectTypeId
+                        ? <><code>{audio.audioObjectTypeId}</code> é o Audio Object Type decimal.</>
+                        : 'o Audio Object Type não foi declarado na string.'}
+                    </span>
+                  ) : (
+                    <span><code>{audio.prefix}</code> é o identificador do codec no container/manifesto.</span>
+                  )}
+                  <span>A string sozinha não informa bitrate, sample rate, canais, Atmos nem compatibilidade do dispositivo.</span>
                 </span>
               </span>
             </div>

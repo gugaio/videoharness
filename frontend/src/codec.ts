@@ -19,11 +19,19 @@ export interface HevcCodecInfo {
   level: string
 }
 
+export interface AudioCodecInfo {
+  prefix: 'mp4a' | 'ac-3' | 'ec-3'
+  format: string
+  objectTypeHex: string | null
+  audioObjectTypeId: string | null
+}
+
 export interface CodecInfo {
   raw: string
   family: string | null
   avc: AvcCodecInfo | null
   hevc: HevcCodecInfo | null
+  audio: AudioCodecInfo | null
 }
 
 const AVC_PROFILES: Record<number, string> = {
@@ -119,6 +127,12 @@ const HEVC_LEVEL_EXAMPLES: Record<string, string> = {
   '6.2': 'Uso típico: 8K em até cerca de 120 fps no Main Tier.',
 }
 
+const AUDIO_FORMAT_DESCRIPTIONS: Record<string, string> = {
+  'AAC-LC': 'AAC Low Complexity: perfil AAC de uso geral, comum em streaming e com ampla compatibilidade de reprodução.',
+  'AC-3': 'AC-3, também conhecido como Dolby Digital, é um formato de áudio comprimido que pode transportar áudio multicanal.',
+  'E-AC-3': 'Enhanced AC-3, também conhecido como Dolby Digital Plus, melhora a eficiência e pode transportar áudio multicanal.',
+}
+
 function formatAvcLevel(levelIdc: number, constraints: number): string {
   if (levelIdc === 11 && (constraints & 0x10) !== 0) return '1b'
   if (levelIdc % 10 === 0) return String(levelIdc / 10)
@@ -141,6 +155,10 @@ export function describeHevcProfile(profile: string): string {
   return HEVC_PROFILE_EXAMPLES[profile] ?? 'Este profile define o conjunto de ferramentas HEVC e a profundidade de bits que o decoder precisa suportar.'
 }
 
+export function describeAudioFormat(format: string): string {
+  return AUDIO_FORMAT_DESCRIPTIONS[format] ?? 'A string identifica a família ou configuração de áudio anunciada pelo manifesto.'
+}
+
 export function decodeCodec(codec: string): CodecInfo {
   const raw = codec.trim()
   const avcMatch = /^(avc1|avc3)\.([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(raw)
@@ -161,6 +179,7 @@ export function decodeCodec(codec: string): CodecInfo {
         level: formatAvcLevel(Number.parseInt(avcMatch[4], 16), constraints),
       },
       hevc: null,
+      audio: null,
     }
   }
 
@@ -184,10 +203,50 @@ export function decodeCodec(codec: string): CodecInfo {
         profile: HEVC_PROFILES[profileIdc] ?? `Profile ${hevcMatch[2].toUpperCase()}${profileIdc}`,
         level: HEVC_LEVELS[levelIdc] ?? `Level ${levelIdc}`,
       },
+      audio: null,
     }
   }
 
-  return { raw, family: null, avc: null, hevc: null }
+  const mpeg4AudioMatch = /^mp4a\.([0-9a-f]{2})(?:\.(\d+))?$/i.exec(raw)
+  if (mpeg4AudioMatch && mpeg4AudioMatch[1].toLowerCase() === '40') {
+    const audioObjectTypeId = mpeg4AudioMatch[2] ?? null
+    const format = audioObjectTypeId === '2'
+      ? 'AAC-LC'
+      : audioObjectTypeId
+        ? `Audio Object Type ${audioObjectTypeId}`
+        : 'MPEG-4 Audio'
+    return {
+      raw,
+      family: audioObjectTypeId === '2' ? 'AAC' : 'MPEG-4 Audio',
+      avc: null,
+      hevc: null,
+      audio: {
+        prefix: 'mp4a',
+        format,
+        objectTypeHex: mpeg4AudioMatch[1].toLowerCase(),
+        audioObjectTypeId,
+      },
+    }
+  }
+
+  const simpleAudio = raw.toLowerCase()
+  if (simpleAudio === 'ac-3' || simpleAudio === 'ec-3') {
+    const enhanced = simpleAudio === 'ec-3'
+    return {
+      raw,
+      family: enhanced ? 'Dolby Digital Plus' : 'Dolby Digital',
+      avc: null,
+      hevc: null,
+      audio: {
+        prefix: simpleAudio,
+        format: enhanced ? 'E-AC-3' : 'AC-3',
+        objectTypeHex: null,
+        audioObjectTypeId: null,
+      },
+    }
+  }
+
+  return { raw, family: null, avc: null, hevc: null, audio: null }
 }
 
 export function decodeCodecList(codecs: string): CodecInfo[] {

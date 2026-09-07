@@ -39,11 +39,12 @@ def create_app(container: Container) -> FastAPI:
 
     app = FastAPI(
         title="Stream Lens",
-        version="1.4.0",
+        version="1.5.0",
         description=(
             "Inspeção top-down de streams HLS/DASH. Inspeções são assíncronas: "
             "crie com POST e acompanhe por polling em status_url. v1.0: "
-            "snapshot schema 1.12: entrega HTTP/live, bitrate calculado por segmento, "
+            "snapshot schema 1.13: DRM declarado no DASH, entrega HTTP/live, bitrate "
+            "calculado por segmento, "
             "matriz ABR por sequência, configuração efetiva de bitstream/A-V, saúde "
             "temporal, frames derivados, samples/PES e HDR."
         ),

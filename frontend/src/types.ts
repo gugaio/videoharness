@@ -81,6 +81,28 @@ export interface DrmSystem {
   details: string | null
 }
 
+export interface DashPsshDeclaration {
+  encoded_length: number
+  decoded_size: number | null
+  sha256: string | null
+  status: 'valid' | 'empty' | 'invalid_base64'
+}
+
+export interface DashDrmDeclaration {
+  scope: 'period' | 'adaptation_set' | 'representation'
+  period_index: number
+  period_id: string | null
+  adaptation_set_id: string | null
+  representation_id: string | null
+  group_kind: string | null
+  system: string
+  scheme_id_uri: string
+  value: string | null
+  default_kids: string[]
+  pssh: DashPsshDeclaration[]
+  provenance: string
+}
+
 export interface Capability {
   status: 'supported' | 'unsupported' | 'not_collected' | 'not_applicable'
   reason: string | null
@@ -92,6 +114,7 @@ export interface UnifiedMedia {
   is_live: boolean
   track_groups: TrackGroup[]
   drm_systems: DrmSystem[]
+  dash_drm?: DashDrmDeclaration[]
   protocol_specific: Record<string, Record<string, unknown>>
   capabilities: Record<string, Capability>
   warnings: string[]

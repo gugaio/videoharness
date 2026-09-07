@@ -1,7 +1,7 @@
 # TESTING.md
 
-**Status: Fase 6 + extensões concluídas — 144 testes backend (pytest) + 37 frontend (vitest),
-todos offline; o teste opcional de ffprobe é pulado quando o binário não existe.**
+**Status: Fase 6 + extensões concluídas — 147 testes backend (pytest) + 43 frontend
+(vitest), todos offline; o teste opcional de ffprobe é pulado quando o binário não existe.**
 
 ## Princípios
 
@@ -50,6 +50,12 @@ TS (PAT/PMT/PES/PCR) e fMP4 (init e fragmentos). Sem mídia protegida por copyri
 - Entrega HTTP/live: TTFB, download, throughput, redirects, status de falha e
   redução segura de headers de cache; round-trip/redaction; e playlist HLS live
   com `PROGRAM-DATE-TIME`, sequência e ausência explícita de avanço em uma leitura.
+- DRM DASH fase 1: escopo de `ContentProtection`, UUIDs conhecidos, KID
+  normalizado, PSSH válido/inválido sem persistir payload, redaction e painel com
+  limites explícitos; HLS e snapshots legados não recebem o painel DASH.
+- Strings de codec de áudio: decomposição de `mp4a.40.2`, identificação de
+  `ac-3`/`ec-3`, tooltips acessíveis e ausência explícita de inferência sobre
+  bitrate, canais, Atmos ou compatibilidade.
 
 ## Comandos (raiz do repositório)
 

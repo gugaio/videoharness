@@ -54,8 +54,14 @@ o snapshot continua sendo obtido pelo endpoint canônico único do MVP.
 
 A decodificação de codec nesta fase é uma ajuda de leitura determinística sobre a
 string declarada no manifesto. Ela cobre `avc1.PPCCLL`, `avc3.PPCCLL` e as formas
-HEVC `hvc1`/`hev1` com profile, compatibilidade, tier e level; formatos não
-reconhecidos permanecem crus, sem Profile/Level inferidos.
+HEVC `hvc1`/`hev1` com profile, compatibilidade, tier e level. Para áudio, cobre
+`mp4a.40[.AOT]`, `ac-3` e `ec-3`: `mp4a.40.2` é explicado como AAC-LC, separando
+Object Type Indication hexadecimal e Audio Object Type decimal, enquanto AC-3 e
+E-AC-3 são identificados como Dolby Digital e Dolby Digital Plus. Os tooltips
+deixam explícito que a string não informa bitrate, sample rate, canais, Atmos ou
+compatibilidade do dispositivo. O formato de `mp4a` segue a
+[RFC 6381](https://www.rfc-editor.org/rfc/rfc6381.html); formatos não reconhecidos
+permanecem crus, sem profile ou capacidade inferidos.
 
 ## Estados de tela
 

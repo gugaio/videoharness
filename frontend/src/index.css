@@ -595,6 +595,16 @@ code {
   font-weight: 750;
 }
 
+.codec-object-type-byte {
+  color: var(--warning);
+  font-weight: 750;
+}
+
+.codec-audio-object-type-byte {
+  color: var(--accent);
+  font-weight: 750;
+}
+
 .codec-family {
   color: var(--muted);
   font-size: 0.7rem;
@@ -641,6 +651,14 @@ code {
 
 .codec-level strong {
   color: var(--blue);
+}
+
+.codec-audio {
+  border-color: rgba(240, 179, 91, 0.34);
+}
+
+.codec-audio strong {
+  color: var(--warning);
 }
 
 .codec-pill-help {
@@ -713,6 +731,18 @@ code {
 
 .codec-tooltip-profile > strong {
   color: var(--accent);
+}
+
+.codec-tooltip-audio {
+  border-color: #665032;
+}
+
+.codec-tooltip-audio::before {
+  border-color: #665032;
+}
+
+.codec-tooltip-audio > strong {
+  color: var(--warning);
 }
 
 .codec-pill-help:hover .codec-tooltip,
@@ -917,7 +947,8 @@ code {
 .abr-alignment,
 .bitrate-observations,
 .delivery-observations,
-.bitstream-observations {
+.bitstream-observations,
+.drm-overview {
   margin: 1.25rem 0;
   padding: 1rem;
   border: 1px solid var(--line-strong);
@@ -928,7 +959,8 @@ code {
 .abr-alignment > header,
 .bitrate-observations > header,
 .delivery-observations > header,
-.bitstream-observations > header {
+.bitstream-observations > header,
+.drm-overview > header {
   display: flex;
   align-items: start;
   justify-content: space-between;
@@ -938,7 +970,8 @@ code {
 .abr-alignment h3,
 .bitrate-observations h3,
 .delivery-observations h3,
-.bitstream-observations h3 {
+.bitstream-observations h3,
+.drm-overview h2 {
   margin: 0;
   font-size: 1rem;
 }
@@ -950,7 +983,9 @@ code {
 .delivery-observations > header > span,
 .delivery-observations > p,
 .bitstream-observations > header > span,
-.bitstream-observations > p {
+.bitstream-observations > p,
+.drm-overview > header > span,
+.drm-overview > p {
   color: var(--muted);
   font-size: 0.8125rem;
 }
@@ -1005,7 +1040,8 @@ code {
 .abr-alignment > p,
 .bitrate-observations > p,
 .delivery-observations > p,
-.bitstream-observations > p {
+.bitstream-observations > p,
+.drm-overview > p {
   max-width: 78ch;
   margin: 0.5rem 0 0.75rem;
 }
@@ -1018,6 +1054,22 @@ code {
 .bitrate-table small {
   color: var(--muted);
   font-size: 0.72rem;
+}
+
+.drm-table td code,
+.drm-table td span,
+.drm-table td small {
+  display: block;
+}
+
+.drm-table td code + code,
+.drm-table td span + span {
+  margin-top: 0.3rem;
+}
+
+.drm-table td small {
+  margin-top: 0.2rem;
+  color: var(--muted);
 }
 
 .bitrate-details {

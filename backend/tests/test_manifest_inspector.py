@@ -1,10 +1,16 @@
 """Testes do inspetor declarativo: modelo unificado + paridade HLS/DASH."""
 
+import hashlib
+
 import pytest
 
 from stream_lens.adapters.outbound.manifests.manifest_inspector import (
     DeclarativeManifestInspector,
     UnsupportedManifestError,
+)
+from stream_lens.adapters.outbound.manifests.serialization import (
+    media_from_dict,
+    media_to_dict,
 )
 from stream_lens.domain.value_objects.manifest_summary import summary_from_unified
 from stream_lens.domain.value_objects.media import MediaKind
@@ -247,14 +253,83 @@ class TestUnifiedModelDash:
         assert rep.total_duration_seconds == 12.0
 
     def test_content_protection_mapeada(self):
-        mpd = """<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static">
+        mpd = """<MPD xmlns="urn:mpeg:dash:schema:mpd:2011"
+          xmlns:cenc="urn:mpeg:cenc:2013" type="static">
+          <Period id="p0">
+          <ContentProtection schemeIdUri="urn:uuid:1077efec-c0b2-4d02-ace3-3c1e52e2fb4b"/>
+          <AdaptationSet id="video" contentType="video">
+            <ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011"
+              value="cenc" cenc:default_KID="{11111111-2222-3333-4444-555555555555}"/>
+            <ContentProtection schemeIdUri="urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed">
+              <cenc:pssh>cHNzaC1kYXRh</cenc:pssh>
+            </ContentProtection>
+            <Representation id="v1" bandwidth="100000">
+              <ContentProtection schemeIdUri="urn:uuid:9a04f079-9840-4286-ab92-e65be0885f95"/>
+            </Representation>
+          </AdaptationSet></Period>
+        </MPD>"""
+        media = inspector.inspect(mpd)
+        assert [d.system for d in media.drm_systems] == [
+            "common-pssh",
+            "mp4-protection",
+            "widevine",
+            "playready",
+        ]
+        assert [item.scope for item in media.dash_drm] == [
+            "period",
+            "adaptation_set",
+            "adaptation_set",
+            "representation",
+        ]
+        assert media.dash_drm[1].default_kids == (
+            "11111111-2222-3333-4444-555555555555",
+        )
+        assert media.dash_drm[0].period_id == "p0"
+        assert media.dash_drm[1].adaptation_set_id == "video"
+        assert media.dash_drm[3].representation_id == "v1"
+
+        pssh = media.dash_drm[2].pssh[0]
+        assert pssh.encoded_length == 12
+        assert pssh.decoded_size == 9
+        assert pssh.sha256 == hashlib.sha256(b"pssh-data").hexdigest()
+        assert pssh.status == "valid"
+
+        payload = media_to_dict(media)
+        assert "cHNzaC1kYXRh" not in str(payload)
+        assert media_from_dict(payload) == media
+
+    @pytest.mark.parametrize(
+        ("scheme", "expected"),
+        [
+            ("urn:uuid:94ce86fb-07ff-4f43-adb8-93d2fa968ca2", "fairplay"),
+            ("urn:uuid:f239e769-efa3-4850-9c16-a903c6932efb", "adobe-primetime"),
+        ],
+    )
+    def test_uuid_drm_mapeado_sem_confundir_sistemas(self, scheme, expected):
+        mpd = f"""<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static">
           <Period><AdaptationSet contentType="video">
-            <ContentProtection schemeIdUri="urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed"/>
+            <ContentProtection schemeIdUri="{scheme}"/>
+            <Representation id="v1" bandwidth="100000"/>
+          </AdaptationSet></Period>
+        </MPD>"""
+        assert inspector.inspect(mpd).dash_drm[0].system == expected
+
+    def test_content_protection_pssh_invalido_nao_quebra_parser(self):
+        mpd = """<MPD xmlns="urn:mpeg:dash:schema:mpd:2011"
+          xmlns:cenc="urn:mpeg:cenc:2013" type="static">
+          <Period><AdaptationSet contentType="video">
+            <ContentProtection schemeIdUri="https://drm.example/system?token=secret">
+              <cenc:pssh>not!base64</cenc:pssh>
+            </ContentProtection>
             <Representation id="v1" bandwidth="100000"/>
           </AdaptationSet></Period>
         </MPD>"""
         media = inspector.inspect(mpd)
-        assert [d.system for d in media.drm_systems] == ["widevine"]
+        declaration = media.dash_drm[0]
+        assert declaration.scheme_id_uri == "https://drm.example/system"
+        assert declaration.pssh[0].status == "invalid_base64"
+        assert declaration.pssh[0].decoded_size is None
+        assert declaration.pssh[0].sha256 is None
 
     def test_capabilities_dash(self):
         caps = inspector.inspect(MPD_PARITY).capabilities

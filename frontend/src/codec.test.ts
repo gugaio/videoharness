@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   decodeCodec,
   decodeCodecList,
+  describeAudioFormat,
   describeAvcLevel,
   describeAvcProfile,
   describeHevcLevel,
@@ -22,6 +23,7 @@ describe('decodeCodec', () => {
         level: '1.3',
       },
       hevc: null,
+      audio: null,
     })
   })
 
@@ -36,8 +38,34 @@ describe('decodeCodec', () => {
     expect(decoded.avc?.level).toBe(level)
   })
 
+  it('decodifica MPEG-4 Audio e o Audio Object Type do AAC-LC', () => {
+    expect(decodeCodec('mp4a.40.2')).toEqual({
+      raw: 'mp4a.40.2',
+      family: 'AAC',
+      avc: null,
+      hevc: null,
+      audio: {
+        prefix: 'mp4a',
+        format: 'AAC-LC',
+        objectTypeHex: '40',
+        audioObjectTypeId: '2',
+      },
+    })
+    expect(describeAudioFormat('AAC-LC')).toContain('Low Complexity')
+  })
+
+  it.each([
+    ['ac-3', 'Dolby Digital', 'AC-3'],
+    ['ec-3', 'Dolby Digital Plus', 'E-AC-3'],
+  ])('explica %s como %s', (raw, family, format) => {
+    const decoded = decodeCodec(raw)
+    expect(decoded.family).toBe(family)
+    expect(decoded.audio?.format).toBe(format)
+    expect(describeAudioFormat(format)).toContain(family)
+  })
+
   it('preserva codecs ainda não interpretados sem inventar profile ou level', () => {
-    expect(decodeCodec('mp4a.40.2')).toEqual({ raw: 'mp4a.40.2', family: null, avc: null, hevc: null })
+    expect(decodeCodec('dtsc')).toEqual({ raw: 'dtsc', family: null, avc: null, hevc: null, audio: null })
   })
 
   it('separa uma lista CODECS sem perder itens desconhecidos', () => {

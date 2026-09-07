@@ -242,6 +242,60 @@ describe('TimelineView', () => {
     expect(levelTooltip).toHaveTextContent('1280×720')
   })
 
+  it('decodifica e explica AAC e Dolby Digital Plus nas representações de áudio', () => {
+    const baseRep = media.track_groups[0].representations[0]
+    const audioMedia: UnifiedMedia = {
+      ...media,
+      protocol: 'DASH',
+      kind: 'dash_mpd',
+      track_groups: [{
+        kind: 'audio',
+        name: 'Áudio',
+        language: 'pt',
+        representations: [
+          {
+            ...baseRep,
+            id: 'audio_por_1=128000',
+            codecs: 'mp4a.40.2',
+            bandwidth_bps: 128_000,
+            resolution: null,
+            frame_rate: null,
+            audio_sampling_rate: 48_000,
+            language: 'pt',
+          },
+          {
+            ...baseRep,
+            id: 'audio_por_2=448000',
+            codecs: 'ec-3',
+            bandwidth_bps: 448_000,
+            resolution: null,
+            frame_rate: null,
+            audio_sampling_rate: 48_000,
+            language: 'pt',
+          },
+        ],
+      }],
+      protocol_specific: { dash: {} },
+    }
+
+    render(<TimelineView media={audioMedia} timeline={[]} segments={[]} capture={null} />)
+
+    const aacRow = screen.getByRole('article', { name: 'Representação audio_por_1=128000' })
+    const aacCodec = within(aacRow).getByLabelText(/mp4a\.40\.2.*AAC.*AAC-LC/i)
+    expect(aacCodec).toHaveTextContent('AAC')
+    expect(aacCodec).toHaveTextContent('Formato AAC-LC')
+    expect(aacCodec.querySelector('.codec-object-type-byte')).toHaveTextContent('40')
+    expect(aacCodec.querySelector('.codec-audio-object-type-byte')).toHaveTextContent('2')
+    expect(within(aacCodec).getByRole('tooltip')).toHaveTextContent('AAC Low Complexity')
+    expect(within(aacCodec).getByRole('tooltip')).toHaveTextContent('Audio Object Type decimal')
+
+    const ec3Row = screen.getByRole('article', { name: 'Representação audio_por_2=448000' })
+    const ec3Codec = within(ec3Row).getByLabelText(/ec-3.*Dolby Digital Plus.*E-AC-3/i)
+    expect(ec3Codec).toHaveTextContent('Formato E-AC-3')
+    expect(within(ec3Codec).getByRole('tooltip')).toHaveTextContent('Enhanced AC-3')
+    expect(within(ec3Codec).getByRole('tooltip')).toHaveTextContent('não informa bitrate')
+  })
+
   it('abre o erro do segmento diretamente sob a representação', async () => {
     const { userEvent } = await import('@testing-library/user-event')
     const user = userEvent.setup()

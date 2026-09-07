@@ -9,6 +9,7 @@
       "status": "not_collected"
     }
   },
+  "dash_drm": [],
   "drm_systems": [],
   "is_live": false,
   "kind": "hls_master_playlist",
