@@ -21,17 +21,19 @@ independentes e entrega a experiência (UI, auth, investigações, relatórios).
 
 ## Serviços do ecossistema
 
-| Serviço | Repo | Papel | Acesso |
+| Serviço | Código | Papel | Acesso |
 |---|---|---|---|
 | **web** (este repo, `ui/`) | — | Frontend único (home, dashboard, inspect, streams) | público |
 | **app** (este repo, `src/`) | — | Orquestrador: auth Clerk, investigations, coordenação | público (API) |
-| **lens** | `../streamlens` | Inspeção/evidência determinística (snapshot canônico) | rede interna |
-| **mock** | `../streammock` | Clone/serve/mocks de streams, capability URLs | interno + playback exposto |
+| **lens** | `lens/` | Inspeção/evidência determinística (snapshot canônico) | rede interna |
+| **mock** | `mock/` | Clone/serve/mocks de streams, capability URLs | interno + playback exposto |
 
 **Regra fundamental:** Lens e Mock são engines prontas e testadas. Não copiar
-código delas, não forkar, não "melhorar" de dentro do VH. Mudanças nelas
-acontecem nos respectivos repos, com seus próprios processos (AGENTS/ADR), e
-chegam aqui como contratos HTTP.
+código delas, não forkar, não "melhorar" de dentro do VH. Vivem neste repo via
+`git subtree` (`lens/`, `mock/`; supera AD-0001/AD-0003 — ver AD-0006), mas
+mudanças nelas seguem os processos próprios de cada engine (AGENTS/ADR em
+`lens/` e `mock/`), nunca os do VH; a fronteira orquestrador ↔ engines segue
+sendo contratos HTTP.
 
 ## Fases (não avançar sem concluir a anterior)
 
@@ -94,7 +96,7 @@ chegam aqui como contratos HTTP.
 npm install && npm install --prefix ui
 npm run dev        # orquestrador em http://127.0.0.1:3210
 npm run ui:dev     # UI em http://127.0.0.1:5173 (proxia /api -> 3210)
-make dc-up         # stack completa (lens/mock sobem de ../streamlens e ../streammock)
+make dc-up         # stack completa (lens/mock sobem de ./lens e ./mock)
 ```
 
 ## Validação mínima

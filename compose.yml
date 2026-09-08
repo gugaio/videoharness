@@ -48,7 +48,7 @@ services:
 
   lens:
     build:
-      context: ../streamlens
+      context: ./lens
       dockerfile: backend/Dockerfile
     networks: [internal]
     environment:
@@ -65,7 +65,7 @@ services:
 
   mock:
     build:
-      context: ../streammock
+      context: ./mock
       args:
         VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
     networks: [internal]

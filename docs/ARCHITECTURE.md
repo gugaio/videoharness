@@ -6,8 +6,8 @@
 |---|---|---|
 | `web` | `ui/` (nginx) | SPA única; proxia `/api/` → `app:3210` |
 | `app` | `src/` (Fastify) | Auth Clerk, investigations, coordenação das engines |
-| `lens` | `../streamlens` (backend) | Inspeção determinística → snapshot canônico |
-| `mock` | `../streammock` | Clone/serve de streams; capability URLs de playback |
+| `lens` | `lens/` (backend) | Inspeção determinística → snapshot canônico |
+| `mock` | `mock/` | Clone/serve de streams; capability URLs de playback |
 
 ## Redes
 
@@ -84,3 +84,4 @@ Planejado (Fase 3+):
 | AD-0003 | StreamMock permanece serviço standalone (uso dev/QA) e interno (modo service token para o orquestrador); não é fundido ao VH. |
 | AD-0004 | Auth dividida: Clerk no control plane; capability URLs no data plane; service token entre app e engines. |
 | AD-0005 | UI roda em dev-mode aberto (sem Clerk) quando não há publishable key, para manter `compose up` verde sem segredos; o banner indica o modo. |
+| AD-0006 | Monorepo: `streamlens` e `streammock` movidos para `lens/` e `mock/` via `git subtree` (história preservada), superando AD-0001 e AD-0003. Motivo: o compose já era uma unidade de deploy só (`../streamlens` não existia no CI nem em clone limpo); mudanças na API do lens e no `LensClient` saem no mesmo PR, e um único workflow builda as 4 imagens. |

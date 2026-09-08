@@ -4,9 +4,9 @@ Camada de orquestração e produto para investigação de video streaming. O VH
 coordena duas engines independentes e entrega a experiência única (UI, auth,
 investigações, relatórios):
 
-- **Stream Lens** (`../streamlens`) — inspeção determinística de HLS/DASH com
+- **Stream Lens** (`lens/`) — inspeção determinística de HLS/DASH com
   snapshot canônico versionado.
-- **Stream Mock** (`../streammock`) — clone, mock e serve de streams (HLS/DASH,
+- **Stream Mock** (`mock/`) — clone, mock e serve de streams (HLS/DASH,
   ClearKey, live), com capability URLs para players.
 
 ```text

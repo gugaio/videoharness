@@ -23,7 +23,19 @@ jobs:
 
     strategy:
       matrix:
-        image: [backend, web]
+        include:
+          - image: backend
+            context: .
+            dockerfile: ./Dockerfile
+          - image: web
+            context: ./ui
+            dockerfile: ./ui/Dockerfile
+          - image: lens
+            context: ./lens
+            dockerfile: ./lens/backend/Dockerfile
+          - image: mock
+            context: ./mock
+            dockerfile: ./mock/Dockerfile
 
     steps:
       - uses: actions/checkout@v4
@@ -57,8 +69,8 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.image == 'web' && './ui' || '.' }}
-          file: ${{ matrix.image == 'web' && './ui/Dockerfile' || './Dockerfile' }}
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
