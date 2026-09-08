@@ -1,57 +1,67 @@
-# Video Harness Space
+# Video Harness
 
-Video Harness Space (VHS) e um workspace assistido por IA para investigar
-problemas em sistemas de video streaming.
+Camada de orquestração e produto para investigação de video streaming. O VH
+coordena duas engines independentes e entrega a experiência única (UI, auth,
+investigações, relatórios):
 
-O MVP preserva o fluxo de investigacao e agora fecha um primeiro loop controlado:
+- **Stream Lens** (`../streamlens`) — inspeção determinística de HLS/DASH com
+  snapshot canônico versionado.
+- **Stream Mock** (`../streammock`) — clone, mock e serve de streams (HLS/DASH,
+  ClearKey, live), com capability URLs para players.
 
 ```text
-URL -> deterministic evidence -> hypotheses -> controlled clones
-    -> same device URL -> attributed results -> conclusion or follow-up
+[Browser] → Frontend ──► Orchestrator API (este repo)
+                             │            │
+                       Stream Lens    Stream Mock
+                       (Python, :8000) (Go, :8080)
+
+[Device/Player] ──► capability URLs do Mock (sem header de auth)
 ```
 
-A fundacao executavel inclui API Fastify, worker Node.js, PostgreSQL, UI
-React/Vite, Record HLS/DASH VOD e Experiments sobre as mesmas fronteiras.
+## Stack
 
-## Documentacao
+| Container | Papel | Tech |
+|---|---|---|
+| `web` | Frontend único (home, dashboard, inspect, streams) | React + Vite, servido por nginx |
+| `app` | Orquestrador: Clerk, investigations, coordenação | Node 22 + Fastify + TypeScript |
+| `lens` | Engine de inspeção | Python + FastAPI |
+| `mock` | Engine de clone/serve | Go |
 
-Comece por:
-
-- [`AGENTS.md`](AGENTS.md)
-- [`docs/core/START-HERE.md`](docs/core/START-HERE.md)
-- [`docs/planning/PROJECT-STATUS.md`](docs/planning/PROJECT-STATUS.md)
-- [`docs/planning/PROJECT-VISION.md`](docs/planning/PROJECT-VISION.md)
-- [`docs/architecture/README.md`](docs/architecture/README.md)
-- [`docs/product/PRD.md`](docs/product/PRD.md)
-
-## Direcao tecnica
-
-- React + Vite no frontend.
-- Fastify + TypeScript no backend.
-- Worker Node.js persistente.
-- PostgreSQL como fonte de verdade.
-- SSE para a timeline ao vivo.
-- FFmpeg, FFprobe, MediaInfo e stream tools deterministicas.
-- Docker Compose em um unico VPS.
-
-Kael e VHS sao referencias de implementacao, nao dependencias de runtime. O
-codigo necessario sera copiado de forma controlada para este repositorio durante
-o MVP.
-
-## Desenvolvimento local
+## Quickstart
 
 ```bash
-npm install
-npm install --prefix ui
-npm run dev:api
+cp .env.example .env      # ajuste as chaves do Clerk quando chegar na Fase 1
+make dc-up                # sobe web, app, lens e mock (usa os repos irmãos)
 ```
 
-Em outros terminais:
+| Serviço | URL local |
+|---|---|
+| UI | http://127.0.0.1:8080 |
+| Orquestrador | http://127.0.0.1:3210 |
+| Mock (playback/capability URLs) | http://127.0.0.1:8081 |
+
+Dev sem Docker:
 
 ```bash
-npm run dev:worker
-npm run ui:dev
+npm install && npm install --prefix ui
+npm run dev      # orquestrador
+npm run ui:dev   # UI com HMR
 ```
 
-- UI: `http://127.0.0.1:5173`
-- API health: `http://127.0.0.1:3210/v1/health`
+## Roadmap
+
+1. ~~Fase 0 — Fundação (reset, compose, orquestrador mínimo)~~ ✅
+2. ~~Fase 1 — Home + login Clerk + shell do dashboard~~ ✅ (sem chave do Clerk,
+   a UI cai em dev-mode aberto com banner; com `VITE_CLERK_PUBLISHABLE_KEY`
+   configurada em `ui/.env.local`, o fluxo de sign-in/modal liga)
+3. ~~Fase 2 — Inspect (orquestrador → Lens)~~ ✅ (rotas `/api/v1/inspections*`
+   com auth Clerk; UI: formulário, progresso por estágio e snapshot JSON;
+   validado E2E contra a Lens com stream público)
+4. Fase 3 — Streams (orquestrador → Mock; mock mantém uso standalone)
+5. Fase 4 — Investigations agênticas (baseline curta + aprofundamento por tools)
+6. Fase 5 — Experiments (clone + network shaping + replay em device)
+
+## Histórico
+
+O código anterior do VH (pipeline próprio de coleta, stream-tools, record) foi
+substituído por esta arquitetura. Referência: `git tag legacy-pre-reset`.

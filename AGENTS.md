@@ -1,207 +1,103 @@
-# AGENTS.md - Video Harness
+# AGENTS.md — Video Harness
 
-Instrucoes obrigatorias para qualquer agente que atuar neste repositorio.
+Instruções obrigatórias para qualquer agente que atuar neste repositório.
 
-## Missao
+## Missão
 
-Construir o Video Harness Space (VHS) como um workspace de investigacao e
-experimentacao reproduzivel de video streaming. A validacao atual cobre tres
-fluxos focados:
+O Video Harness é a camada de **orquestração e produto** do ecossistema de
+investigação de video streaming. Ele não é uma engine: coordena dois serviços
+independentes e entrega a experiência (UI, auth, investigações, relatórios).
 
 ```text
-URL + problema relatado -> investigacao visivel -> relatorio excelente
-URL HLS VOD -> recording limitado -> URL controlada -> evidencia de troca ABR
-URL -> evidencia deterministica -> hipoteses -> clones controlados
-    -> mesma URL no device -> resultados atribuidos -> conclusao ou follow-up
+[Browser] → Frontend (React+Vite+Clerk)          ← única entrada pública
+                ↓
+        Orchestrator API (este repo, TS)         ← Clerk JWT aqui
+             ↓                    ↓
+       StreamLens (Python)    StreamMock (Go)   ← engines, NUNCA modificadas
+                                                 a partir daqui sem ADR
+
+[Device/Player] → capability URLs do StreamMock (direto, sem header de auth)
 ```
 
-Quando houver conflito entre adicionar funcionalidade e preservar simplicidade,
-confiabilidade ou UX, priorize simplicidade, confiabilidade e UX.
+## Serviços do ecossistema
 
-## Bootstrap obrigatorio
+| Serviço | Repo | Papel | Acesso |
+|---|---|---|---|
+| **web** (este repo, `ui/`) | — | Frontend único (home, dashboard, inspect, streams) | público |
+| **app** (este repo, `src/`) | — | Orquestrador: auth Clerk, investigations, coordenação | público (API) |
+| **lens** | `../streamlens` | Inspeção/evidência determinística (snapshot canônico) | rede interna |
+| **mock** | `../streammock` | Clone/serve/mocks de streams, capability URLs | interno + playback exposto |
 
-No inicio de cada sessao:
+**Regra fundamental:** Lens e Mock são engines prontas e testadas. Não copiar
+código delas, não forkar, não "melhorar" de dentro do VH. Mudanças nelas
+acontecem nos respectivos repos, com seus próprios processos (AGENTS/ADR), e
+chegam aqui como contratos HTTP.
 
-1. Ler `docs/core/START-HERE.md`.
-2. Ler `docs/planning/PROJECT-STATUS.md`.
-3. Ler `docs/planning/PROJECT-VISION.md` se precisar de contexto de produto.
-4. Ler `docs/architecture/README.md`.
-5. Ler a fase ativa indicada no status em `docs/architecture/phases/`.
-6. Ler `docs/planning/RECORD-ABR-IMPLEMENTATION-PLAN.md` quando a tarefa afetar
-   Record, origem local, delivery ou ABR.
-7. Ler `docs/ui/UI-GUIDE.md` quando a tarefa afetar experiencia ou frontend.
-8. Ler `docs/api.md` quando a tarefa afetar contratos HTTP ou SSE.
+## Fases (não avançar sem concluir a anterior)
 
-## Fonte de verdade
+1. **Fase 0 — Fundação** ✅: reset do repo, compose com 4 serviços, orquestrador
+   mínimo com `/health`, UI shell.
+2. **Fase 1 — Home + Login** ✅: rotas `/` (home pública com CTA) e `/dashboard`
+   (protegida, shell com sidebar); Clerk `@clerk/react` v6 copiado do mock
+   (`Show`/`SignInButton`/`UserButton`); **fallback dev-mode** sem publishable
+   key (banner amarelo) para não quebrar dev/local sem segredos.
+3. **Fase 2 — Inspect** ✅: `LensClient` (fetch tipado com Zod) +
+   rotas `POST/GET /v1/inspections[/:id][/snapshot]` com auth Clerk
+   (`@clerk/backend` verifyToken; dev-mode aberto sem secret — mesmo padrão
+   AD-0005); token de sessão anexado pelo client via `AuthTokenBridge`. UI:
+   formulário de URL, polling por estágio, cards de resumo e **views ricas
+   portadas da Lens** (`TimelineView`: track groups, codecs decodificados,
+   barra de bitrate, segmentos clicáveis com drill-down e entrega HTTP;
+   `DrmOverview`; observações de bitrate; warnings; snapshot JSON bruto).
+   Follow-up da view: matriz ABR e bitstream/A/V (aparecem no JSON bruto).
+   **Dependência**: barras de frame, GOP e sincronismo A/V exigem ffprobe na
+   imagem da lens — adicionado ao `backend/Dockerfile` da lens (fato dela,
+   não do VH); sem ffprobe a Lens degrada silenciosamente (`_optional_ffprobe`).
+4. **Fase 3 — Streams**: orquestrador proxifica as workspace APIs do mock
+   injetando ownership; mock mantém dashboard próprio (uso standalone de
+   dev/QA) e ganha modo interno (service token).
+5. **Fase 4 — Investigations agênticas**: do zero. Baseline = snapshot da Lens
+   (janela curta, default 10 s); agente aprofunda com tools estruturadas
+   (`fetch_window`, `probe`, `decode_test`) com budget por chamada e teto por
+   investigation; toda coleta extra vira evidence atribuída.
+6. **Fase 5 — Experiments**: clone do mock + network shaper no orquestrador;
+   data plane serve somente recurso registrado.
 
-- Este repositorio e autonomo durante a validacao do MVP.
-- Nao adicionar dependencia de runtime para `../kael` ou `../vhs`.
-- Codigo aproveitado deve ser copiado para este repositorio com origem registrada.
-- Depois de copiado, o codigo passa a ser mantido aqui durante o MVP.
-- Nao tentar sincronizacao bidirecional com Kael ou VHS durante a validacao.
+## Regras de arquitetura
 
-Ao importar um modulo, registrar no README do modulo:
+1. Auth humana (Clerk) vive no orquestrador; Lens/Mock não expostos
+   diretamente (rede `internal` do compose).
+2. Data plane de mídia é do mock: capability URLs (slug/token em path, hasheados
+   em repouso), players não enviam headers. Nunca mover para o app.
+3. `exactOptionalPropertyTypes` e `noUncheckedIndexedAccess` ligados: campos
+   opcionais usam `...(condicao ? { campo: valor } : {})`; acesso por índice
+   exige guard.
+4. TypeScript `module: NodeNext`: imports relativos com extensão `.js`.
+5. Validar entradas/respostas externas com Zod nas fronteiras.
+6. Nenhum código de investigação/LLM no orquestrador antes da Fase 4; quando
+   existir, ferramentas determinísticas produzem os fatos, o LLM explica.
+7. Segurança (SSRF, limites, redaction) é comportamento funcional, nunca etapa
+   final. Toda URL de usuário passa pelas engines, que já têm proteção.
+8. Sem segredos, `.env` ou dados locais no Git.
 
-- repositorio de origem;
-- commit ou tag de origem;
-- data da importacao;
-- adaptacoes relevantes feitas depois da copia.
+## Compose e redes
 
-## Escopo atual
-
-Construir somente:
-
-1. Criacao de investigacao por URL e descricao opcional do problema.
-2. Persistencia de investigacoes, jobs, eventos, artifacts e reports.
-3. Worker recuperavel para executar o pipeline.
-4. Coleta deterministica de evidencias com ferramentas de streaming.
-5. Sintese assistida por IA baseada nas evidencias.
-6. Timeline ao vivo via SSE com reconexao.
-7. Relatorio final bonito e compartilhavel.
-8. Deploy barato em um unico VPS com Docker Compose.
-9. Record HLS VOD limitado com toda a ladder suportada.
-10. Origem HTTP local com URL unica por playback run.
-11. Simulacao deterministica de throughput/latencia para induzir ABR.
-12. Journal de requests e comprovacao de troca no nivel de request.
-13. Experiments de replay controlado: CloneSpec sobre Record, URL unica por
-    experiment no device, CONTROL/tratamento e avaliacao pos-experimento com
-    agentes.
-
-Nao construir agora:
-
-- Record live, Watch ou Replay funcionais;
-- DASH Record antes do Definition of Done de HLS VOD;
-- DRM, LL-HLS, perda/reorder de pacotes ou emulacao de device;
-- dashboard generico de operacoes;
-- chat generico;
-- memoria, skills, MCP ou canais;
-- marketplace ou plugins;
-- colaboracao em equipe;
-- microservicos, Redis, Kafka ou Kubernetes.
-
-## Stack padrao
-
-- Node.js 22+.
-- TypeScript strict.
-- Backend Fastify.
-- Worker Node.js no mesmo codebase do backend.
-- React + Vite.
-- React Router, TanStack Query e Zod.
-- Tailwind e shadcn/ui quando trouxer valor real.
-- Persistencia local em arquivos JSON/JSONL atras de um contrato de storage.
-- Vitest.
-- Server-Sent Events (SSE).
-- Filesystem local atras de um contrato de storage.
-- Docker Compose.
-
-Nao trocar a stack sem registrar a decisao em
-`docs/architecture/DECISIONS.md` e atualizar a fase ativa.
+- `public`: web ↔ app.
+- `internal`: app ↔ lens ↔ mock. Sem `internal: true` (engines precisam de
+  egress: clonar origens, JWKS do Clerk).
+- Só `web` (via nginx) e `app` recebem tráfego do host; mock publica apenas a
+  porta de playback (capability URLs).
 
 ## Desenvolvimento local
 
 ```bash
-npm install
-npm install --prefix ui
-npm run dev:api          # API em http://127.0.0.1:3210
-npm run dev:worker
-npm run ui:dev           # UI em http://127.0.0.1:5173
+npm install && npm install --prefix ui
+npm run dev        # orquestrador em http://127.0.0.1:3210
+npm run ui:dev     # UI em http://127.0.0.1:5173 (proxia /api -> 3210)
+make dc-up         # stack completa (lens/mock sobem de ../streamlens e ../streammock)
 ```
 
-Backend e UI sao dois package.json independentes (raiz e `ui/`); os scripts de
-validacao usam `npm --prefix ui`. O `Makefile` espelha os mesmos alvos
-(`make check`, `make test`, `make dc-up`).
-
-## Peculiaridades do toolchain
-
-- TypeScript em `module: NodeNext`: imports relativos usam extensao `.js` mesmo
-  em arquivos `.ts` (ex.: `import "./server.js"`).
-- `strict` com `exactOptionalPropertyTypes` e `noUncheckedIndexedAccess`: campos
-  opcionais usam o idioma `...(condicao ? { campo: valor } : {})` e acessos por
-  indice exigem guard antes do uso.
-- Evals geram fixtures HLS temporarios com FFmpeg local: `npm run eval:check` e
-  `npm run eval:fixtures`; nenhum binario de video e versionado no Git.
-
-## Principios arquiteturais
-
-1. Usar arquitetura hexagonal leve, nao cerimonial.
-2. O fluxo de investigacao nao deve importar Fastify, React ou SDKs
-   concretos de IA.
-3. Criar ports apenas para fronteiras externas relevantes.
-4. Preferir composicao manual de dependencias a frameworks de DI.
-5. Evitar repositories genericos, command bus, event bus e abstracoes usadas uma
-   unica vez.
-6. Manter o pacote interno de stream tools deterministico e sem conceitos de
-   usuario, jobs, agentes, prompts ou produto.
-7. O LLM explica evidencias; ferramentas deterministicas produzem os fatos.
-8. Preferir um modelo canonico por conceito, enriquecido ao longo do pipeline.
-9. Nao criar tipos diferentes apenas para nomear etapas como `Collected`,
-   `Processed`, `Promoted` ou `Stored` quando continuam representando a mesma
-   entidade. Separar tipos somente quando houver uma invariante ou fronteira real.
-10. Projecoes serializaveis podem ser tipos separados quando removem dados de
-    runtime, como bytes, handles ou segredos. Exemplo: `Manifest` interno vira
-    `ManifestEvidence` no report sem carregar o corpo baixado.
-
-## Regras de implementacao
-
-1. TypeScript strict, sem `any` silencioso.
-2. Validar entradas e respostas externas com Zod nas fronteiras.
-3. Fazer mudancas pequenas, verificaveis e cobertas proporcionalmente ao risco.
-4. Preferir funcoes pequenas, nomes claros e contratos explicitos.
-5. Nao expor chain of thought. Eventos mostram progresso, observacoes,
-   evidencias, hipoteses e confianca.
-6. Nao criar spinner ou progresso ficticio para investigacoes; publicar eventos
-   reais do pipeline.
-7. Nao executar comandos de shell construidos com input do usuario. Processos de
-   midia usam binario e argumentos estruturados.
-8. URLs fornecidas por usuarios exigem protecao contra SSRF, redirects maliciosos,
-   redes privadas e downloads sem limite.
-9. Temporary files ficam isolados por investigation ou recording ID e devem ser
-   limpos em sucesso ou falha, preservando somente artifacts/recordings publicados.
-10. Nao incluir segredos, `.env`, artifacts locais ou workspaces no Git.
-11. O data plane de Record serve somente recursos previamente registrados; nunca
-    transforma um path pedido pelo device em fetch sob demanda para a origem.
-12. Perfis de rede sao deterministas e limitados. Video, audio e demais recursos
-    de media compartilham o budget do playback run.
-13. Request de outra variant comprova selecao de rede, nao decode ou render. Essa
-    limitacao deve permanecer explicita na API, UI e resultado.
-14. Tokens de playback sao opacos, armazenados como hash e redigidos de logs.
-
-## Contratos e documentacao
-
-Ao criar ou alterar endpoint:
-
-1. Atualizar `docs/api.md`.
-2. Atualizar o diagrama Mermaid.
-3. Atualizar a tabela de referencia.
-4. Marcar claramente se o endpoint esta planejado ou implementado.
-
-Ao alterar arquitetura, dados ou runtime:
-
-1. Atualizar a fase ativa.
-2. Registrar decisoes duradouras em `docs/architecture/DECISIONS.md`.
-3. Atualizar `docs/core/START-HERE.md` se a navegacao ou direcao mudou.
-
-Ao alterar UX:
-
-1. Atualizar `docs/ui/UI-GUIDE.md`.
-2. Preservar dark mode first, responsividade e foco no CTA principal.
-
-## Atualizacao de status obrigatoria
-
-A cada commit funcional, atualizar `docs/planning/PROJECT-STATUS.md` com:
-
-- fase impactada;
-- entrega realizada;
-- arquivos-chave;
-- validacoes executadas;
-- pendencias;
-- proximo passo recomendado.
-
-Nao marcar uma fase como concluida sem satisfazer seu Definition of Done.
-
-## Validacao minima
-
-Quando os scripts existirem, executar conforme o escopo:
+## Validação mínima
 
 ```bash
 npm run check
@@ -211,4 +107,11 @@ npm --prefix ui run build
 git diff --check
 ```
 
-Registre no status o que nao foi executado e por que.
+Registrar no status o que não foi executado e por quê.
+
+## Documentação
+
+- Alterou arquitetura/rede/contratos → atualizar `docs/ARCHITECTURE.md` e a
+  tabela de decisões.
+- Alterou fase/escopo → atualizar a lista de fases deste arquivo.
+- Nenhum documento pode alegar capacidade que o código não implementa.

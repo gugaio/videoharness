@@ -1,10 +1,7 @@
-dev: dev-api dev-worker
+dev: dev-api
 
 dev-api:
-	npm run dev:api
-
-dev-worker:
-	npm run dev:worker
+	npm run dev
 
 dev-ui:
 	npm run ui:dev
@@ -29,13 +26,13 @@ dc-down:
 dc-logs:
 	docker compose logs -f
 
-dc-logs-api:
-	docker compose logs -f api
+dc-logs-app:
+	docker compose logs -f app
 
-dc-logs-worker:
-	docker compose logs -f worker
+dc-logs-lens:
+	docker compose logs -f lens
 
-artifacts:
-	docker compose exec worker ls -la /data/artifacts
+dc-logs-mock:
+	docker compose logs -f mock
 
-.PHONY: dev dev-api dev-worker dev-ui check test build dc-up dc-down dc-logs dc-logs-api dc-logs-worker artifacts
+.PHONY: dev dev-api dev-ui check test build dc-up dc-down dc-logs dc-logs-app dc-logs-lens dc-logs-mock

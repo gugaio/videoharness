@@ -1,99 +1,96 @@
+# Video Harness — stack local completa.
+# Sobe os 4 serviços: web (UI), app (orquestrador), lens e mock (engines externas).
+#   UI:            http://127.0.0.1:8080
+#   Orquestrador:  http://127.0.0.1:3210
+#   Mock playback: http://127.0.0.1:8081 (capability URLs para devices, dev)
+#
+# Redes: `public` (web <-> app) e `internal` (app <-> lens/mock).
+# Nenhuma das engines é publicada diretamente; o mock publica só a porta de
+# playback (capability URLs) porque players não enviam headers de auth.
+# Lens e Mock precisam de egress à internet (clonar origens, JWKS do Clerk),
+# portanto as redes NÃO usam `internal: true` — a segmentação é por associação.
+
+name: video-harness
+
 services:
-  api:
-    image: video-harness-backend:local
+  web:
     build:
-      context: .
-      dockerfile: Dockerfile
-    environment:
-      VIDEO_HARNESS_HOST: 0.0.0.0
-      VIDEO_HARNESS_PORT: 3210
-      VIDEO_HARNESS_DATA_DIR: /data
-    command: ["node", "dist/api/index.js"]
+      context: ./ui
+      args:
+        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
+    networks: [public]
+    depends_on:
+      app:
+        condition: service_healthy
     ports:
-      - "127.0.0.1:${VIDEO_HARNESS_PORT:-3210}:3210"
-    volumes:
-      - video-harness-data:/data
+      - "127.0.0.1:${VH_WEB_PORT:-8080}:80"
+    restart: unless-stopped
+
+  app:
+    build: .
+    networks: [public, internal]
+    environment:
+      VH_APP_HOST: 0.0.0.0
+      VH_APP_PORT: 3210
+      LENS_URL: http://lens:8000
+      MOCK_URL: http://mock:8080
+      VH_SERVICE_TOKEN: ${VH_SERVICE_TOKEN:-dev-internal-token}
+      # Sem chave configurada, as rotas /v1/inspections* rodam abertas (dev).
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
+    ports:
+      - "127.0.0.1:${VH_APP_PORT:-3210}:3210"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3210/v1/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3210/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 5s
       timeout: 3s
       retries: 12
     restart: unless-stopped
 
-  worker:
-    image: video-harness-backend:local
+  lens:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../streamlens
+      dockerfile: backend/Dockerfile
+    networks: [internal]
     environment:
-      VIDEO_HARNESS_WORKER_ID: worker-compose
-      VIDEO_HARNESS_WORKER_LEASE_MS: 30000
-      VIDEO_HARNESS_STREAM_TIMEOUT_MS: 25000
-      VIDEO_HARNESS_STREAM_LOCALHOST_ALIAS: host.docker.internal
-      VIDEO_HARNESS_MANIFEST_MAX_BYTES: 1048576
-      VIDEO_HARNESS_MEDIA_SAMPLE_MAX_BYTES: ${VIDEO_HARNESS_MEDIA_SAMPLE_MAX_BYTES:-134217728}
-      VIDEO_HARNESS_MEDIA_SAMPLE_MAX_TOTAL_BYTES: ${VIDEO_HARNESS_MEDIA_SAMPLE_MAX_TOTAL_BYTES:-536870912}
-      VIDEO_HARNESS_MEDIA_SAMPLE_MAX_SECONDS: ${VIDEO_HARNESS_MEDIA_SAMPLE_MAX_SECONDS:-60}
-      VIDEO_HARNESS_MEDIA_SAMPLE_MODE: ${VIDEO_HARNESS_MEDIA_SAMPLE_MODE:-full}
-      VIDEO_HARNESS_RECORD_SEGMENT_MAX_BYTES: ${VIDEO_HARNESS_RECORD_SEGMENT_MAX_BYTES:-67108864}
-      VIDEO_HARNESS_RECORD_REQUEST_TIMEOUT_MS: ${VIDEO_HARNESS_RECORD_REQUEST_TIMEOUT_MS:-60000}
-      VIDEO_HARNESS_RECORD_MAX_TOTAL_BYTES: ${VIDEO_HARNESS_RECORD_MAX_TOTAL_BYTES:-1073741824}
-      VIDEO_HARNESS_RECORD_MAX_VARIANTS: ${VIDEO_HARNESS_RECORD_MAX_VARIANTS:-32}
-      VIDEO_HARNESS_FFPROBE_TIMEOUT_MS: 10000
-      VIDEO_HARNESS_LAB_SOCKET_PATH: /run/video-harness-lab/lab.sock
-      VIDEO_HARNESS_LAB_TOKEN: ${VIDEO_HARNESS_LAB_TOKEN:-video_harness_lab_local_token_change_me}
-      VIDEO_HARNESS_LAB_COMMAND_TIMEOUT_MS: ${VIDEO_HARNESS_LAB_COMMAND_TIMEOUT_MS:-60000}
-      VIDEO_HARNESS_AI_PROVIDER: ${VIDEO_HARNESS_AI_PROVIDER:-openai}
-      VIDEO_HARNESS_AI_API_URL: ${VIDEO_HARNESS_AI_API_URL:-https://api.openai.com/v1/chat/completions}
-      VIDEO_HARNESS_AI_MODEL: ${VIDEO_HARNESS_AI_MODEL:-gpt-5.6-luna}
-      VIDEO_HARNESS_AI_API_KEY: ${VIDEO_HARNESS_AI_API_KEY:-}
-      VIDEO_HARNESS_AI_TIMEOUT_MS: ${VIDEO_HARNESS_AI_TIMEOUT_MS:-45000}
-      VIDEO_HARNESS_DATA_DIR: /data
-    command: ["node", "dist/worker/index.js"]
+      STREAM_LENS_TTL_SECONDS: "3600"
+      STREAM_LENS_MAX_CONCURRENCY: "4"
     volumes:
-      - video-harness-data:/data
-      - video-harness-lab-sockets:/run/video-harness-lab
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - lens-data:/data/inspections
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped
 
-  lab:
-    image: video-harness-backend:local
+  mock:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../streammock
+      args:
+        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
+    networks: [internal]
     environment:
-      VIDEO_HARNESS_DATA_DIR: /data
-      VIDEO_HARNESS_LAB_SOCKET_PATH: /run/video-harness-lab/lab.sock
-      VIDEO_HARNESS_LAB_TOKEN: ${VIDEO_HARNESS_LAB_TOKEN:-video_harness_lab_local_token_change_me}
-    command: ["node", "dist/lab/index.js"]
-    user: "0:0"
-    network_mode: "none"
-    read_only: true
-    tmpfs:
-      - /tmp:size=256m,mode=1777
-    security_opt:
-      - no-new-privileges:true
-    pids_limit: 256
-    mem_limit: 2g
-    cpus: 2
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
+      STREAMMOCK_CLONE_MAX_BYTES: ${STREAMMOCK_CLONE_MAX_BYTES:-1073741824}
+      STREAMMOCK_USER_QUOTA_BYTES: ${STREAMMOCK_USER_QUOTA_BYTES:-5368709120}
+      STREAMMOCK_CLONE_TTL_HOURS: ${STREAMMOCK_CLONE_TTL_HOURS:-0}
     volumes:
-      - video-harness-data:/data
-      - video-harness-lab-sockets:/run/video-harness-lab
-    restart: unless-stopped
-
-  web:
-    build:
-      context: ./ui
-      dockerfile: Dockerfile
-    depends_on:
-      api:
-        condition: service_healthy
+      - mock-data:/data
     ports:
-      # The player/device consumes /streams through this public web origin.
-      - "${VIDEO_HARNESS_WEB_BIND_ADDRESS:-0.0.0.0}:${VIDEO_HARNESS_WEB_PORT:-5173}:80"
+      # Capability URLs de playback (players não enviam headers de auth).
+      # Em produção: expor via proxy público do mock, não pelo app.
+      - "127.0.0.1:${VH_MOCK_PORT:-8081}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
     restart: unless-stopped
+
+networks:
+  public:
+  internal:
 
 volumes:
-  video-harness-data:
-  video-harness-lab-sockets:
+  lens-data:
+  mock-data:

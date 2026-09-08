@@ -1,30 +1,25 @@
 {
   "name": "video-harness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "AI-powered workspace for investigating video streaming systems",
+  "description": "Video Harness — orchestration layer for Stream Lens (inspection) and Stream Mock (clone/serve)",
   "type": "module",
   "engines": {
     "node": ">=22.19.0"
   },
   "scripts": {
-    "dev:api": "tsx watch src/api/index.ts",
-    "dev:worker": "tsx watch src/worker/index.ts",
+    "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "eval:check": "tsc -p tsconfig.evals.json --noEmit",
-    "eval:fixtures": "tsx evals/run-fixtures.ts",
-    "start:api": "node dist/api/index.js",
-    "start:worker": "node dist/worker/index.js",
+    "start": "node dist/index.js",
     "ui:dev": "npm --prefix ui run dev",
     "ui:check": "npm --prefix ui run check",
     "ui:build": "npm --prefix ui run build"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "0.81.1",
-    "@earendil-works/pi-ai": "0.81.1",
+    "@clerk/backend": "^1.34.0",
     "dotenv": "^17.3.1",
     "fastify": "^5.10.0",
     "zod": "^3.24.2"
@@ -33,6 +28,6 @@
     "@types/node": "^22.10.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^4.0.18"
+    "vitest": "4.0.18"
   }
 }

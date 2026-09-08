@@ -5,4 +5,5 @@ dist
 coverage
 ui/node_modules
 ui/dist
-.video-harness-data
+docs
+*.md
