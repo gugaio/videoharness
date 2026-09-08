@@ -1,0 +1,7 @@
+# Source and build inputs — only dist/ is published (see "files" in package.json).
+src/
+*.test.ts
+tsup.config.ts
+tsconfig.json
+.vite-temp
+*.tsbuildinfo

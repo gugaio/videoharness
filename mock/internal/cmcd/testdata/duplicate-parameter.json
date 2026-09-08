@@ -1,0 +1,14 @@
+{
+  "name": "duplicate CMCD query parameter",
+  "url": "/s/stream/master.m3u8?CMCD=sid%3D%22session-4%22&CMCD=br%3D2000",
+  "want": {
+    "present": true,
+    "version": 1,
+    "raw_value": "sid=\"session-4\"",
+    "canonical_value": "sid=\"session-4\"",
+    "sid": "session-4"
+  },
+  "issues": [
+    { "code": "duplicate_parameter", "key": "CMCD" }
+  ]
+}

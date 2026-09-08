@@ -1,0 +1,15 @@
+{
+  "name": "quoted and escaped strings",
+  "url": "/s/stream/master.m3u8?CMCD=cid%3D%22a%5C%22b%5C%5Cc%22%2Cnor%3D%22part%252Cwith%252Ccomma%22%2Cnrr%3D%2210-20%22%2Csid%3D%22s%5C%5Cid%22",
+  "want": {
+    "present": true,
+    "version": 1,
+    "raw_value": "cid=\"a\\\"b\\\\c\",nor=\"part%2Cwith%2Ccomma\",nrr=\"10-20\",sid=\"s\\\\id\"",
+    "canonical_value": "cid=\"a\\\"b\\\\c\",nor=\"part%2Cwith%2Ccomma\",nrr=\"10-20\",sid=\"s\\\\id\"",
+    "sid": "s\\id",
+    "cid": "a\"b\\c",
+    "nor": "part,with,comma",
+    "nrr": "10-20"
+  },
+  "issues": []
+}

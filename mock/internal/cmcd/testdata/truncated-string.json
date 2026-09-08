@@ -1,0 +1,14 @@
+{
+  "name": "truncated quoted string",
+  "url": "/s/stream/master.m3u8?CMCD=cid%3D%22unfinished",
+  "want": {
+    "present": true,
+    "version": 1,
+    "raw_value": "cid=\"unfinished",
+    "canonical_value": ""
+  },
+  "issues": [
+    { "code": "unterminated_string" },
+    { "code": "unterminated_string", "key": "cid" }
+  ]
+}
