@@ -1,0 +1,42 @@
+[project]
+name = "stream-lens"
+version = "0.1.0"
+description = "Stream Lens — inspeção top-down de streams HLS/DASH"
+requires-python = ">=3.12"
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+asyncio_mode = "auto"
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",      # pycodestyle/pyflakes
+    "I",                # imports ordenados
+    "UP",               # pyupgrade
+    "B",                # bugbear
+    "SIM",              # simplificações
+    "RUF",
+]
+ignore = ["SIM117"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+packages = ["stream_lens"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true

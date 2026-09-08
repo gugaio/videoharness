@@ -1,0 +1,9 @@
+# Contexto do build do backend (raiz do repo)
+.venv
+.runtime
+frontend
+docs
+skills
+.git
+**/__pycache__
+**/*.pyc

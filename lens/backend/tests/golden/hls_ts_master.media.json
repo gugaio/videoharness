@@ -1,0 +1,98 @@
+{
+  "capabilities": {
+    "media_playlist_follow": {
+      "reason": "rendições não foram baixadas nesta fase",
+      "status": "not_collected"
+    },
+    "segment_download": {
+      "reason": "Fase 3 inspeciona apenas declarações",
+      "status": "not_collected"
+    }
+  },
+  "dash_drm": [],
+  "drm_systems": [],
+  "is_live": false,
+  "kind": "hls_master_playlist",
+  "protocol": "HLS",
+  "protocol_specific": {
+    "hls": {
+      "independent_segments": false,
+      "live_determination": "requires_media_playlist",
+      "version": 3
+    }
+  },
+  "track_groups": [
+    {
+      "kind": "audio",
+      "language": null,
+      "name": "aud",
+      "representations": [
+        {
+          "audio_sampling_rate": null,
+          "average_bandwidth_bps": null,
+          "bandwidth_bps": null,
+          "codecs": null,
+          "frame_rate": null,
+          "id": "pt",
+          "init_segment": null,
+          "language": "pt",
+          "resolution": null,
+          "roles": [
+            "default",
+            "autoselect"
+          ],
+          "segment_count_declared": null,
+          "segments": [],
+          "total_duration_seconds": null,
+          "uri": "audio/pt.m3u8"
+        }
+      ]
+    },
+    {
+      "kind": "video",
+      "language": null,
+      "name": "variants",
+      "representations": [
+        {
+          "audio_sampling_rate": null,
+          "average_bandwidth_bps": null,
+          "bandwidth_bps": 800000,
+          "codecs": "avc1.64001e,mp4a.40.2",
+          "frame_rate": null,
+          "id": "video/360p.m3u8",
+          "init_segment": null,
+          "language": null,
+          "resolution": {
+            "height": 360,
+            "width": 640
+          },
+          "roles": [],
+          "segment_count_declared": null,
+          "segments": [],
+          "total_duration_seconds": null,
+          "uri": "video/360p.m3u8"
+        },
+        {
+          "audio_sampling_rate": null,
+          "average_bandwidth_bps": null,
+          "bandwidth_bps": 2000000,
+          "codecs": "avc1.64001f,mp4a.40.2",
+          "frame_rate": null,
+          "id": "video/720p.m3u8",
+          "init_segment": null,
+          "language": null,
+          "resolution": {
+            "height": 720,
+            "width": 1280
+          },
+          "roles": [],
+          "segment_count_declared": null,
+          "segments": [],
+          "total_duration_seconds": null,
+          "uri": "video/720p.m3u8"
+        }
+      ]
+    }
+  ],
+  "warnings": []
+}

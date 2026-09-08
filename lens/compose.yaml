@@ -1,0 +1,42 @@
+# Stream Lens — ambiente local completo (sem banco, ADR-0003)
+# Uso: docker compose up --build
+#   UI:      http://localhost:8080
+#   API:     http://localhost:8000 (docs em /docs)
+#
+# Notas:
+# - jobs são in-process: uma única réplica do backend por workspace;
+#   múltiplas réplicas exigirão adapter compartilhado (documentado em SECURITY.md).
+# - STREAM_LENS_ALLOW_LOOPBACK NÃO é definido aqui: fetcher bloqueia
+#   loopback/private/metadata (SSRF).
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      STREAM_LENS_TTL_SECONDS: "3600"
+      STREAM_LENS_MAX_CONCURRENCY: "4"
+    volumes:
+      - inspections:/data/inspections
+      # fixtures do repo montadas por cima (dev)
+      - ./fixtures:/app/fixtures:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+
+volumes:
+  inspections:

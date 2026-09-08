@@ -1,0 +1,84 @@
+{
+  "capabilities": {
+    "segment_download": {
+      "reason": "Fase 3 inspeciona apenas declarações",
+      "status": "not_collected"
+    }
+  },
+  "dash_drm": [],
+  "drm_systems": [],
+  "is_live": false,
+  "kind": "hls_media_playlist",
+  "protocol": "HLS",
+  "protocol_specific": {
+    "hls": {
+      "container": "mp4",
+      "media_sequence": 0,
+      "playlist_type": null,
+      "target_duration": 4,
+      "version": 6
+    }
+  },
+  "track_groups": [
+    {
+      "kind": "unknown",
+      "language": null,
+      "name": null,
+      "representations": [
+        {
+          "audio_sampling_rate": null,
+          "average_bandwidth_bps": null,
+          "bandwidth_bps": null,
+          "codecs": null,
+          "frame_rate": null,
+          "id": "media-playlist",
+          "init_segment": {
+            "discontinuity": false,
+            "duration_seconds": null,
+            "start_number": null,
+            "template": null,
+            "template_duration": null,
+            "timescale": null,
+            "uri": "init_v360.mp4"
+          },
+          "language": null,
+          "resolution": null,
+          "roles": [],
+          "segment_count_declared": 3,
+          "segments": [
+            {
+              "discontinuity": false,
+              "duration_seconds": 3.989,
+              "start_number": null,
+              "template": null,
+              "template_duration": null,
+              "timescale": null,
+              "uri": "v360_seg0.m4s"
+            },
+            {
+              "discontinuity": false,
+              "duration_seconds": 3.989,
+              "start_number": null,
+              "template": null,
+              "template_duration": null,
+              "timescale": null,
+              "uri": "v360_seg1.m4s"
+            },
+            {
+              "discontinuity": false,
+              "duration_seconds": 3.989,
+              "start_number": null,
+              "template": null,
+              "template_duration": null,
+              "timescale": null,
+              "uri": "v360_seg2.m4s"
+            }
+          ],
+          "total_duration_seconds": 11.966999999999999,
+          "uri": null
+        }
+      ]
+    }
+  ],
+  "warnings": []
+}
