@@ -1,0 +1,86 @@
+# Production compose for Coolify (and any docker compose runtime).
+#
+# Differences from compose.yml:
+# - Uses the images published to GHCR by `.github/workflows/docker-image.yml`
+#   instead of local build contexts.
+# - `pull_policy: always` forces a fresh image pull on every deploy, so a
+#   redeploy always runs the latest `:latest` published by CI.
+# - No host port bindings: only `web` is public (assigned a domain in the
+#   deploy platform). app, lens and mock stay on the private compose network.
+# - Secrets are required via `${VAR:?}` so deploy platforms validate them.
+#
+# Redes: `public` (web <-> app) e `internal` (app <-> lens/mock). As engines
+# precisam de egress à internet (clonar origens, JWKS do Clerk), portanto as
+# redes NÃO usam `internal: true`.
+
+name: video-harness
+
+services:
+  web:
+    image: ghcr.io/gugaio/videoharness/web:latest
+    pull_policy: always
+    networks: [public]
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+
+  app:
+    image: ghcr.io/gugaio/videoharness/backend:latest
+    pull_policy: always
+    networks: [public, internal]
+    environment:
+      VH_APP_HOST: 0.0.0.0
+      VH_APP_PORT: 3210
+      LENS_URL: http://lens:8000
+      MOCK_URL: http://mock:8080
+      VH_SERVICE_TOKEN: ${VH_SERVICE_TOKEN:?set in deploy platform}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?set in deploy platform}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3210/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  lens:
+    image: ghcr.io/gugaio/videoharness/lens:latest
+    pull_policy: always
+    networks: [internal]
+    environment:
+      STREAM_LENS_TTL_SECONDS: "3600"
+      STREAM_LENS_MAX_CONCURRENCY: "4"
+    volumes:
+      - lens-data:/data/inspections
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  mock:
+    image: ghcr.io/gugaio/videoharness/mock:latest
+    pull_policy: always
+    networks: [internal]
+    environment:
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?set in deploy platform}
+      STREAMMOCK_CLONE_MAX_BYTES: ${STREAMMOCK_CLONE_MAX_BYTES:-1073741824}
+      STREAMMOCK_USER_QUOTA_BYTES: ${STREAMMOCK_USER_QUOTA_BYTES:-5368709120}
+      STREAMMOCK_CLONE_TTL_HOURS: ${STREAMMOCK_CLONE_TTL_HOURS:-0}
+    volumes:
+      - mock-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+networks:
+  public:
+  internal:
+
+volumes:
+  lens-data:
+  mock-data:
