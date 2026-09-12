@@ -1,8 +1,45 @@
+import { Buffer } from "node:buffer";
 import { verifyToken } from "@clerk/backend";
 import type { FastifyError, FastifyInstance, FastifyRequest } from "fastify";
 import type { AppConfig } from "./config.js";
 
 export type AuthHook = (request: FastifyRequest) => Promise<void>;
+
+type AuthErrorCode = "missing_token" | "invalid_token";
+
+type AuthError = Error & {
+  statusCode: 401;
+  code: AuthErrorCode;
+  tokenIss?: string;
+  cause?: unknown;
+};
+
+function authError(code: AuthErrorCode, cause?: unknown, tokenIss?: string): AuthError {
+  const error = new Error(
+    code === "missing_token" ? "missing bearer token" : "invalid token",
+  ) as AuthError;
+  error.statusCode = 401;
+  error.code = code;
+  if (tokenIss !== undefined) {
+    error.tokenIss = tokenIss;
+  }
+  if (cause !== undefined) {
+    error.cause = cause;
+  }
+  return error;
+}
+
+/** Decode sem validar assinatura: só para diagnóstico (identifica a instância Clerk). */
+function tokenIssuer(token: string): string | undefined {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString()) as {
+      iss?: string;
+    };
+    return typeof payload.iss === "string" ? payload.iss : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Control plane autenticado com Clerk JWT. Sem CLERK_SECRET_KEY configurada,
@@ -18,19 +55,29 @@ export function createAuthHook(config: AppConfig): AuthHook {
     const authorization = request.headers.authorization ?? "";
     const [scheme, token] = authorization.split(" ", 2);
     if (scheme?.toLowerCase() !== "bearer" || !token) {
-      throw Object.assign(new Error("missing bearer token"), { statusCode: 401 });
+      throw authError("missing_token");
     }
     try {
       await verifyToken(token, { secretKey });
-    } catch {
-      throw Object.assign(new Error("invalid token"), { statusCode: 401 });
+    } catch (cause) {
+      throw authError("invalid_token", cause, tokenIssuer(token));
     }
   };
 }
 
 export function registerAuthErrorHandler(app: FastifyInstance): void {
-  app.setErrorHandler((error: FastifyError, _request, reply) => {
+  app.setErrorHandler((error: FastifyError, request, reply) => {
     if (error.statusCode === 401) {
+      const auth = error as AuthError;
+      const cause = auth.cause;
+      request.log.warn(
+        {
+          code: auth.code,
+          ...(auth.tokenIss ? { token_iss: auth.tokenIss } : {}),
+          ...(cause instanceof Error ? { reason: `${cause.name}: ${cause.message}` } : {}),
+        },
+        "auth rejected request",
+      );
       void reply.status(401).send({ error: "unauthorized" });
       return;
     }
