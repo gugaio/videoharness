@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from collections import Counter, defaultdict
 from itertools import pairwise
 from pathlib import Path
 
@@ -28,11 +29,13 @@ _FRAME_ARGS = [
     "-select_streams", "v:0",
     "-read_intervals", f"%+#{_MAX_FRAMES + 1}",
     "-show_frames",
+    "-show_packets",
     "-show_entries",
     (
-        "frame=stream_index,pict_type,key_frame,pkt_size,pts,pts_time,"
-        "best_effort_timestamp,best_effort_timestamp_time,pkt_dts,pkt_dts_time,"
-        "pkt_duration,pkt_duration_time,duration,duration_time"
+        "frame=stream_index,pict_type,key_frame,pkt_size,pkt_pos,pts,pts_time,"
+        "best_effort_timestamp,best_effort_timestamp_time,"
+        "pkt_duration,pkt_duration_time,duration,duration_time:"
+        "packet=stream_index,pos,size,pts,dts,dts_time"
     ),
 ]
 _AV_TIMING_FRAME_ARGS = [
@@ -91,15 +94,30 @@ class FFprobeMediaProbe:
         summary = _summarize(data)
         summary["frames"] = []
         summary["frames_truncated"] = False
+        summary["frame_collection"] = {
+            "status": "not_requested",
+            "reason": None,
+            "frames_observed": 0,
+        }
         summary["gop"] = None
         summary["av_timing"] = None
         kinds = {stream.get("codec_type") for stream in summary["streams"]}
         if include_frames and "video" in kinds:
+            summary["frame_collection"] = {
+                "status": "failed",
+                "reason": "ffprobe did not return frame evidence",
+                "frames_observed": 0,
+            }
             frame_data = self._run_json(_FRAME_ARGS, source, input_bytes)
             if frame_data is not None:
                 frames, truncated = _summarize_frames(frame_data)
                 summary["frames"] = frames
                 summary["frames_truncated"] = truncated
+                summary["frame_collection"] = {
+                    "status": "partial" if truncated else "completed",
+                    "reason": "frame limit reached" if truncated else None,
+                    "frames_observed": len(frames),
+                }
                 if frames:
                     summary["gop"] = _summarize_gop(frames, truncated)
         if include_frames and {"video", "audio"} <= kinds:
@@ -193,10 +211,45 @@ def _as_float(value) -> float | None:
         return None
 
 
+def _packet_position(item: dict, field: str) -> tuple[int, int] | None:
+    stream = _as_int(item.get("stream_index"))
+    position = _as_int(item.get(field))
+    if stream is None or stream < 0 or position is None or position < 0:
+        return None
+    return stream, position
+
+
 def _summarize_frames(data: dict) -> tuple[list[dict], bool]:
-    raw_frames = data.get("frames", [])
+    # A single invocation keeps packet and frame timestamps in the same time base.
+    combined = data.get("packets_and_frames", [])
+    raw_frames = [item for item in combined if item.get("type") == "frame"]
+    packets = [item for item in combined if item.get("type") == "packet"]
+    if not combined:
+        raw_frames = data.get("frames", [])
+        packets = data.get("packets", [])
+    by_position: dict[tuple[int, int], list[dict]] = defaultdict(list)
+    for packet in packets:
+        key = _packet_position(packet, "pos")
+        if key is not None:
+            by_position[key].append(packet)
+    frame_counts = Counter(_packet_position(frame, "pkt_pos") for frame in raw_frames)
     frames = []
     for index, frame in enumerate(raw_frames[:_MAX_FRAMES]):
+        key = _packet_position(frame, "pkt_pos")
+        candidates = by_position.get(key, []) if key is not None else []
+        packet = None
+        if len(candidates) == 1 and frame_counts[key] == 1:
+            candidate = candidates[0]
+            raw_pts = _as_int(frame.get("pts"))
+            size = _as_int(frame.get("pkt_size"))
+            if (
+                raw_pts is not None
+                and raw_pts == _as_int(candidate.get("pts"))
+                and size is not None and size > 0
+                and size == _as_int(candidate.get("size"))
+            ):
+                packet = candidate
+        packet_dts = _as_int(packet.get("dts")) if packet else None
         pict_type = frame.get("pict_type")
         key_frame = _as_int(frame.get("key_frame"))
         pts = frame.get("pts")
@@ -218,8 +271,11 @@ def _summarize_frames(data: dict) -> tuple[list[dict], bool]:
                 "pts": _as_int(pts),
                 "pts_time": frame.get("pts_time")
                 or frame.get("best_effort_timestamp_time"),
-                "dts": _as_int(frame.get("pkt_dts")),
-                "dts_time": frame.get("pkt_dts_time"),
+                "dts": packet_dts,
+                "dts_time": packet.get("dts_time") if packet and packet_dts is not None else None,
+                "dts_provenance": "derived (ffprobe packet)" if packet_dts is not None else None,
+                "packet_position": key[1] if packet and key else None,
+                "packet_pts": _as_int(packet.get("pts")) if packet else None,
                 "duration": _as_int(duration),
                 "duration_time": duration_time,
             }

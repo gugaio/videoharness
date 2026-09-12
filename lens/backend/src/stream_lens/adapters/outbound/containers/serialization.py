@@ -84,6 +84,7 @@ def _timing_to_dict(timing: ContainerTiming) -> dict:
                 "end_pts": track.end_pts,
                 "observed_duration_seconds": track.observed_duration_seconds,
                 "boundary_delta_seconds": track.boundary_delta_seconds,
+                "boundary_basis": track.boundary_basis,
             }
             for track in timing.tracks
         ],
@@ -105,6 +106,7 @@ def _timing_from_dict(data: dict) -> ContainerTiming:
                 end_pts=track.get("end_pts"),
                 observed_duration_seconds=track.get("observed_duration_seconds"),
                 boundary_delta_seconds=track.get("boundary_delta_seconds"),
+                boundary_basis=track.get("boundary_basis"),
             )
             for track in data.get("tracks", [])
         ),

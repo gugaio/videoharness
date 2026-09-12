@@ -35,10 +35,13 @@ services:
       LENS_URL: http://lens:8000
       MOCK_URL: http://mock:8080
       VH_SERVICE_TOKEN: ${VH_SERVICE_TOKEN:-dev-internal-token}
+      VH_DATABASE_PATH: /data/history.sqlite
       # Sem chave configurada, as rotas /v1/inspections* rodam abertas (dev).
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
     ports:
       - "127.0.0.1:${VH_APP_PORT:-3210}:3210"
+    volumes:
+      - app-data:/data
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3210/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 5s
@@ -92,5 +95,6 @@ networks:
   internal:
 
 volumes:
+  app-data:
   lens-data:
   mock-data:

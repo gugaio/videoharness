@@ -103,7 +103,7 @@ def test_pareia_janelas_live_pela_media_sequence_e_nao_pelo_indice_local():
         ),
     )
 
-    matrix = measure_abr_alignment((reference, candidate), containers)[0]
+    matrix = measure_abr_alignment((reference, candidate), containers, protocol="DASH")[0]
 
     assert matrix.comparison_basis == "canonical segment sequence"
     assert matrix.comparable_declared_segments == 1
@@ -114,3 +114,15 @@ def test_pareia_janelas_live_pela_media_sequence_e_nao_pelo_indice_local():
     assert matrix.segments[0].index == 11
     assert matrix.segments[0].candidate_index == 3
     assert matrix.segments[0].segment_sequence == 282
+
+
+def test_hls_sequence_sozinha_nao_prova_identidade_entre_rendicoes():
+    alignment = measure_abr_alignment(
+        (_timeline("360p", 0, 4, sequence=12), _timeline("720p", 0, 4, sequence=12)),
+        (),
+        protocol="HLS",
+    )[0]
+    assert alignment.segments == ()
+    assert alignment.comparable_declared_segments == 0
+    assert alignment.comparable_keyframes == 0
+    assert alignment.comparison_basis == "not comparable (HLS cross-rendition identity unavailable)"

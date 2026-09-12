@@ -31,4 +31,4 @@ ENV NODE_ENV=production \
 USER harness
 EXPOSE 3210
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/infrastructure/index.js"]

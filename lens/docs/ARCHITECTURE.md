@@ -10,7 +10,7 @@ Arquitetura hexagonal (Ports and Adapters) **leve**: o padrão é instrumento de
 - O domínio **não importa** FastAPI, filesystem, HTTP client, subprocess ou Pydantic.
 - Casos de uso dependem de ports (`typing.Protocol`).
 - Adapters implementam ports; a composição acontece em um **composition root explícito** (`bootstrap.py`). Sem framework de DI no MVP.
-- Frontend e agentes consomem o **mesmo** contrato público (mesmos endpoints/DTOs). Não existe caminho de dados privativo da UI.
+- Clientes (orquestrador, agentes) consomem o **mesmo** contrato público (mesmos endpoints/DTOs). Não existe caminho de dados privativo de nenhuma interface.
 - CLI e FastAPI chamam os mesmos casos de uso; nada de parsing ou regra de negócio duplicada nos adapters de entrada.
 
 ## Organização alvo do backend
@@ -40,7 +40,7 @@ backend/src/stream_lens/
 └── bootstrap.py      # composition root
 ```
 
-Frontend: `frontend/` (React + TypeScript + Vite, TanStack Query). Skills: `skills/` (ver `docs/ROADMAP.md` Fase 7).
+Serviço headless (ADR-0005): API FastAPI + CLI, sem frontend. Skills: `skills/` (ver `docs/ROADMAP.md` Fase 7).
 
 ## Ports inicialmente esperados
 
@@ -51,8 +51,8 @@ Frontend: `frontend/` (React + TypeScript + Vite, TanStack Query). Skills: `skil
 1. Usuário informa URL → API valida e cria `inspection_id` (aleatório, não previsível).
 2. API responde rápido (202) com `status_url` e `view_url`.
 3. Job assíncrono captura e analisa janela limitada, persistindo progresso.
-4. Snapshot escrito de forma **atômica**; frontend acompanha por polling (SSE opcional).
-5. Frontend navega para `/inspect/{id}`; agentes consomem os mesmos endpoints JSON.
+4. Snapshot escrito de forma **atômica**; clientes acompanham por polling (SSE opcional).
+5. Clientes navegam para `/inspect/{id}` e consomem os mesmos endpoints JSON.
 6. Resultado expira após TTL.
 
 Estados: `queued → fetching_manifest → parsing_manifest → resolving_segments → capturing_segments → inspecting_containers → building_snapshot → completed | partial | failed`, mais `expired`. Resultado parcial nunca é apresentado como completo; erros são preservados por estágio. Detalhes no ciclo de vida de `docs/API.md`.
@@ -71,3 +71,6 @@ Escrita atômica, TTL configurável, limpeza de expirados, limites explícitos (
 ## Decisões registradas
 
 Ver `docs/adr/`. Nenhuma biblioteca crítica é escolhida silenciosamente.
+
+- ADR-0004: o MediaProbe associa frames a pacotes por stream/posição únicos com
+  PTS e tamanho conferidos. DTS vem do pacote; ausência de evidência retorna null.

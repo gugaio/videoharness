@@ -51,6 +51,9 @@ sendo contratos HTTP.
    portadas da Lens** (`TimelineView`: track groups, codecs decodificados,
    barra de bitrate, segmentos clicáveis com drill-down e entrega HTTP;
    `DrmOverview`; observações de bitrate; warnings; snapshot JSON bruto).
+   O orquestrador mantém histórico por usuário em SQLite (ownership pelo `sub`
+   do Clerk; `dev-user` no fallback), arquivando snapshots terminais quando o
+   resultado é consultado, além do TTL da Lens.
    Follow-up da view: matriz ABR e bitstream/A/V (aparecem no JSON bruto).
    **Dependência**: barras de frame, GOP e sincronismo A/V exigem ffprobe na
    imagem da lens — adicionado ao `backend/Dockerfile` da lens (fato dela,

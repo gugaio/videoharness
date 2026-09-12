@@ -25,6 +25,16 @@ export type InspectionCreated = {
   expires_at: string;
 };
 
+export type InspectionHistoryItem = {
+  inspection_id: string;
+  source_url: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  expires_at: string;
+  snapshot_available: boolean;
+};
+
 export class ApiError extends Error {
   constructor(readonly status: number, message: string) {
     super(message);
@@ -67,8 +77,18 @@ export function createInspection(url: string): Promise<InspectionCreated> {
   });
 }
 
+export function listInspections(): Promise<{ inspections: InspectionHistoryItem[] }> {
+  return request<{ inspections: InspectionHistoryItem[] }>("/api/v1/inspections");
+}
+
 export function getInspection(inspectionId: string): Promise<InspectionDetail> {
   return request<InspectionDetail>(`/api/v1/inspections/${encodeURIComponent(inspectionId)}`);
+}
+
+export function deleteInspection(inspectionId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/v1/inspections/${encodeURIComponent(inspectionId)}`, {
+    method: "DELETE",
+  });
 }
 
 export function getSnapshot(inspectionId: string): Promise<Snapshot> {

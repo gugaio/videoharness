@@ -138,6 +138,8 @@ export interface LivePlaylistObservation {
   live_edge_distance_seconds: number | null;
   delivery: DeliveryObservation | null;
   advancement: string;
+  live_edge_advance_segments?: number | null;
+  window_shift_segments?: number | null;
   provenance: string;
 }
 
@@ -273,6 +275,7 @@ export interface TimingTrackDTO {
   end_pts: number | null;
   observed_duration_seconds: number | null;
   boundary_delta_seconds: number | null;
+  boundary_basis?: string | null;
 }
 
 export interface ContainerTimingDTO {
@@ -313,6 +316,9 @@ export interface ProbeFrameDTO {
   pts_time: string | null;
   dts: number | null;
   dts_time: string | null;
+  dts_provenance?: string | null;
+  packet_position?: number | null;
+  packet_pts?: number | null;
   duration: number | null;
   duration_time: string | null;
 }
@@ -352,7 +358,38 @@ export interface ProbeDTO {
   streams: ProbeStreamDTO[];
   frames: ProbeFrameDTO[];
   frames_truncated: boolean;
+  frame_collection?: {
+    status: "completed" | "partial" | "failed" | "not_requested";
+    reason: string | null;
+    frames_observed: number;
+  };
   gop: ProbeGopDTO | null;
+}
+
+export interface AbrAlignmentDTO {
+  group_kind: string;
+  reference_rep_id: string;
+  rep_id: string;
+  comparison_basis: string;
+  unmatched_reference_segments: number;
+  unmatched_candidate_segments: number;
+  comparable_declared_segments: number;
+  comparable_keyframes: number;
+  max_abs_declared_start_delta_seconds: number | null;
+  max_abs_declared_duration_delta_seconds: number | null;
+  max_abs_keyframe_pts_delta_seconds: number | null;
+}
+
+export interface RepresentationBitstreamDTO {
+  group_kind: string;
+  rep_id: string;
+  observed_segments: { index: number; segment_sequence?: number | null }[];
+  configuration_changes: {
+    from_index: number;
+    to_index: number;
+    changed_fields: string[];
+  }[];
+  provenance: string;
 }
 
 export interface ContainerDTO {
@@ -389,5 +426,7 @@ export interface Snapshot {
   containers: ContainerDTO[];
   bitrate_observations?: RepresentationBitrate[];
   delivery?: DeliveryReport | null;
+  abr_alignment?: AbrAlignmentDTO[];
+  bitstream_observations?: RepresentationBitstreamDTO[];
   warnings: string[];
 }

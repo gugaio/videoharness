@@ -1,7 +1,7 @@
 # SNAPSHOT_SCHEMA.md
 
 **Status: implementado (Fase 6 + extensões de observabilidade) — `schema_version` 1.13,
-analyzer 1.5.0** (schema 1.13 estrutura a sinalização DRM declarada no DASH). Contrato
+analyzer 1.5.5** (schema 1.13 estrutura a sinalização DRM declarada no DASH). Contrato
 validado por testes de round-trip, captura, parsers estruturais e adapter derivado
 offline.
 
@@ -182,6 +182,9 @@ Cada item de `containers` corresponde a um item capturado com sucesso em `segmen
   tempo/amostras dos boxes reconhecidos. O parser é estrutural; não decodifica codec.
 - MPEG-TS usa `analysis.kind: "mpeg-ts"` e `ts` com sync, programas PAT/PMT, PIDs,
   continuity counters, PCR e timestamps PES observados.
+- Desde analyzer 1.5.3, o `stream_type` MPEG-TS `0x15` é apresentado como
+  `metadata (pes)`, sem presumir ID3 quando descriptors/payload não foram analisados;
+  AAC permanece `0x0F` (`audio (aac)`).
 - `analysis.kind: "unknown"` preserva `error` sem derrubar a inspeção.
 - A árvore é limitada na serialização a 64 filhos por nó para evitar snapshots
   desproporcionais; não há endpoint separado por container nesta fase.
@@ -248,7 +251,7 @@ fragmento. MPEG-TS materializa unidades PES e usa a escala fixa de 90 kHz de PTS
 ## Bloco 1.5 (extensão — frames I/P/B e GOP derivados)
 
 Para cada segmento de vídeo legível, o adapter opcional executa
-`ffprobe -show_frames`. Em fMP4, o init capturado da mesma representação é
+`ffprobe -show_frames -show_packets`. Em fMP4, o init capturado da mesma representação é
 concatenado ao fragmento via stdin para fornecer a configuração do codec. A lista é
 derivada e não substitui `analysis.samples`.
 
@@ -262,6 +265,8 @@ derivada e não substitui `analysis.samples`.
       "key_frame": true, "byte_size": 2991,
       "pts": 0, "pts_time": "0.000000",
       "dts": 0, "dts_time": "0.000000",
+      "dts_provenance": "derived (ffprobe packet)",
+      "packet_position": 1024, "packet_pts": 0,
       "duration": null, "duration_time": null
     }
   ],
@@ -286,10 +291,21 @@ derivada e não substitui `analysis.samples`.
 }
 ```
 
+Desde analyzer 1.5.1, `dts`/`dts_time` são copiados do pacote, somente com associação
+um-para-um por stream e posição, PTS original e tamanho conferidos. Não se utiliza
+`frame.pkt_dts` ou cálculo por offset estrutural. Ausência, ambiguidade ou DTS
+ausente produzem null. `packet_position` refere-se ao arquivo de entrada do probe
+(em fMP4, init + fragmento), `packet_pts` preserva o PTS do pacote, e
+`dts_provenance` identifica `derived (ffprobe packet)`. Ver ADR-0004.
+
+Desde analyzer 1.5.2, `frame_collection` explicita `completed`, `partial`, `failed`
+ou `not_requested`, a quantidade observada e o motivo conhecido. Assim, uma lista
+vazia deixa de ser confundida com uma coleta completa sem frames.
+
 - `pict_type` é `I`, `P`, `B` ou `null`, conforme reportado pelo decoder do
   `ffprobe`; não é inferido dos sample flags.
-- `pts_time`/`dts_time` são segundos reportados pelo probe; os campos inteiros
-  preservam os timestamps originais quando disponíveis.
+- `pts_time` vem do frame (com fallback best-effort); `dts_time` vem exclusivamente
+  do pacote verificado. Os campos inteiros preservam os timestamps correspondentes.
 - A lista é limitada a 1.000 frames e a entrada combinada a 40 MiB.
 - `gop.intervals` contém apenas intervalos completos entre dois keyframes observados,
   com quantidade de frames e duração. `trailing_gop` é o trecho iniciado no último
@@ -314,13 +330,18 @@ mesma representação.
     "start_dts": 90000, "end_dts": 180000,
     "start_pts": 90000, "end_pts": 180000,
     "observed_duration_seconds": 1.0,
-    "boundary_delta_seconds": 0.005556
+    "boundary_delta_seconds": 0.005556,
+    "boundary_basis": "DTS current start - previous observed end"
   }],
   "provenance": "deterministic (container timestamps)"
 }
 ```
 
 - `boundary_delta_seconds > 0` é gap; `< 0` é overlap; `0` é fronteira contínua.
+- `boundary_basis` torna auditável o cálculo. A prioridade é início DTS atual menos
+  fim DTS anterior. Desde analyzer 1.5.4, quando o fim não existe, a Lens compara
+  início-a-início e subtrai a duração declarada do segmento anterior; se DTS não foi
+  sinalizado no PES, usa PTS explicitamente, sem preencher ou inventar DTS.
 - `null` é não comparável, por exemplo quando a última PES não fornece duração.
 - PTS fica visível para investigar reorder; a continuidade usa DTS.
 - A matriz ABR compara rendições de vídeo equivalentes; A/V e PCR continuam extensões
@@ -329,10 +350,10 @@ mesma representação.
 ## Bloco 1.7 (extensão — matriz ABR; pareamento corrigido no 1.10)
 
 `abr_alignment` compara rendições do mesmo `group_kind` contra a primeira timeline
-do grupo, na ordem preservada pelo manifesto. A partir do schema 1.10, cada linha
-compara segmentos com a mesma `segment_sequence`: `EXT-X-MEDIA-SEQUENCE` no HLS e
-o número de segmento disponível no DASH. O índice continua preservado para navegar
-na janela de cada rendição, mas não define equivalência entre janelas live.
+do grupo, na ordem preservada pelo manifesto. No DASH, cada linha compara segmentos
+com o mesmo número canônico. Desde analyzer 1.5.2, HLS fica explicitamente não
+comparável: `EXT-X-MEDIA-SEQUENCE` pertence a cada Media Playlist e o mesmo número
+em duas variantes não prova que os conteúdos representam o mesmo intervalo.
 
 Os deltas de duração são declarativos; o delta de PTS de keyframe é derivado e só
 existe se os dois fragments do mesmo par o fornecerem. Quando a sequência não está
@@ -408,7 +429,7 @@ e sua proveniência fica explícita.
     "target_duration_seconds": 4.0, "playlist_window_duration_seconds": 24.0,
     "live_edge_program_date_time": "2026-01-01T00:00:20+00:00",
     "live_edge_distance_seconds": 3.2,
-    "advancement": "not measured (single playlist observation)"
+    "advancement": "advanced by 1 segments"
   }]
 }
 ```
@@ -418,8 +439,15 @@ e sua proveniência fica explícita.
 - Cache não persiste valores de ETag, cookies, headers arbitrários ou URLs de
   redirects. `delivery: null` significa que não houve medição HTTP, por exemplo em
   fixture local; não equivale a zero.
-- Distância live requer que PDT permita datar o último segmento e usa o relógio da captura. Avanço
-  não é inferido de uma única leitura; DASH dinâmico não recebe cálculo equivalente.
+- Distância live requer que PDT permita datar o último segmento e usa o relógio da captura.
+  Em HLS live, uma segunda leitura é feita depois da captura dos segmentos, sem espera
+  artificial, e o avanço compara apenas `MEDIA-SEQUENCE` da mesma URL/representação.
+  Uma leitura única permanece explicitamente não medida; DASH dinâmico não recebe
+  cálculo equivalente.
+- Desde analyzer 1.5.5, a segunda leitura preserva `live_edge_advance_segments` e
+  `window_shift_segments` separadamente. O primeiro compara o último segmento;
+  o segundo compara o início da janela DVR. Uma janela que descarta seu segmento
+  mais antigo não é apresentada como novo conteúdo publicado.
   Detalhes e roteiro QA: [HTTP_LIVE_DELIVERY.md](HTTP_LIVE_DELIVERY.md).
 
 ## Bloco 1.12 (extensão — configuração efetiva e início A/V por PTS)

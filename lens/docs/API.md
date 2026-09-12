@@ -95,8 +95,9 @@ fragmento; mensagem com estágio, sem segredos), `404`, `410`.
 ```
 
 O contrato completo — incluindo `media`, `capture`, `segments`, `timeline` e
-`containers` — está em [SNAPSHOT_SCHEMA.md](SNAPSHOT_SCHEMA.md). A UI oferece o
-download deste mesmo JSON, sem um contrato privativo.
+`containers` — está em [SNAPSHOT_SCHEMA.md](SNAPSHOT_SCHEMA.md). O snapshot é
+público dentro do TTL e pode ser baixado por qualquer cliente, sem contrato
+privativo.
 
 ## Comportamento operacional
 

@@ -14,14 +14,16 @@ from stream_lens.domain.value_objects.segments import (
 def measure_abr_alignment(
     timelines: tuple[RepresentationTimeline, ...],
     containers: tuple[SegmentContainer, ...],
+    protocol: str | None = None,
 ) -> tuple[AbrAlignment, ...]:
     """Compara rendições do mesmo grupo contra a primeira referência observada.
 
     A primeira timeline do grupo define a referência de forma estável, preservando
     a ordem declarada pelo manifesto/captura. Quando as duas timelines preservam
-    uma sequência canônica, os pares são formados por ela: ``EXT-X-MEDIA-SEQUENCE``
-    no HLS ou número de segmento no DASH. O índice local só é fallback para
-    snapshots antigos ou fontes sem essa identidade.
+    uma sequência canônica, os pares DASH são formados por ela. No HLS,
+    ``EXT-X-MEDIA-SEQUENCE`` é local a cada Media Playlist e não prova identidade
+    entre rendições; portanto nenhum par cross-rendition é fabricado. O índice
+    local só é fallback em protocolos sem sequência canônica disponível.
     """
 
     by_group: dict[str, list[RepresentationTimeline]] = {}
@@ -34,9 +36,16 @@ def measure_abr_alignment(
             continue
         reference = group[0]
         for candidate in group[1:]:
-            pairs, comparison_basis, unmatched_reference, unmatched_candidate = _pairs(
-                reference, candidate
-            )
+            pairs: tuple[tuple[TimelineEntry, TimelineEntry, int | None], ...]
+            if (protocol or "").upper() == "HLS":
+                pairs = ()
+                comparison_basis = "not comparable (HLS cross-rendition identity unavailable)"
+                unmatched_reference = len(_media_entries(reference))
+                unmatched_candidate = len(_media_entries(candidate))
+            else:
+                pairs, comparison_basis, unmatched_reference, unmatched_candidate = _pairs(
+                    reference, candidate
+                )
             samples: list[AbrSegmentAlignment] = []
             for ref_entry, candidate_entry, sequence in pairs:
                 samples.append(

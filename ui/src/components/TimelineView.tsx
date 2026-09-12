@@ -75,6 +75,14 @@ function formatMilliseconds(value: number | null): string {
   return value === null ? "não observado" : `${value} ms`;
 }
 
+function timingRange(values: (number | null | undefined)[]): string {
+  const measured = values.filter((value): value is number => value != null && Number.isFinite(value));
+  if (measured.length === 0) return "Não observado";
+  const low = Math.min(...measured);
+  const high = Math.max(...measured);
+  return low === high ? `${low} ms` : `${low}–${high} ms`;
+}
+
 function formatRatio(ratio: number | null): string {
   return ratio === null ? "sem referência declarada" : `${(ratio * 100).toFixed(0)}% do declarado`;
 }
@@ -103,11 +111,11 @@ function cacheLabel(item: DeliveryObservation): string {
 function BitrateObservations({ observations }: { observations: RepresentationBitrate[] }) {
   if (observations.length === 0) return null;
   return (
-    <section className="bitrate-observations" aria-labelledby="bitrate-observations-heading">
+    <section className="bitrate-observations" aria-label="Medições de bitrate">
       <header>
         <div>
           <span className="eyebrow">Bytes capturados</span>
-          <h3 id="bitrate-observations-heading">Bitrate por segmento</h3>
+          <h3>Bitrate por segmento</h3>
         </div>
         <span>{observations.reduce((total, item) => total + item.segments.length, 0)} segmentos com duração</span>
       </header>
@@ -115,34 +123,18 @@ function BitrateObservations({ observations }: { observations: RepresentationBit
         Taxa calculada como bytes do arquivo ÷ duração do segmento. O tamanho das unidades indica concentração de
         payload; não mede a complexidade nem a qualidade do vídeo.
       </p>
-      <div className="table-scroll">
-        <table className="structure-table bitrate-table">
-          <thead><tr>
-            <th>Rendição</th>
-            <AlignmentMetricHeader label="Média calculada" help="Total de bytes dos segmentos capturados dividido pela soma de suas durações. Não inclui segmentos que falharam ou não tinham duração utilizável." />
-            <AlignmentMetricHeader label="Pico por segmento" help="Maior taxa calculada em um segmento individual da janela. Ajuda a revelar picos que pressionam a banda disponível e o buffer." />
-            <AlignmentMetricHeader label="Faixa observada" help="Menor e maior taxa calculadas na janela. Grande variação pode indicar conteúdo com payload desigual; este dado, isoladamente, não identifica a causa." />
-            <AlignmentMetricHeader label="Declarado no manifesto" help="BANDWIDTH do HLS ou bandwidth do DASH, quando presente. É metadado do manifesto e não uma medição dos bytes baixados." />
-          </tr></thead>
-          <tbody>{observations.map((item) => (
-            <tr key={`${item.group_kind}-${item.rep_id}`}>
-              <td><code>{item.rep_id}</code><br /><small>{item.segments.length} segmentos</small></td>
-              <td>{formatBandwidth(item.average_bitrate_bps)}</td>
-              <td>{formatBandwidth(item.peak_bitrate_bps)}</td>
-              <td>{formatBandwidth(item.lowest_bitrate_bps)} — {formatBandwidth(item.peak_bitrate_bps)}</td>
-              <td>{formatBandwidth(item.declared_bandwidth_bps)}{item.declared_bandwidth_bps && item.peak_bitrate_bps ? <><br /><small>pico: {formatRatio(item.peak_bitrate_bps / item.declared_bandwidth_bps)}</small></> : null}</td>
-            </tr>
-          ))}</tbody>
-        </table>
-      </div>
+      {observations.map((item) => <dl className="segment-facts" key={`${item.group_kind}-${item.rep_id}`}>
+        <div><dt>Faixa observada</dt><dd>{formatBandwidth(item.lowest_bitrate_bps)} – {formatBandwidth(item.peak_bitrate_bps)}</dd></div>
+        <div><dt>Pico / declarado</dt><dd>{formatRatio(item.declared_bandwidth_bps && item.peak_bitrate_bps !== null ? item.peak_bitrate_bps / item.declared_bandwidth_bps : null)}</dd></div>
+      </dl>)}
       <details className="bitrate-details">
         <summary>Ver medições por segmento</summary>
         <div className="table-scroll">
           <table className="structure-table bitrate-table">
-            <thead><tr><th>Rendição / segmento</th><th>Bitrate calculado</th><th>Duração usada</th><th>Unidades observadas</th></tr></thead>
+            <thead><tr><th>Segmento</th><th>Bitrate calculado</th><th>Duração usada</th><th>Unidades observadas</th></tr></thead>
             <tbody>{observations.flatMap((item) => item.segments.map((segment) => (
               <tr key={`${item.rep_id}-${segment.index}`}>
-                <td><code>{item.rep_id}</code> · {segment.index}<br /><small>{formatBytes(segment.byte_size)} · {formatRatio(segment.bitrate_ratio_to_declared)}</small></td>
+                <td>{segment.index}<br /><small>{formatBytes(segment.byte_size)} · {formatRatio(segment.bitrate_ratio_to_declared)}</small></td>
                 <td>{formatBandwidth(segment.bitrate_bps)}</td>
                 <td>{formatDuration(segment.duration_seconds)}<br /><small>{segment.duration_provenance.includes("container") ? "timestamps do container" : "manifesto"}</small></td>
                 <td>{segment.unit_count > 0 ? <>{segment.unit_count} unidades<br /><small>média {formatBytes(segment.average_unit_bytes)} · maior {formatBytes(segment.largest_unit_bytes)}</small></> : "não observadas"}</td>
@@ -161,16 +153,16 @@ function DeliveryObservations({ delivery, segments }: { delivery: DeliveryReport
   const live = delivery?.live_playlists ?? [];
   if (segmentRequests.length === 0 && manifests.length === 0 && live.length === 0 && !delivery?.live_note) return null;
   return (
-    <section className="delivery-observations" aria-labelledby="delivery-observations-heading">
+    <section className="delivery-observations" aria-label="Entrega HTTP e live">
       <header>
         <div>
           <span className="eyebrow">Cliente de captura</span>
-          <h3 id="delivery-observations-heading">Entrega HTTP e live</h3>
+          <h3>Entrega HTTP e live</h3>
         </div>
         <span>{segmentRequests.length} segmentos com medição HTTP</span>
       </header>
       <p>Tempos são medidos por esta captura, não pelo player. Headers são reduzidos a sinais de cache seguros; ausência de valor não indica uma entrega saudável.</p>
-      {segmentRequests.length > 0 && <details className="bitrate-details" open>
+      {segmentRequests.length > 0 && <details className="bitrate-details">
         <summary>Ver entrega por segmento</summary>
         <div className="table-scroll"><table className="structure-table bitrate-table"><thead><tr>
           <th>Segmento</th>
@@ -190,15 +182,40 @@ function DeliveryObservations({ delivery, segments }: { delivery: DeliveryReport
 }
 
 function LivePlaylists({ live }: { live: LivePlaylistObservation[] }) {
-  return <details className="bitrate-details" open>
-    <summary>Ver evidência live das playlists</summary>
-    <div className="table-scroll"><table className="structure-table bitrate-table"><thead><tr>
-      <th>Playlist</th>
-      <AlignmentMetricHeader label="Janela declarada" help="Soma das durações EXTINF presentes na playlist obtida. Não é o buffer do player." />
-      <AlignmentMetricHeader label="Distância da live edge" help="Só aparece quando PROGRAM-DATE-TIME permite associar um horário ao último segmento: horário da captura menos o fim declarado desse segmento. Relógios do servidor e do cliente podem divergir." />
-      <AlignmentMetricHeader label="Avanço" help="Medir avanço requer ao menos duas leituras da mesma playlist. Esta captura faz uma única leitura por playlist, por isso não calcula avanço." />
-    </tr></thead><tbody>{live.map((item) => <tr key={`${item.rep_id}-${item.playlist_url}`}><td><code>{item.rep_id ?? "media"}</code><br /><small>seq. {item.media_sequence ?? "não declarada"}–{item.last_segment_sequence ?? "não declarada"}</small></td><td>{formatDuration(item.playlist_window_duration_seconds)}<br /><small>target {formatDuration(item.target_duration_seconds)}</small></td><td>{item.live_edge_distance_seconds === null ? "não observada" : formatDuration(item.live_edge_distance_seconds)}</td><td>{item.advancement}</td></tr>)}</tbody></table></div>
-  </details>;
+  const byPlaylist = new Map<string, LivePlaylistObservation[]>();
+  for (const item of live) {
+    const key = `${item.rep_id ?? "media"}\u0000${item.playlist_url}`;
+    byPlaylist.set(key, [...(byPlaylist.get(key) ?? []), item]);
+  }
+  const lanes = [...byPlaylist.values()].map((items) => ({
+    latest: items.at(-1)!, readings: items,
+  }));
+  const edgeValues = lanes.flatMap(({ latest }) => latest.last_segment_sequence === null ? [] : [latest.last_segment_sequence]);
+  const newestEdge = edgeValues.length ? Math.max(...edgeValues) : null;
+  const aligned = newestEdge !== null && lanes.every(({ latest }) => latest.last_segment_sequence === newestEdge);
+
+  return <section className="live-edge-overview" aria-labelledby="live-edge-heading">
+    <header>
+      <div><span className="eyebrow">Publicação observada</span><h4 id="live-edge-heading">Live edge</h4></div>
+      <span>{newestEdge === null ? "Borda não observada" : aligned ? "Variantes alinhadas" : "Variantes em bordas diferentes"}</span>
+    </header>
+    <p>A borda é o último segmento declarado. O deslocamento da janela DVR é mostrado separadamente e não significa publicação nova.</p>
+    <div className="live-edge-lanes">{lanes.map(({ latest, readings }) => {
+      const behind = newestEdge !== null && latest.last_segment_sequence !== null ? newestEdge - latest.last_segment_sequence : null;
+      const edgeState = behind === null ? "não observada" : behind === 0 ? "alinhada" : `${behind} segmento${behind === 1 ? "" : "s"} atrás`;
+      return <article className={behind && behind > 0 ? "live-edge-lane lagging" : "live-edge-lane"} key={`${latest.rep_id}-${latest.playlist_url}`}>
+        <div><code>{latest.rep_id ?? "media"}</code><small>{edgeState}</small></div>
+        <div className="live-edge-track" aria-label={edgeState}><span style={{ width: behind === null ? "0%" : `${Math.max(20, 100 - behind * 22)}%` }} /></div>
+        <div className="live-edge-facts"><strong>{latest.live_edge_distance_seconds === null ? "—" : formatDuration(latest.live_edge_distance_seconds)}</strong><small>{readings.length > 1 ? latest.advancement : "uma leitura"}{latest.window_shift_segments !== null && latest.window_shift_segments !== undefined ? ` · janela +${latest.window_shift_segments}` : ""}</small></div>
+      </article>;
+    })}</div>
+    <details className="bitrate-details">
+      <summary>Ver leituras e sequências</summary>
+      <div className="table-scroll"><table className="structure-table bitrate-table"><thead><tr>
+        <th>Playlist</th><th>Janela declarada</th><th>Live edge</th><th>Leitura</th>
+      </tr></thead><tbody>{live.map((item, index) => <tr key={`${item.rep_id}-${item.playlist_url}-${index}`}><td><code>{item.rep_id ?? "media"}</code><br /><small>seq. {item.media_sequence ?? "—"}–{item.last_segment_sequence ?? "—"}</small></td><td>{formatDuration(item.playlist_window_duration_seconds)}<br /><small>target {formatDuration(item.target_duration_seconds)}</small></td><td>{item.live_edge_distance_seconds === null ? "não observada" : formatDuration(item.live_edge_distance_seconds)}</td><td>{item.advancement}{item.window_shift_segments !== null && item.window_shift_segments !== undefined ? <><br /><small>janela deslocou {item.window_shift_segments} segmentos</small></> : null}</td></tr>)}</tbody></table></div>
+    </details>
+  </section>;
 }
 
 function segmentKey(repId: string, index: number, isInit: boolean): string {
@@ -510,6 +527,7 @@ function RepresentationRow({
   row,
   group,
   maxBandwidth,
+  observation,
   segments,
   containers,
   selected,
@@ -518,6 +536,7 @@ function RepresentationRow({
   row: DisplayRow;
   group: DisplayGroup;
   maxBandwidth: number;
+  observation: RepresentationBitrate | null;
   segments: CapturedSegment[];
   containers: ContainerDTO[];
   selected: string | null;
@@ -531,6 +550,13 @@ function RepresentationRow({
   const specs = representationSpecs(rep);
   const captured = entries.filter((entry) => entry.status === "captured").length;
   const mediaEntries = entries.filter((entry) => entry.status !== "init");
+  const failed = mediaEntries.filter((entry) => entry.status === "failed").length;
+  const repSegments = segments.filter((item) => item.rep_id === row.repId && item.group_kind === row.kind);
+  const requests = repSegments.filter((item) => !item.is_init && item.delivery != null);
+  const httpFailures = requests.filter((item) => (item.delivery?.http_status ?? 0) >= 400).length;
+  const statuses = [...new Set(requests.flatMap((item) => item.delivery?.http_status != null ? [item.delivery.http_status] : []))].sort((a, b) => a - b);
+  const codecs = rep?.codecs ? [...new Set(decodeCodecList(rep.codecs).map((codec) => codec.family))].join(" · ") : "Não declarado";
+  const sizes = repSegments.flatMap((item) => item.byte_size !== null ? [item.byte_size] : []);
 
   const selectedEntry = entries.find((entry) => segmentKey(row.repId, entry.index, entry.status === "init") === selected) ?? null;
   const selectedSegment = selectedEntry
@@ -545,7 +571,18 @@ function RepresentationRow({
     : null;
 
   return (
-    <article className={`representation-row kind-${row.kind}`} aria-label={`Representação ${row.repId}`}>
+    <details className={`variant-disclosure kind-${row.kind}`}>
+      <summary className="variant-summary">
+        <span className="variant-title"><strong>{label}</strong><small>{specs.join(" · ") || KIND_LABELS[row.kind]}</small></span>
+        <span className="variant-metric"><small>Codecs</small><strong>{codecs}</strong></span>
+        <span className="variant-metric"><small>Bitrate</small><strong>{formatBandwidth(observation?.average_bitrate_bps ?? null)} <small>medido</small></strong><small>{formatBandwidth(bitrate)} declarado</small></span>
+        <span className="variant-metric"><small>Captura</small><strong className={failed > 0 ? "value-warning" : undefined}>{mediaEntries.length > 0 ? `${captured}/${mediaEntries.length} segmentos` : "Sem captura"}</strong><small>{formatBytes(sizes.length > 0 ? sizes.reduce((sum, value) => sum + value, 0) : null)}{failed > 0 ? ` · ${failed} falhas` : ""}</small></span>
+        <span className="variant-metric"><small>TTFB · faixa</small><strong>{timingRange(requests.map((item) => item.delivery?.ttfb_ms))}</strong><small>Download: {timingRange(requests.map((item) => item.delivery?.download_duration_ms))}</small></span>
+        <span className="variant-metric"><small>Entrega HTTP</small><strong className={httpFailures > 0 ? "value-warning" : undefined}>{statuses.length > 0 ? statuses.join(" · ") : "Não observada"}</strong><small>{httpFailures > 0 ? `${httpFailures} com erro · ` : ""}{requests.length} medições</small></span>
+        <span className="variant-toggle" aria-hidden="true">⌄</span>
+      </summary>
+      <div className="variant-content">
+      <article className={`representation-row kind-${row.kind}`} aria-label={`Representação ${row.repId}`}>
       <div className="representation-identity">
         <span className="kind-marker" aria-hidden="true" />
         <div className="quality-block">
@@ -558,7 +595,7 @@ function RepresentationRow({
 
       <div className="bitrate-cell">
         <div className="bitrate-value">
-          <span>Bitrate</span>
+          <span>Declarado</span>
           <strong>{formatBandwidth(bitrate)}</strong>
         </div>
         <div className="bitrate-track" aria-hidden="true">
@@ -627,6 +664,14 @@ function RepresentationRow({
         />
       )}
     </article>
+      <details className="variant-measurements">
+        <summary>Medições de bitrate e entrega HTTP</summary>
+        {observation && <BitrateObservations observations={[observation]} />}
+        <DeliveryObservations delivery={null} segments={repSegments} />
+        {!observation && requests.length === 0 && <p className="empty-inline">Sem medições disponíveis nesta captura.</p>}
+      </details>
+      </div>
+    </details>
   );
 }
 
@@ -654,7 +699,7 @@ export function TimelineView({
     <section className="stream-map" aria-labelledby="representations-heading">
       <header className="stream-map-header">
         <div>
-          <span className="eyebrow">Apresentação</span>
+          <span className="eyebrow">Apresentação do stream</span>
           <h2 id="representations-heading">Representações</h2>
         </div>
         {capture && (
@@ -667,15 +712,17 @@ export function TimelineView({
         )}
       </header>
 
+      <p className="representations-intro">Compare as variantes. Expanda uma linha para explorar codecs, segmentos e medições.</p>
+      <details className="representation-help">
+        <summary>Como ler os dados</summary>
+        <p>Bitrate medido é o total de bytes dividido pela duração dos segmentos capturados; declarado é o valor do manifesto. Essas taxas não medem qualidade de imagem. Tempos HTTP são observados pelo cliente de captura, não pelo player. Ausência de medição não indica entrega saudável.</p>
       <div className="segment-legend" aria-label="Legenda dos segmentos">
         <span><i className="legend-dot captured" />capturado</span>
         <span><i className="legend-dot init" />init</span>
         <span><i className="legend-dot failed" />falhou</span>
         <span><i className="legend-container">◇</i>container</span>
       </div>
-
-      <BitrateObservations observations={bitrateObservations} />
-      <DeliveryObservations delivery={delivery} segments={segments} />
+      </details>
 
       <div className="track-groups">
         {groups.map((group) => {
@@ -699,6 +746,7 @@ export function TimelineView({
                     row={row}
                     group={group}
                     maxBandwidth={maxBandwidth}
+                    observation={bitrateObservations.find((item) => item.rep_id === row.repId && item.group_kind === row.kind) ?? null}
                     segments={segments}
                     containers={containers}
                     selected={selected}
@@ -710,6 +758,13 @@ export function TimelineView({
           );
         })}
       </div>
+      {groups.length === 0 && <p className="empty-inline">Nenhuma representação disponível nesta captura.</p>}
+      {delivery && ((delivery.live_playlists?.length ?? 0) > 0 || delivery.live_note) && (
+        <details className="variant-measurements">
+          <summary>Contexto live das playlists</summary>
+          <DeliveryObservations delivery={delivery} segments={[]} />
+        </details>
+      )}
     </section>
   );
 }

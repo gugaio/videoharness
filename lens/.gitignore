@@ -220,6 +220,4 @@ __marimo__/
 # Stream Lens
 .venv/
 .runtime/
-node_modules/
-frontend/dist/
 *.local

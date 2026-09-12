@@ -117,10 +117,9 @@ class Fmp4Info:
 class TimingTrack:
     """Janela temporal observada de um track/PID no segmento.
 
-    `boundary_delta_seconds` compara o início de DTS deste segmento ao fim
-    observável do anterior, na mesma representação. Positivo significa gap;
-    negativo, sobreposição. `None` significa que os bytes não permitiram uma
-    comparação — nunca equivale a continuidade.
+    `boundary_delta_seconds` compara fronteiras na mesma representação pela base
+    explicitada em `boundary_basis`. Positivo significa gap; negativo,
+    sobreposição. `None` significa que os bytes não permitiram uma comparação.
     """
 
     track_id: int | None = None
@@ -132,6 +131,7 @@ class TimingTrack:
     end_pts: int | None = None
     observed_duration_seconds: float | None = None
     boundary_delta_seconds: float | None = None
+    boundary_basis: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

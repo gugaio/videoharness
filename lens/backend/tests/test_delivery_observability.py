@@ -65,6 +65,75 @@ two.ts
     assert observation.advancement == "not measured (single playlist observation)"
 
 
+def test_hls_live_mede_avanco_com_segunda_leitura_da_mesma_playlist():
+    first = """#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:12
+#EXTINF:4,
+one.ts
+"""
+    second = first.replace("MEDIA-SEQUENCE:12", "MEDIA-SEQUENCE:14")
+
+    class SequentialFetcher:
+        calls = 0
+
+        async def fetch(self, url):
+            self.calls += 1
+            return FetchedManifest(url=url, text=second)
+
+    fetcher = SequentialFetcher()
+    service = SegmentCaptureService(
+        fetcher, LocalFixtureSegmentFetcher(FIXTURES_ROOT), FrozenClock()
+    )
+    media = DeclarativeManifestInspector().inspect(first)
+    root = FetchedManifest(url="https://cdn.example/live.m3u8", text=first)
+    plan = asyncio.run(service.plan(media, root.url, root_fetched=root))
+
+    asyncio.run(service.observe_live_advancement(plan))
+
+    assert len(plan.live_playlists) == 2
+    assert plan.live_playlists[0].advancement == "not measured (single playlist observation)"
+    assert plan.live_playlists[1].media_sequence == 14
+    assert plan.live_playlists[1].advancement == "live edge advanced by 2 segments"
+    assert plan.live_playlists[1].live_edge_advance_segments == 2
+    assert plan.live_playlists[1].window_shift_segments == 2
+
+
+def test_hls_live_separa_deslocamento_da_janela_do_avanco_da_borda():
+    first = """#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:12
+#EXTINF:4,
+one.ts
+#EXTINF:4,
+two.ts
+"""
+    second = first.replace("MEDIA-SEQUENCE:12", "MEDIA-SEQUENCE:13").replace(
+        "one.ts\n", ""
+    )
+
+    class Fetcher:
+        async def fetch(self, url):
+            return FetchedManifest(url=url, text=second)
+
+    service = SegmentCaptureService(
+        Fetcher(), LocalFixtureSegmentFetcher(FIXTURES_ROOT), FrozenClock()
+    )
+    root = FetchedManifest(url="https://cdn.example/live.m3u8", text=first)
+    plan = asyncio.run(
+        service.plan(
+            DeclarativeManifestInspector().inspect(first), root.url, root_fetched=root
+        )
+    )
+
+    asyncio.run(service.observe_live_advancement(plan))
+
+    second_read = plan.live_playlists[1]
+    assert second_read.advancement == "live edge unchanged between observations"
+    assert second_read.live_edge_advance_segments == 0
+    assert second_read.window_shift_segments == 1
+
+
 def test_delivery_roundtrip_redige_urls_e_mantem_ausencia_de_evidencia():
     segment = CapturedSegment(
         rep_id="v1", group_kind="video", uri="https://cdn.example/s1.m4s?sig=secret",

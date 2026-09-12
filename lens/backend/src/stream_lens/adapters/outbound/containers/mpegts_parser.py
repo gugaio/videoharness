@@ -26,7 +26,9 @@ _STREAM_KINDS = {
     0x03: "audio (mp3)",
     0x04: "audio (mp3)",
     0x06: "data (pes private)",
-    0x15: "audio (aac adts)",
+    # ISO/IEC 13818-1 metadata carried in PES. Em HLS costuma transportar ID3,
+    # mas sem analisar descriptors/payload não afirmamos o formato da metadata.
+    0x15: "metadata (pes)",
 }
 
 

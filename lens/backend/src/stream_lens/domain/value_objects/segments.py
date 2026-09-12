@@ -78,6 +78,10 @@ class LivePlaylistObservation:
     live_edge_distance_seconds: float | None = None
     delivery: DeliveryObservation | None = None
     advancement: str = "not measured (single playlist observation)"
+    # Mudança da borda e do início da janela são fatos distintos. Em uma DVR
+    # deslizante, a janela pode avançar mesmo quando a live edge não publicou nada.
+    live_edge_advance_segments: int | None = None
+    window_shift_segments: int | None = None
     provenance: str = "declared (HLS playlist)"
 
 

@@ -1,7 +1,14 @@
 # TESTING.md
 
-**Status: Fase 6 + extensões concluídas — 147 testes backend (pytest) + 43 frontend
-(vitest), todos offline; o teste opcional de ffprobe é pulado quando o binário não existe.**
+Correção DTS (2026-09-12): suíte backend completa com 162 testes passando.
+`test_frame_packet_timing.py` cobre associação por stream/posição, tamanho e PTS,
+duplicatas, campos ausentes, best-effort sem PTS original, DTS zero/negativo e
+fixtures geradas com B-frames em MP4, MPEG-TS e fMP4 (init + fragmento via stdin).
+Os timestamps resultantes são comparados à saída independente de `-show_packets`.
+
+**Status: Fase 6 + extensões concluídas — suíte backend (pytest), todos offline; o teste
+opcional de ffprobe é pulado quando o binário não existe. Sem suíte frontend desde o
+ADR-0005 (serviço headless).**
 
 ## Princípios
 
@@ -28,15 +35,13 @@ TS (PAT/PMT/PES/PCR) e fMP4 (init e fragmentos). Sem mídia protegida por copyri
 - Golden snapshots pequenos e revisáveis;
 - Paridade das propriedades normalizadas (HLS vs DASH sobre o mesmo conteúdo);
 - Integração FastAPI;
-- Componentes e interação React;
-- Ao menos um fluxo end-to-end quando a UI estiver funcional;
 - Limites de captura e proteções de URL;
 - Arquivos expirados e escrita atômica;
 - Metadados HDR estáticos e assinatura HDR10+ em bytes sintéticos.
 - Samples fMP4 com tamanho/duração/flags/composition offset e unidades PES TS com
-  tamanho/PTS, além da escala visual e dos tempos no componente React.
+  tamanho/PTS.
 - `show_frames` com init + fragmento via stdin, classificação I/P/B, preservação de
-  timestamp zero e preferência visual pelos frames derivados com fallback estrutural.
+  timestamp zero e frames derivados com precedência sobre o fallback estrutural.
 - Resumo de GOP com pares de keyframes, distribuição I/P/B, trecho final incompleto
   e ausência explícita de intervalo quando só um ponto de acesso foi observado.
 - Timeline Health: duração observada, duração declarada, gap, overlap e fronteira
@@ -51,16 +56,16 @@ TS (PAT/PMT/PES/PCR) e fMP4 (init e fragmentos). Sem mídia protegida por copyri
   redução segura de headers de cache; round-trip/redaction; e playlist HLS live
   com `PROGRAM-DATE-TIME`, sequência e ausência explícita de avanço em uma leitura.
 - DRM DASH fase 1: escopo de `ContentProtection`, UUIDs conhecidos, KID
-  normalizado, PSSH válido/inválido sem persistir payload, redaction e painel com
-  limites explícitos; HLS e snapshots legados não recebem o painel DASH.
+  normalizado, PSSH válido/inválido sem persistir payload, redaction e limites
+  explícitos no contrato; HLS e snapshots legados não recebem o bloco DASH.
 - Strings de codec de áudio: decomposição de `mp4a.40.2`, identificação de
-  `ac-3`/`ec-3`, tooltips acessíveis e ausência explícita de inferência sobre
+  `ac-3`/`ec-3` e ausência explícita de inferência sobre
   bitrate, canais, Atmos ou compatibilidade.
 
 ## Comandos (raiz do repositório)
 
-Implementados: `help`, `bootstrap`, `back`, `front`, `dev`, `test`,
-`test-backend`, `test-frontend`, `lint`, `lint-backend`, `lint-frontend`, `format`,
+Implementados: `help`, `bootstrap`, `back`, `dev`, `test`,
+`test-backend`, `lint`, `lint-backend`, `format`,
 `clean-expired`, `cli inspect url=…`.
 
 Ainda não implementado: `test-e2e` (Fase 8).

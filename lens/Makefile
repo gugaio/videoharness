@@ -1,13 +1,12 @@
 # Stream Lens — comandos de desenvolvimento unificados
-# Requer: python3 (3.12+), nvm com Node 22.12.0, Docker (para compose)
+# Requer: python3 (3.12+), Docker (para compose)
+# Serviço headless (ADR-0005): API FastAPI + CLI, sem frontend.
 
 SHELL := /bin/zsh
 BACKEND := backend
-FRONTEND := frontend
 VENV := .venv
 PY := $(VENV)/bin/python
 UVICORN := $(VENV)/bin/uvicorn
-NVM_SOURCE := source ~/.nvm/nvm.sh && nvm use 22.12.0 >/dev/null
 
 .DEFAULT_GOAL := help
 
@@ -16,27 +15,20 @@ help: ## Lista os comandos disponíveis
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: bootstrap
-bootstrap: ## Instala dependências do backend e frontend
+bootstrap: ## Cria o venv (se necessário) e instala as dependências do backend
+	[ -x "$(PY)" ] || python3 -m venv $(VENV)
 	$(PY) -m pip install -q -r $(BACKEND)/requirements.txt -r $(BACKEND)/requirements-dev.txt
-	cd $(FRONTEND) && ($(NVM_SOURCE) && npm install)
 
 .PHONY: back
-back: ## Sobe o backend (FastAPI) em http://localhost:8000
+back: ## Sobe a API (FastAPI) em http://localhost:8000
 	cd $(BACKEND) && PYTHONPATH=src ../$(UVICORN) stream_lens.adapters.inbound.http.asgi:app --reload
 
-.PHONY: front
-front: ## Sobe o frontend (Vite) em http://localhost:5173 (proxy /api -> 8000)
-	cd $(FRONTEND) && ($(NVM_SOURCE) && npm run dev)
-
 .PHONY: dev
-dev: ## Sobe backend (:8000) + frontend (:5173) juntos, sem Docker (Ctrl-C derruba os dois)
-	@cd $(CURDIR)/$(BACKEND) && PYTHONPATH=src $(CURDIR)/$(UVICORN) stream_lens.adapters.inbound.http.asgi:app --reload & \
-	back_pid=$$!; \
-	trap 'kill $$back_pid 2>/dev/null' INT TERM EXIT; \
-	cd $(CURDIR)/$(FRONTEND) && ($(NVM_SOURCE) && npm run dev)
+dev: ## Alias de back (serviço headless: só API)
+	cd $(BACKEND) && PYTHONPATH=src ../$(UVICORN) stream_lens.adapters.inbound.http.asgi:app --reload
 
 .PHONY: compose-up
-compose-up: ## Sobe tudo via Docker Compose (UI :8080, API :8000)
+compose-up: ## Sobe tudo via Docker Compose (API :8000)
 	docker compose up --build
 
 .PHONY: compose-down
@@ -48,26 +40,18 @@ compose-clean: ## Derruba o Compose e remove o volume de inspeções
 	docker compose down -v
 
 .PHONY: test
-test: test-backend test-frontend ## Roda todos os testes
+test: test-backend ## Roda todos os testes (backend)
 
 .PHONY: test-backend
 test-backend: ## Testes do backend (pytest)
 	cd $(BACKEND) && ../$(PY) -m pytest
 
-.PHONY: test-frontend
-test-frontend: ## Testes do frontend (vitest)
-	cd $(FRONTEND) && ($(NVM_SOURCE) && npm test)
-
 .PHONY: lint
-lint: lint-backend lint-frontend ## Ruff + mypy + tsc + oxlint
+lint: lint-backend ## Ruff + mypy
 
 .PHONY: lint-backend
 lint-backend: ## Ruff e mypy no backend
 	cd $(BACKEND) && ../$(PY) -m ruff check src tests && ../$(PY) -m mypy
-
-.PHONY: lint-frontend
-lint-frontend: ## tsc e oxlint no frontend
-	cd $(FRONTEND) && ($(NVM_SOURCE) && npm run lint)
 
 .PHONY: format
 format: ## Formata o backend (ruff)

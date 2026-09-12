@@ -8,12 +8,12 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch src/infrastructure/index.ts",
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "start": "node dist/index.js",
+    "start": "node dist/infrastructure/index.js",
     "ui:dev": "npm --prefix ui run dev",
     "ui:check": "npm --prefix ui run check",
     "ui:build": "npm --prefix ui run build"

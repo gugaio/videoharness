@@ -75,6 +75,8 @@ def delivery_report_to_dict(report: DeliveryReport) -> dict:
                 "live_edge_distance_seconds": item.live_edge_distance_seconds,
                 "delivery": delivery_to_dict(item.delivery),
                 "advancement": item.advancement,
+                "live_edge_advance_segments": item.live_edge_advance_segments,
+                "window_shift_segments": item.window_shift_segments,
                 "provenance": item.provenance,
             }
             for item in report.live_playlists
@@ -102,6 +104,8 @@ def delivery_report_from_dict(data: dict) -> DeliveryReport:
                 live_edge_distance_seconds=item.get("live_edge_distance_seconds"),
                 delivery=delivery_from_dict(item.get("delivery")),
                 advancement=item.get("advancement", "not measured (single playlist observation)"),
+                live_edge_advance_segments=item.get("live_edge_advance_segments"),
+                window_shift_segments=item.get("window_shift_segments"),
                 provenance=item.get("provenance", "declared (HLS playlist)"),
             )
             for item in data.get("live_playlists", [])

@@ -3,11 +3,29 @@
 Fotografia concisa do estado atual. Atualizada ao final de cada fase. Histórico
 arquitetural fica nos ADRs; histórico de mudanças no Git.
 
-**Data**: 2026-09-07 · **Fase concluída**: 6 + extensões aprovadas · **Produto
-funcional**: ✅ v1.0 — captura limitada + inspeção estrutural fMP4/MPEG-TS,
+**Data**: 2026-09-12 · **Fase concluída**: 6 + extensões aprovadas · **Produto
+funcional**: ✅ v1.0 (headless, ADR-0005) — captura limitada + inspeção estrutural fMP4/MPEG-TS,
 Timeline Health, matriz ABR, bitrate por segmento, visualização de frames/samples e HDR
 (entrega HTTP/live, matriz ABR por sequência, configuração efetiva de bitstream/A/V
-e DRM declarado no DASH; snapshot 1.13, analyzer 1.5.0)
+e DRM declarado no DASH; snapshot 1.13, analyzer 1.5.5)
+
+## Mudança estrutural mais recente (headless — ADR-0005)
+
+O frontend React foi removido; a Lens é um serviço headless (API FastAPI + CLI).
+A visualização cabe aos clientes do snapshot canônico — no produto atual, o
+orquestrador do Video Harness. Menções à UI nas seções abaixo são registro
+histórico das entregas que as originaram. Validação desta mudança: suíte
+backend completa, ruff + mypy e CLI exercitando o fluxo de inspeção.
+
+## Correção mais recente (DTS de frames fMP4)
+
+O adapter lê frames e pacotes na mesma execução e só copia DTS do pacote quando
+stream e posição identificam uma relação um-para-um, com PTS original e tamanho
+conferidos. Sem evidência suficiente, retorna null. A heurística por tamanho e
+offset de composição foi removida. A proveniência é `derived (ffprobe packet)`;
+os campos `packet_position` e `packet_pts` permitem auditar a associação.
+Ver ADR-0004. No VH, a UI mantém PTS/DTS fora da barra proporcional de bytes e
+não apresenta DTS legado como verificado.
 
 ## Aprimoramento mais recente (strings de codec de áudio)
 
@@ -71,8 +89,9 @@ calcula a distância da borda quando `PROGRAM-DATE-TIME` permite, e declara que 
 avanço não é mensurável com uma única leitura. Não é telemetria ou diagnóstico de
 player.
 
-**Validação atual**: 147 testes backend e 43 frontend; lint, typecheck e build de
-produção do frontend passam.
+**Validação atual**: suíte backend (pytest) e lint (ruff + mypy); sem suíte
+frontend desde o ADR-0005 (contagens de frontend nas seções históricas
+referem-se à UI removida).
 
 ## Status atual
 

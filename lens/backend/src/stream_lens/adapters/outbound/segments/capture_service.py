@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urljoin
@@ -385,6 +385,49 @@ class SegmentCaptureService:
                 )
         return results
 
+    async def observe_live_advancement(self, plan: CapturePlan) -> None:
+        """Repete cada leitura live após a captura, sem esperar artificialmente.
+
+        O intervalo é o tempo real gasto capturando a janela. A conclusão separa
+        a borda live (última sequence) do deslocamento da janela DVR (MEDIA-SEQUENCE).
+        """
+        initial = tuple(plan.live_playlists)
+        for first in initial:
+            try:
+                fetched = await self._manifests.fetch(first.playlist_url)
+                playlist = m3u8.loads(fetched.text)
+                after_start = getattr(playlist, "media_sequence", None)
+                after_segments = list(playlist.segments)
+                after_edge = (
+                    after_start + len(after_segments) - 1
+                    if isinstance(after_start, int) and after_segments
+                    else None
+                )
+                edge_delta = _sequence_delta(first.last_segment_sequence, after_edge)
+                window_delta = _sequence_delta(first.media_sequence, after_start)
+                if edge_delta is None:
+                    advancement = "not comparable (live edge sequence unavailable)"
+                elif edge_delta < 0:
+                    advancement = f"live edge regressed by {-edge_delta} segments"
+                elif edge_delta == 0:
+                    advancement = "live edge unchanged between observations"
+                else:
+                    advancement = f"live edge advanced by {edge_delta} segments"
+                previous_count = len(plan.live_playlists)
+                self._record_live_playlist(plan, first.rep_id, fetched, playlist)
+                if len(plan.live_playlists) > previous_count:
+                    plan.live_playlists[-1] = replace(
+                        plan.live_playlists[-1],
+                        advancement=advancement,
+                        live_edge_advance_segments=edge_delta,
+                        window_shift_segments=window_delta,
+                    )
+            except Exception as exc:
+                position = plan.live_playlists.index(first)
+                plan.live_playlists[position] = replace(
+                    first, advancement=f"second observation failed: {_short(exc)}"
+                )
+
     async def _capture_one(
         self, planned: PlannedSegment, position: int, segments_dir: Path, budget: int
     ) -> CapturedSegment:
@@ -656,6 +699,12 @@ def _format_byterange(spec: str, default_offset: int) -> tuple[int, int] | None:
 def _safe_name(uri: str, is_init: bool) -> str:
     tail = uri.rstrip("/").split("?")[0].rsplit("/", 1)[-1] or ("init" if is_init else "segment")
     return re.sub(r"[^A-Za-z0-9._-]", "_", tail)[:120]
+
+
+def _sequence_delta(before: int | None, after: int | None) -> int | None:
+    if not isinstance(before, int) or not isinstance(after, int):
+        return None
+    return after - before
 
 
 def _short(exc: Exception) -> str:

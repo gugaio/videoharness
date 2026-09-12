@@ -55,7 +55,9 @@ npm run ui:dev   # UI com HMR
    a UI cai em dev-mode aberto com banner; com `VITE_CLERK_PUBLISHABLE_KEY`
    configurada em `ui/.env.local`, o fluxo de sign-in/modal liga)
 3. ~~Fase 2 — Inspect (orquestrador → Lens)~~ ✅ (rotas `/api/v1/inspections*`
-   com auth Clerk; UI: formulário, progresso por estágio e snapshot JSON;
+   com auth Clerk, histórico próprio por usuário e snapshots terminais arquivados
+   ao serem obtidos;
+   UI: formulário, progresso por estágio e snapshot JSON;
    validado E2E contra a Lens com stream público)
 4. Fase 3 — Streams (orquestrador → Mock; mock mantém uso standalone)
 5. Fase 4 — Investigations agênticas (baseline curta + aprofundamento por tools)

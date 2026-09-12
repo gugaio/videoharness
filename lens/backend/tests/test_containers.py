@@ -200,6 +200,12 @@ class TestFmp4:
 
 
 class TestMpegTs:
+    def test_stream_type_15_e_metadata_pes_nao_audio(self):
+        from stream_lens.adapters.outbound.containers.mpegts_parser import _STREAM_KINDS
+
+        assert _STREAM_KINDS[0x0F] == "audio (aac)"
+        assert _STREAM_KINDS[0x15] == "metadata (pes)"
+
     def test_pat_pmt_programas(self):
         data = (FIXTURES / "hls-ts/video/seg-0.ts").read_bytes()
         result = parse_mpegts(data)

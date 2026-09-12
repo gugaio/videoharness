@@ -7,7 +7,7 @@ mesma representação. A ausência de dado continua sendo ausência de evidênci
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from stream_lens.domain.value_objects.containers import (
     ContainerSample,
@@ -16,6 +16,15 @@ from stream_lens.domain.value_objects.containers import (
     TimingTrack,
 )
 from stream_lens.domain.value_objects.segments import CapturedSegment
+
+
+@dataclass(frozen=True, slots=True)
+class _PreviousTiming:
+    timescale: int
+    end_dts: int | None
+    start_dts: int | None
+    start_pts: int | None
+    declared_duration_seconds: float | None
 
 
 def apply_timing_health(
@@ -33,7 +42,7 @@ def apply_timing_health(
         for item in captured
         if item.ok and not item.is_init
     }
-    previous_ends: dict[tuple[str, str, str], tuple[int, int]] = {}
+    previous: dict[tuple[str, str, str], _PreviousTiming] = {}
     updated: dict[tuple[str, str, int, bool], SegmentContainer] = {}
 
     for container in sorted(
@@ -42,11 +51,14 @@ def apply_timing_health(
         if container.is_init or not container.analysis.samples:
             updated[_key(container)] = container
             continue
-        tracks = _tracks_for(container.analysis.samples, container, previous_ends)
+        declared_duration = declared.get(
+            (container.rep_id, container.group_kind, container.index)
+        )
+        tracks = _tracks_for(
+            container.analysis.samples, container, previous, declared_duration
+        )
         timing = ContainerTiming(
-            declared_duration_seconds=declared.get(
-                (container.rep_id, container.group_kind, container.index)
-            ),
+            declared_duration_seconds=declared_duration,
             tracks=tuple(tracks),
         )
         updated[_key(container)] = replace(
@@ -62,7 +74,8 @@ def _key(container: SegmentContainer) -> tuple[str, str, int, bool]:
 def _tracks_for(
     samples: tuple[ContainerSample, ...],
     container: SegmentContainer,
-    previous_ends: dict[tuple[str, str, str], tuple[int, int]],
+    previous: dict[tuple[str, str, str], _PreviousTiming],
+    declared_duration_seconds: float | None,
 ) -> list[TimingTrack]:
     groups: dict[tuple[str, int | None], list[ContainerSample]] = {}
     for sample in samples:
@@ -89,12 +102,37 @@ def _tracks_for(
         )
         observed = _seconds(start_dts, end_dts, timescale)
         key = (container.rep_id, container.group_kind, f"{kind}:{identifier}")
-        previous = previous_ends.get(key)
+        prior = previous.get(key)
         boundary = None
-        if previous and start_dts is not None and previous[1] == timescale:
-            boundary = _seconds(previous[0], start_dts, timescale)
-        if end_dts is not None and timescale:
-            previous_ends[key] = (end_dts, timescale)
+        basis = None
+        wraps = kind == "pid"
+        if prior and timescale is not None and prior.timescale == timescale:
+            if prior.end_dts is not None and start_dts is not None:
+                boundary = _timestamp_delta_seconds(
+                    prior.end_dts, start_dts, timescale, wraps
+                )
+                basis = "DTS current start - previous observed end"
+            elif prior.declared_duration_seconds is not None:
+                if prior.start_dts is not None and start_dts is not None:
+                    elapsed = _timestamp_delta_seconds(
+                        prior.start_dts, start_dts, timescale, wraps
+                    )
+                    boundary = round(elapsed - prior.declared_duration_seconds, 6)
+                    basis = "DTS start-to-start - previous declared duration"
+                elif prior.start_pts is not None and start_pts is not None:
+                    elapsed = _timestamp_delta_seconds(
+                        prior.start_pts, start_pts, timescale, wraps
+                    )
+                    boundary = round(elapsed - prior.declared_duration_seconds, 6)
+                    basis = "PTS start-to-start - previous declared duration"
+        if timescale is not None and timescale > 0:
+            previous[key] = _PreviousTiming(
+                timescale=timescale,
+                end_dts=end_dts,
+                start_dts=start_dts,
+                start_pts=start_pts,
+                declared_duration_seconds=declared_duration_seconds,
+            )
         tracks.append(
             TimingTrack(
                 track_id=identifier if kind == "track" else None,
@@ -106,6 +144,7 @@ def _tracks_for(
                 end_pts=end_pts,
                 observed_duration_seconds=observed,
                 boundary_delta_seconds=boundary,
+                boundary_basis=basis,
             )
         )
     return tracks
@@ -115,3 +154,10 @@ def _seconds(start: int | None, end: int | None, timescale: int | None) -> float
     if start is None or end is None or timescale is None or timescale <= 0:
         return None
     return round((end - start) / timescale, 6)
+
+
+def _timestamp_delta_seconds(start: int, end: int, timescale: int, wraps: bool) -> float:
+    delta = end - start
+    if wraps and delta < -(1 << 32):
+        delta += 1 << 33
+    return round(delta / timescale, 6)

@@ -93,7 +93,8 @@ function probeFrameAriaLabel(frame: ProbeFrameDTO): string {
     frame.byte_size !== null ? formatBytes(frame.byte_size) : 'tamanho não disponível',
   ]
   if (frame.pts !== null) parts.push(`PTS ${frame.pts}`)
-  if (frame.dts !== null) parts.push(`DTS ${frame.dts}`)
+  if (frame.dts_provenance === 'derived (ffprobe packet)' && frame.dts !== null) parts.push(`DTS do pacote ${frame.dts}`)
+  else parts.push('DTS indisponível: sem associação verificada com pacote')
   if (frame.key_frame === true) parts.push('keyframe')
   return parts.join(', ')
 }
@@ -249,7 +250,7 @@ function TimingHealth({ container }: { container: ContainerDTO }) {
                   <td>{track.start_dts ?? '—'} → {track.end_dts ?? '—'}</td>
                   <td>{formatTimingSeconds(track.observed_duration_seconds)}</td>
                   <td>{formatTimingSeconds(timing.declared_duration_seconds)}</td>
-                  <td>{boundary}</td>
+                  <td>{boundary}{track.boundary_basis && <small className="boundary-basis">{track.boundary_basis}</small>}</td>
                 </tr>
               )
             })}
@@ -275,19 +276,23 @@ function ProbeFrameTimeline({ container }: { container: ContainerDTO }) {
     <section className="sample-map" aria-labelledby="probe-frame-map-heading">
       <div className="container-section-heading sample-map-heading">
         <div>
-          <span className="eyebrow">Ordem reportada pelo decoder</span>
+          <span className="eyebrow">Ordem de saída do decoder</span>
           <h5 id="probe-frame-map-heading">Frames do segmento</h5>
         </div>
         <span className="provenance">derivado por ffprobe</span>
       </div>
       <GopSummary gop={container.probe?.gop ?? null} />
       <div className="sample-legend" aria-label="Legenda dos tipos de frame e tamanhos">
-        <span><i className="sample-size-axis" aria-hidden="true">↔</i>largura e altura = bytes</span>
+        <span><i className="sample-size-axis" aria-hidden="true">↔</i>barra proporcional aos bytes</span>
         <span><i className="sample-type-key type-keyframe" />I-frame</span>
         <span><i className="sample-type-key type-interframe" />P-frame</span>
         <span><i className="sample-type-key type-bframe" />B-frame</span>
         <span><i className="sample-type-key type-unknown" />tipo não identificado</span>
       </div>
+      <p className="probe-timing-note">
+        PTS indica apresentação; DTS vem do pacote associado por posição e stream, com PTS e tamanho conferidos.
+        Sem correspondência única, DTS fica indisponível. Snapshots antigos exigem uma nova inspeção para verificar o DTS.
+      </p>
       {[...groups.entries()].map(([streamIndex, group]) => {
         const sizes = group.flatMap((frame) => frame.byte_size === null ? [] : [frame.byte_size])
         const minSize = sizes.length > 0 ? Math.min(...sizes) : 0
@@ -303,20 +308,22 @@ function ProbeFrameTimeline({ container }: { container: ContainerDTO }) {
               {group.map((frame) => {
                 const palette = probeFramePalette(frame.pict_type)
                 const pts = formatProbeTime(frame.pts_time, frame.pts)
-                const dts = formatProbeTime(frame.dts_time, frame.dts)
+                const verified = frame.dts_provenance === 'derived (ffprobe packet)'
+                const dts = verified ? formatProbeTime(frame.dts_time, frame.dts) : null
                 return (
                   <div
-                    className={`sample-block ${frame.key_frame === true ? 'is-sync' : ''}`}
+                    className="probe-frame-card"
                     key={`${streamIndex ?? 'video'}-${frame.index}`}
                     role="listitem"
                     style={visualUnitStyle(frame.byte_size, minSize, maxSize, palette.color, palette.border)}
                     title={probeFrameAriaLabel(frame)}
                     aria-label={probeFrameAriaLabel(frame)}
                   >
+                    <div className="probe-frame-chart" aria-hidden="true"><div className={`probe-frame-bar ${frame.key_frame === true ? 'is-sync' : ''}`} /></div>
                     <span className="sample-index">{frame.pict_type ?? '?'} {String(frame.index + 1).padStart(2, '0')}</span>
                     <strong>{frame.byte_size === null ? '—' : formatBytes(frame.byte_size)}</strong>
                     <span className="sample-time">PTS {pts ?? '—'}</span>
-                    <span className="sample-time">DTS {dts ?? '—'}</span>
+                    <span className="sample-time">DTS {dts ?? 'indisponível'}</span>
                   </div>
                 )
               })}

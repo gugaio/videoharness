@@ -19,7 +19,7 @@ from stream_lens.domain.value_objects.segments import (
 )
 
 SCHEMA_VERSION = "1.13"
-ANALYZER_VERSION = "1.5.0"
+ANALYZER_VERSION = "1.5.5"
 
 
 @dataclass(frozen=True, slots=True)

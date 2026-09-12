@@ -178,6 +178,7 @@ class RunInspection:
                     f"captura de segmentos falhou: {type(exc).__name__}: {exc}"[:200]
                 )
                 captured = []
+            await self._capture.observe_live_advancement(plan)
             timelines = self._capture.timeline(plan, captured)
 
         containers: list[SegmentContainer] = []
@@ -285,7 +286,9 @@ class RunInspection:
                 total_bytes=sum(c.byte_size or 0 for c in captured if c.ok),
             )
         timed_containers = apply_timing_health(tuple(containers), tuple(captured))
-        abr_alignment = measure_abr_alignment(tuple(timelines), timed_containers)
+        abr_alignment = measure_abr_alignment(
+            tuple(timelines), timed_containers, protocol=media.protocol
+        )
         bitrate_observations = measure_segment_bitrate(
             media, tuple(captured), timed_containers
         )

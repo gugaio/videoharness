@@ -1,55 +1,60 @@
 # Stream Lens
 
-Ferramenta visual e API para inspecionar streams de vídeo (HLS e DASH; MPEG-TS e
-fMP4/CMAF) de forma top-down: informe uma URL de manifesto, capture uma janela
-limitada e explore a estrutura do stream com um snapshot JSON canônico versionado,
-compartilhável dentro de um TTL.
+Serviço headless (API + CLI) para inspecionar streams de vídeo (HLS e DASH;
+MPEG-TS e fMP4/CMAF) de forma top-down: informe uma URL de manifesto, capture
+uma janela limitada e explore a estrutura do stream com um snapshot JSON
+canônico versionado, compartilhável dentro de um TTL.
 
 ## Status
 
-**Fase 6 concluída + extensões de observabilidade.** Backend
-FastAPI + CLI + frontend React; uma inspeção percorre manifesto, captura uma janela e
-analisa cada segmento fMP4/CMAF ou MPEG-TS. O snapshot 1.13 inclui árvore de boxes ou
-estatísticas TS, samples fMP4 e unidades PES com tamanho/PTS/DTS. Quando o `ffprobe`
-consegue ler o vídeo, inclui também frames I/P/B exatos e seus tempos; essa leitura
-permanece opcional e derivada e alimenta um resumo de GOP/keyframes observado. A UI
-também compara o alinhamento ABR, calcula bitrate por segmento a partir de bytes e
-duração, pareia ABR por sequência de segmento (sem confundir janelas live deslocadas),
-e expõe TTFB, download, throughput, redirects e sinais seguros de cache
-quando a captura HTTP os observa. Para HLS live, preserva janela/sequence da
-playlist e só calcula distância da borda com `PROGRAM-DATE-TIME`; não confunde essa
-amostra com telemetria do player. Também expõe a configuração efetiva que o
-`ffprobe` observou por segmento (codec/profile/level, pixel format, vídeo e áudio),
-mudanças entre segmentos e o delta A/V calculado por PTS de apresentação dentro
-do mesmo container, sem prometer
-compatibilidade de device ou sincronismo percebido. O
-snapshot ainda preserva sinal HDR, HDR estático e presença de HDR10+ observados nos
-bytes. A captura tem
-orçamento padrão de **500 MB** por inspeção e **20 MB** por segmento. URLs `http(s)`
-passam pelo safe fetcher (SSRF, redirects revalidados, limites, redaction). Também há
-Docker Compose (UI `:8080`, API `:8000`). DASH aceita `SegmentTemplate` com
-`$Number$` ou `$Time$`, incluindo `SegmentTimeline` com repetições. Para DASH, a UI
-também estrutura as declarações DRM do MPD por escopo, sistema, KID e resumo seguro
-de PSSH, sem alegar teste de licença ou compatibilidade do dispositivo.
+**Fase 6 concluída + extensões de observabilidade. Serviço headless: API
+FastAPI + CLI** — o frontend foi removido (ADR-0005); a visualização cabe aos
+clientes do snapshot canônico, como o orquestrador do Video Harness. Uma
+inspeção percorre manifesto, captura uma janela e analisa cada segmento
+fMP4/CMAF ou MPEG-TS. O snapshot 1.13 inclui árvore de boxes ou estatísticas
+TS, samples fMP4 e unidades PES com tamanho/PTS/DTS. Quando o `ffprobe` consegue
+ler o vídeo, inclui também frames I/P/B exatos e seus tempos; essa leitura
+permanece opcional e derivada e alimenta um resumo de GOP/keyframes observado.
+O snapshot também compara o alinhamento ABR, calcula bitrate por segmento a
+partir de bytes e duração, pareia ABR por sequência de segmento (sem confundir
+janelas live deslocadas) e expõe TTFB, download, throughput, redirects e sinais
+seguros de cache quando a captura HTTP os observa. Para HLS live, preserva
+janela/sequence da playlist e só calcula distância da borda com
+`PROGRAM-DATE-TIME`; não confunde essa amostra com telemetria do player. Também
+expõe a configuração efetiva que o `ffprobe` observou por segmento
+(codec/profile/level, pixel format, vídeo e áudio), mudanças entre segmentos e o
+delta A/V calculado por PTS de apresentação dentro do mesmo container, sem
+prometer compatibilidade de device ou sincronismo percebido. O snapshot ainda
+preserva sinal HDR, HDR estático e presença de HDR10+ observados nos bytes. A
+captura tem orçamento padrão de **500 MB** por inspeção e **20 MB** por
+segmento. URLs `http(s)` passam pelo safe fetcher (SSRF, redirects revalidados,
+limites, redaction). Também há Docker Compose (API `:8000`). DASH aceita
+`SegmentTemplate` com `$Number$` ou `$Time$`, incluindo `SegmentTimeline` com
+repetições. Para DASH, o snapshot estrutura as declarações DRM do MPD por
+escopo, sistema, KID e resumo seguro de PSSH, sem alegar teste de licença ou
+compatibilidade do dispositivo.
+
+> **Nota**: docs temáticos podem mencionar a UI original da Lens como racional
+> histórico das entregas; a interface foi removida (ADR-0005) e o snapshot
+> canônico alimenta clientes externos (ex.: orquestrador do Video Harness).
 
 ## Quickstart
 
-Requisitos (modo local, sem Docker): Python 3.12+ (`python3`), Node 22.12.0 via nvm (`nvm22`).
+Requisitos (modo local, sem Docker): Python 3.12+ (`python3`).
 
 ```bash
-make bootstrap          # venv + deps backend; npm install frontend
-make dev                # backend (:8000) + frontend (:5173) juntos, sem Docker
-# ou separadamente:
-make back               # backend em http://localhost:8000 (--reload)
-make front              # frontend em http://localhost:5173 (proxy /api -> 8000)
+make bootstrap          # venv + dependências do backend
+make dev                # API em http://localhost:8000 (--reload)
+# ou com Docker:
+make compose-up         # API :8000 (docs em /docs)
 ```
 
-Na UI: use uma URL de manifesto real (ex. `https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_16x9/bipbop_16x9_variant.m3u8`) ou `fixture://hls-ts/master.m3u8`.
+Use a CLI ou os endpoints HTTP — `make cli inspect url=fixture://hls-ts/master.m3u8`
+ou uma URL real (ex. `https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_16x9/bipbop_16x9_variant.m3u8`).
 
 ```bash
-make compose-up         # alternativa com Docker (UI :8080, API :8000)
-make test               # backend (pytest) + frontend (vitest)
-make lint               # ruff + mypy + tsc + oxlint
+make test               # testes do backend (pytest)
+make lint               # ruff + mypy
 make cli inspect url=https://exemplo.com/master.m3u8
 ```
 
@@ -75,7 +80,6 @@ make cli inspect url=https://exemplo.com/master.m3u8
 
 ```
 backend/   Python/FastAPI (src/stream_lens: domain, application, adapters, bootstrap)
-frontend/  React/TypeScript/Vite (.nvmrc: 22.12.0)
 fixtures/  Conteúdo sintético (hls-ts, hls-fmp4, dash-mpd)
 skills/    Catálogo de skills para agentes (draft)
 docs/      Memória do projeto
