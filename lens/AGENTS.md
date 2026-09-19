@@ -26,10 +26,15 @@ Este arquivo contém instruções estáveis para qualquer agente (Codex, Claude,
 ## Arquitetura (resumo)
 
 Arquitetura hexagonal leve. Detalhes em `docs/ARCHITECTURE.md` e ADRs.
+Projeto Python na raiz (`src/`, `tests/`, `pyproject.toml`); executar
+`make bootstrap`, `make test` e `make lint` neste diretório (ADR-0006).
 
 - Dependências apontam para dentro.
 - O domínio não importa FastAPI, filesystem, HTTP client ou subprocess.
-- Casos de uso dependem de ports (`typing.Protocol`); adapters os implementam.
+- A aplicação coordena inspeções e seleciona parsers; `parsers/` contém
+  transformações sem I/O, dependentes apenas do domínio e bibliotecas de parsing.
+- Fronteiras externas usam ports (`typing.Protocol`) implementados por adapters.
+  Os Protocols de inspector/analyzer são contratos internos (ADR-0007).
 - Composição explícita em um composition root; sem framework de DI no MVP.
 - CLI e HTTP chamam os mesmos casos de uso.
 

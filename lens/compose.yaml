@@ -8,10 +8,8 @@
 # - STREAM_LENS_ALLOW_LOOPBACK NÃO é definido aqui: fetcher bloqueia
 #   loopback/private/metadata (SSRF).
 services:
-  backend:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
+  api:
+    build: .
     ports:
       - "8000:8000"
     environment:

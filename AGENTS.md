@@ -56,7 +56,7 @@ sendo contratos HTTP.
    resultado é consultado, além do TTL da Lens.
    Follow-up da view: matriz ABR e bitstream/A/V (aparecem no JSON bruto).
    **Dependência**: barras de frame, GOP e sincronismo A/V exigem ffprobe na
-   imagem da lens — adicionado ao `backend/Dockerfile` da lens (fato dela,
+   imagem da lens — adicionado ao `Dockerfile` da lens (fato dela,
    não do VH); sem ffprobe a Lens degrada silenciosamente (`_optional_ffprobe`).
 4. **Fase 3 — Streams**: orquestrador proxifica as workspace APIs do mock
    injetando ownership; mock mantém dashboard próprio (uso standalone de

@@ -1,5 +1,15 @@
 # TESTING.md
 
+Separação dos parsers (ADR-0007, 2026-09-19): 167 testes passam após migrar
+os imports para `application/`, `parsers/` e os adapters de ffprobe/filesystem.
+Ruff e mypy passam (69 arquivos). A suíte existente cobre seleção de formato,
+golden snapshots, serialização, API, CLI e ffprobe.
+
+Layout na raiz (ADR-0006, 2026-09-19): `make test` passa com 167 testes;
+`make lint` passa (Ruff + mypy). A CLI também foi exercitada com as fixtures
+padrão, sem `STREAM_LENS_FIXTURES`. Testes de safe fetcher abrem servidor
+HTTP em loopback e precisam de permissão para sockets locais.
+
 Correção DTS (2026-09-12): suíte backend completa com 162 testes passando.
 `test_frame_packet_timing.py` cobre associação por stream/posição, tamanho e PTS,
 duplicatas, campos ausentes, best-effort sem PTS original, DTS zero/negativo e
@@ -64,8 +74,7 @@ TS (PAT/PMT/PES/PCR) e fMP4 (init e fragmentos). Sem mídia protegida por copyri
 
 ## Comandos (raiz do repositório)
 
-Implementados: `help`, `bootstrap`, `back`, `dev`, `test`,
-`test-backend`, `lint`, `lint-backend`, `format`,
+Implementados: `help`, `bootstrap`, `dev`, `test`, `lint`, `format`,
 `clean-expired`, `cli inspect url=…`.
 
 Ainda não implementado: `test-e2e` (Fase 8).

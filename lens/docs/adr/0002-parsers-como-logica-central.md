@@ -2,6 +2,11 @@
 
 Status: aceito (confirmado na Fase 3) · Data: 2026-09-05
 
+**Atualização (2026-09-19)**: localização dos parsers e coordenação superada
+pelo [ADR-0007](0007-parsers-e-coordenacao-na-aplicacao.md). Parsers agora ficam
+em `parsers/`; inspector/analyzer, em `application/`. O texto abaixo registra
+a decisão original; as escolhas de bibliotecas continuam válidas.
+
 ## Contexto
 
 Precisamos de parsing de HLS (M3U8), DASH (MPD XML), MPEG-TS e ISOBMFF/fMP4. A pergunta da Fase 0: parsers são núcleo puro ou adapters de bibliotecas externas? O prompt pede que essa decisão não seja tomada silenciosamente.

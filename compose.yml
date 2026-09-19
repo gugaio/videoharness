@@ -52,7 +52,7 @@ services:
   lens:
     build:
       context: ./lens
-      dockerfile: backend/Dockerfile
+      dockerfile: Dockerfile
     networks: [internal]
     environment:
       STREAM_LENS_TTL_SECONDS: "3600"

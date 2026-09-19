@@ -1,4 +1,4 @@
-# Contexto do build do backend (raiz do repo)
+# Contexto do build: raiz da Lens
 .venv
 .runtime
 docs
@@ -6,3 +6,8 @@ skills
 .git
 **/__pycache__
 **/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/*.egg-info
+tests

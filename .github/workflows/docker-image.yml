@@ -32,7 +32,7 @@ jobs:
             dockerfile: ./ui/Dockerfile
           - image: lens
             context: ./lens
-            dockerfile: ./lens/backend/Dockerfile
+            dockerfile: ./lens/Dockerfile
           - image: mock
             context: ./mock
             dockerfile: ./mock/Dockerfile

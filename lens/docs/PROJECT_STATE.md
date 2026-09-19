@@ -3,13 +3,37 @@
 Fotografia concisa do estado atual. Atualizada ao final de cada fase. Histórico
 arquitetural fica nos ADRs; histórico de mudanças no Git.
 
-**Data**: 2026-09-12 · **Fase concluída**: 6 + extensões aprovadas · **Produto
+**Data**: 2026-09-19 · **Fase concluída**: 6 + extensões aprovadas · **Produto
 funcional**: ✅ v1.0 (headless, ADR-0005) — captura limitada + inspeção estrutural fMP4/MPEG-TS,
 Timeline Health, matriz ABR, bitrate por segmento, visualização de frames/samples e HDR
 (entrega HTTP/live, matriz ABR por sequência, configuração efetiva de bitstream/A/V
 e DRM declarado no DASH; snapshot 1.13, analyzer 1.5.5)
 
-## Mudança estrutural mais recente (headless — ADR-0005)
+## Mudança estrutural mais recente (parsers — ADR-0007)
+
+Inspector de manifestos e analyzer de containers ficam em `application/`.
+Os quatro parsers puros ficam em `parsers/`; ffprobe permanece adapter de
+subprocess e serialização de manifestos/containers fica junto ao filesystem.
+Contratos internos de injeção, HTTP/CLI e snapshots preservados. A mudança
+supera a localização prevista no ADR-0002 e não avança a fase do produto.
+
+Validação: 167 testes da Lens passam, Ruff e mypy passam (69 arquivos).
+No VH, 14 testes, checks TypeScript e build da UI passam; testes executados
+com Node 22.12 e `NODE_OPTIONS=--experimental-sqlite`. `git diff --check` limpo.
+
+## Layout na raiz (ADR-0006)
+
+Projeto Python na raiz: `src/`, `tests/`, pyproject, requirements e Dockerfile.
+O diretório intermediário `backend/` e placeholders vazios foram removidos.
+Makefile usa `dev`, `test` e `lint`; Compose standalone usa o serviço `api`.
+CI e build do VH acompanham os novos caminhos. API, CLI e snapshot preservados.
+
+Validação do layout: 167 testes passam; Ruff e mypy passam (68 arquivos).
+A CLI inspeciona `fixture://hls-ts/master.m3u8` usando a descoberta padrão de
+fixtures. Compose standalone e do VH passam em `docker compose config --quiet`.
+Build da imagem não validado localmente: daemon Docker indisponível.
+
+## Remoção do frontend (ADR-0005)
 
 O frontend React foi removido; a Lens é um serviço headless (API FastAPI + CLI).
 A visualização cabe aos clientes do snapshot canônico — no produto atual, o

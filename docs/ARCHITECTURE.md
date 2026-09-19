@@ -6,7 +6,7 @@
 |---|---|---|
 | `web` | `ui/` (nginx) | SPA única; proxia `/api/` → `app:3210` |
 | `app` | `src/` (Fastify) | Auth Clerk, investigations, coordenação das engines |
-| `lens` | `lens/` (backend) | Inspeção determinística → snapshot canônico |
+| `lens` | `lens/` (API Python) | Inspeção determinística → snapshot canônico |
 | `mock` | `mock/` | Clone/serve de streams; capability URLs de playback |
 
 ## Estrutura interna do orquestrador
@@ -101,7 +101,7 @@ Planejado (Fase 3+):
   bitstream/A/V permanecem como follow-up (hoje aparecem no JSON bruto).
 - A camada derivada de containers (frames I/P/B, GOP, sincronismo A/V,
   boxes fMP4, PIDs TS) depende de **ffprobe instalado na imagem da lens**;
-  adicionamos ao `backend/Dockerfile` da lens — sem ele a Lens omite
+  adicionamos ao `Dockerfile` da lens — sem ele a Lens omite
   `probe` silenciosamente (`_optional_ffprobe`).
 
 ## Decisões
@@ -122,3 +122,5 @@ view e exigem nova inspeção; samples/PES estruturais permanecem independentes.
 | AD-0006 | Monorepo: `streamlens` e `streammock` movidos para `lens/` e `mock/` via `git subtree` (história preservada), superando AD-0001 e AD-0003. Motivo: o compose já era uma unidade de deploy só (`../streamlens` não existia no CI nem em clone limpo); mudanças na API do lens e no `LensClient` saem no mesmo PR, e um único workflow builda as 4 imagens. |
 | AD-0007 | O orquestrador adota arquitetura hexagonal: casos de uso dependem de portas; Fastify/Clerk, Stream Lens e SQLite são adapters substituíveis. |
 | AD-0008 | DTS de frames é evidência de pacote produzida pela Lens conforme ADR-0004 dela; VH exige proveniência verificável e não aplica heurísticas nem reescreve snapshots históricos. |
+| AD-0009 | Layout Python da Lens simplificado na raiz de `lens/`, conforme ADR-0006 da engine; Compose e CI usam `lens/Dockerfile`. Fronteiras HTTP e contratos permanecem iguais. |
+| AD-0010 | Lens separa seleção de formatos em `application/` e parsing puro em `parsers/` (ADR-0007 da engine); ffprobe e persistência continuam adapters. Integração do VH permanece HTTP, sem alteração de contrato. |

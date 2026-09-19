@@ -43,7 +43,7 @@ compatibilidade do dispositivo.
 Requisitos (modo local, sem Docker): Python 3.12+ (`python3`).
 
 ```bash
-make bootstrap          # venv + dependências do backend
+make bootstrap          # venv + dependências
 make dev                # API em http://localhost:8000 (--reload)
 # ou com Docker:
 make compose-up         # API :8000 (docs em /docs)
@@ -53,7 +53,7 @@ Use a CLI ou os endpoints HTTP — `make cli inspect url=fixture://hls-ts/master
 ou uma URL real (ex. `https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_16x9/bipbop_16x9_variant.m3u8`).
 
 ```bash
-make test               # testes do backend (pytest)
+make test               # testes da API, CLI e análise (pytest)
 make lint               # ruff + mypy
 make cli inspect url=https://exemplo.com/master.m3u8
 ```
@@ -79,8 +79,17 @@ make cli inspect url=https://exemplo.com/master.m3u8
 ## Layout
 
 ```
-backend/   Python/FastAPI (src/stream_lens: domain, application, adapters, bootstrap)
+src/stream_lens/  API, CLI e análise (domain, application, parsers, adapters, bootstrap)
+tests/     Testes unitários e de integração
 fixtures/  Conteúdo sintético (hls-ts, hls-fmp4, dash-mpd)
 skills/    Catálogo de skills para agentes (draft)
 docs/      Memória do projeto
+pyproject.toml / requirements*.txt  Configuração Python e dependências
+Dockerfile / compose.yaml / Makefile  Build e execução
 ```
+
+Todos os comandos partem da raiz da Lens (`cd lens` no Video Harness).
+O layout foi simplificado no ADR-0006; o serviço standalone do Compose é `api`.
+No ADR-0007, a seleção de parsers fica na aplicação e a interpretação de
+HLS/DASH/fMP4/MPEG-TS em `parsers/`, sem I/O. Adapters cuidam das integrações,
+como fetch HTTP, persistência e execução de ffprobe.

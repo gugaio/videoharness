@@ -113,7 +113,7 @@ privativo.
 make cli inspect url=https://exemplo.com/master.m3u8
 make cli inspect url=fixture://hls-ts/master.m3u8
 # direto:
-cd backend && PYTHONPATH=src ../.venv/bin/python -m stream_lens.adapters.inbound.cli inspect <url> --output snapshot.json
+PYTHONPATH=src .venv/bin/python -m stream_lens.adapters.inbound.cli inspect <url> --output snapshot.json
 ```
 
 ## Endpoints planejados (não implementados)

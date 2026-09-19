@@ -8,33 +8,38 @@ Arquitetura hexagonal (Ports and Adapters) **leve**: o padrão é instrumento de
 
 - Dependências apontam para dentro (domínio ← aplicação ← adapters).
 - O domínio **não importa** FastAPI, filesystem, HTTP client, subprocess ou Pydantic.
-- Casos de uso dependem de ports (`typing.Protocol`).
+- Casos de uso coordenam serviços da aplicação; fronteiras externas usam ports (`typing.Protocol`).
+- `application/manifest_inspector.py` e `application/container_analyzer.py`
+  selecionam parsers. `parsers/` transforma texto/bytes em modelos do domínio,
+  sem I/O e sem importar application ou adapters (ADR-0007).
 - Adapters implementam ports; a composição acontece em um **composition root explícito** (`bootstrap.py`). Sem framework de DI no MVP.
 - Clientes (orquestrador, agentes) consomem o **mesmo** contrato público (mesmos endpoints/DTOs). Não existe caminho de dados privativo de nenhuma interface.
 - CLI e FastAPI chamam os mesmos casos de uso; nada de parsing ou regra de negócio duplicada nos adapters de entrada.
 
-## Organização alvo do backend
+## Organização da API
 
 ```
-backend/src/stream_lens/
+src/stream_lens/
 ├── domain/            # entidades, value objects, serviços puros
 │   ├── entities/
 │   ├── value_objects/
 │   └── services/
-├── application/       # casos de uso + ports + DTOs
+├── application/       # coordenação, casos de uso, contratos e DTOs
+│   ├── manifest_inspector.py  # seleção HLS/DASH
+│   ├── container_analyzer.py  # seleção fMP4/MPEG-TS
 │   ├── use_cases/
 │   ├── ports/
 │   └── dto/
+├── parsers/           # hls.py, dash.py, fmp4.py, mpegts.py; sem I/O
 ├── adapters/
 │   ├── inbound/
 │   │   ├── http/      # FastAPI
 │   │   └── cli/       # CLI (ex.: `stream-lens inspect <url>`)
 │   └── outbound/
 │       ├── fetching/     # dispatcher por esquema + safe HTTP fetcher (SSRF, limites) + fixtures locais
-│       ├── manifests/    # parsers HLS/DASH + serialização (ver ADR-0002)
 │       ├── segments/     # planejamento da janela + captura de bytes + serialização
-│       ├── containers/   # análise estrutural fMP4/MPEG-TS + adapter ffprobe + serialização
-│       ├── filesystem/   # repositório temporário de inspeções
+│       ├── ffprobe.py    # execução de subprocess, evidência derivada
+│       ├── filesystem/   # repositório + serialização de manifestos e containers
 │       ├── jobs/         # JobQueue (in-process)
 │       └── providers.py  # implementações concretas para o composition root
 └── bootstrap.py      # composition root
@@ -42,9 +47,19 @@ backend/src/stream_lens/
 
 Serviço headless (ADR-0005): API FastAPI + CLI, sem frontend. Skills: `skills/` (ver `docs/ROADMAP.md` Fase 7).
 
-## Ports inicialmente esperados
+## Contratos internos e fronteiras externas
 
-`ManifestFetcher`, `ManifestParser` (ou registry de parsers), `SegmentResolver`, `SegmentFetcher`, `ContainerAnalyzer` (ou registry), `MediaProbe`, `InspectionRepository`, `SnapshotRepository`, `JobQueue`. `Clock`/`IdGenerator` apenas se trouxerem determinismo real aos testes.
+`ManifestInspector` e `ContainerAnalyzer` são contratos internos dos serviços
+da aplicação, preservados para injeção e testes; não representam saída para
+infraestrutura. `ManifestFetcher`, `SegmentFetcher`, `MediaProbe`,
+`InspectionRepository` e `JobQueue` descrevem fronteiras externas.
+`Clock`/`IdGenerator` permitem determinismo nos testes.
+
+O fluxo de parsing é `RunInspection → inspector/analyzer → parsers → modelos
+do domínio`. A biblioteca `m3u8` fica encapsulada em `parsers/hls.py`; importar
+uma biblioteca de parsing não implica I/O. A captura existente ainda combina
+planejamento e escrita em `adapters/outbound/segments/capture_service.py`;
+sua separação não faz parte deste refactor.
 
 ## Fluxo de execução alvo
 
@@ -71,6 +86,12 @@ Escrita atômica, TTL configurável, limpeza de expirados, limites explícitos (
 ## Decisões registradas
 
 Ver `docs/adr/`. Nenhuma biblioteca crítica é escolhida silenciosamente.
+
+- ADR-0007: seleção de parsers na aplicação e parsing puro em `parsers/`;
+  supera a localização dos parsers em outbound definida no ADR-0002.
+
+- ADR-0006: projeto Python na raiz da Lens (`src/`, `tests/`, pyproject,
+  requirements e Dockerfile), sem o nível redundante `backend/`.
 
 - ADR-0004: o MediaProbe associa frames a pacotes por stream/posição únicos com
   PTS e tamanho conferidos. DTS vem do pacote; ausência de evidência retorna null.

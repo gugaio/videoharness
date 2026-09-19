@@ -41,13 +41,13 @@ jobs:
           python-version: "3.14"
           cache: pip
           cache-dependency-path: |
-            lens/backend/requirements.txt
-            lens/backend/requirements-dev.txt
+            lens/requirements.txt
+            lens/requirements-dev.txt
       - name: Install lens dependencies
-        run: pip install -r lens/backend/requirements.txt -r lens/backend/requirements-dev.txt
+        run: pip install -r lens/requirements.txt -r lens/requirements-dev.txt
       - name: Test lens
         run: pytest
-        working-directory: lens/backend
+        working-directory: lens
         env:
           PYTHONPATH: src
 
