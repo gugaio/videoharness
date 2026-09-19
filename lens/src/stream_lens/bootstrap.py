@@ -41,9 +41,10 @@ from stream_lens.adapters.outbound.ffprobe import FFprobeMediaProbe
 from stream_lens.adapters.outbound.filesystem.inspection_repository import (
     FilesystemInspectionRepository,
 )
+from stream_lens.adapters.outbound.filesystem.segment_store import FilesystemSegmentStore
 from stream_lens.adapters.outbound.jobs.in_process_job_queue import InProcessJobQueue
 from stream_lens.adapters.outbound.providers import SystemClock, UuidIdGenerator
-from stream_lens.adapters.outbound.segments.capture_service import SegmentCaptureService
+from stream_lens.application.capture_service import SegmentCaptureService
 from stream_lens.application.container_analyzer import (
     SniffingContainerAnalyzer,
 )
@@ -142,6 +143,7 @@ def build_container(
         segment_fetcher=segment_fetcher,
         clock=clock,
         limits=limits,
+        store=FilesystemSegmentStore(),
     )
     runner = RunInspection(
         fetcher=fetcher,

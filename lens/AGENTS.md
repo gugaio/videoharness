@@ -33,6 +33,9 @@ Projeto Python na raiz (`src/`, `tests/`, `pyproject.toml`); executar
 - O domínio não importa FastAPI, filesystem, HTTP client ou subprocess.
 - A aplicação coordena inspeções e seleciona parsers; `parsers/` contém
   transformações sem I/O, dependentes apenas do domínio e bibliotecas de parsing.
+- `CapturePlan` e `SegmentCaptureService` são da aplicação (decisão e
+  coordenação da captura, sem I/O); os adapters só buscam e persistem bytes via
+  ports `ManifestFetcher`/`SegmentFetcher`/`SegmentStore` (ADR-0008).
 - Fronteiras externas usam ports (`typing.Protocol`) implementados por adapters.
   Os Protocols de inspector/analyzer são contratos internos (ADR-0007).
 - Composição explícita em um composition root; sem framework de DI no MVP.

@@ -124,3 +124,4 @@ view e exigem nova inspeção; samples/PES estruturais permanecem independentes.
 | AD-0008 | DTS de frames é evidência de pacote produzida pela Lens conforme ADR-0004 dela; VH exige proveniência verificável e não aplica heurísticas nem reescreve snapshots históricos. |
 | AD-0009 | Layout Python da Lens simplificado na raiz de `lens/`, conforme ADR-0006 da engine; Compose e CI usam `lens/Dockerfile`. Fronteiras HTTP e contratos permanecem iguais. |
 | AD-0010 | Lens separa seleção de formatos em `application/` e parsing puro em `parsers/` (ADR-0007 da engine); ffprobe e persistência continuam adapters. Integração do VH permanece HTTP, sem alteração de contrato. |
+| AD-0011 | Lens mantém `CapturePlan` e a orquestração de captura em `application/`; adapters só buscam e persistem bytes via ports, conforme ADR-0008 da engine; contratos HTTP e snapshot permanecem iguais. |

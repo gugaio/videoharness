@@ -286,7 +286,8 @@ class TestIntegracaoSnapshot:
             FilesystemInspectionRepository,
             snapshot_to_dict,
         )
-        from stream_lens.adapters.outbound.segments.capture_service import SegmentCaptureService
+        from stream_lens.adapters.outbound.filesystem.segment_store import FilesystemSegmentStore
+        from stream_lens.application.capture_service import SegmentCaptureService
         from stream_lens.application.use_cases.create_inspection import CreateInspection
         from stream_lens.application.use_cases.run_inspection import RunInspection
         from tests.conftest import FrozenClock, SequentialIdGenerator
@@ -308,6 +309,7 @@ class TestIntegracaoSnapshot:
                 http_fetcher=_NullHttp(),
             ),
             clock=clock,
+            store=FilesystemSegmentStore(),
         )
         probe_calls: list[tuple[str, str | None, bool]] = []
 

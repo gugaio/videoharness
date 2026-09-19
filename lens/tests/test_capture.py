@@ -22,10 +22,9 @@ from stream_lens.adapters.outbound.filesystem.inspection_repository import (
     FilesystemInspectionRepository,
     snapshot_to_dict,
 )
-from stream_lens.adapters.outbound.segments.capture_service import (
-    CapturePlan,
-    SegmentCaptureService,
-)
+from stream_lens.adapters.outbound.filesystem.segment_store import FilesystemSegmentStore
+from stream_lens.application.capture_plan import CapturePlan
+from stream_lens.application.capture_service import SegmentCaptureService
 from stream_lens.application.manifest_inspector import (
     DeclarativeManifestInspector,
 )
@@ -48,6 +47,7 @@ def _service(fixtures_root: Path, limits: CaptureLimits | None = None) -> Segmen
         ),
         clock=FrozenClock(),
         limits=limits,
+        store=FilesystemSegmentStore(),
     )
 
 

@@ -12,6 +12,10 @@ Arquitetura hexagonal (Ports and Adapters) **leve**: o padrão é instrumento de
 - `application/manifest_inspector.py` e `application/container_analyzer.py`
   selecionam parsers. `parsers/` transforma texto/bytes em modelos do domínio,
   sem I/O e sem importar application ou adapters (ADR-0007).
+- `application/capture_plan.py` contém `CapturePlan` e os candidatos de
+  planejamento; `application/capture_service.py` orquestra a janela, a captura
+  e a timeline sem executar I/O. Os adapters só buscam e persistem bytes via
+  `ManifestFetcher`/`SegmentFetcher`/`SegmentStore` (ADR-0008).
 - Adapters implementam ports; a composição acontece em um **composition root explícito** (`bootstrap.py`). Sem framework de DI no MVP.
 - Clientes (orquestrador, agentes) consomem o **mesmo** contrato público (mesmos endpoints/DTOs). Não existe caminho de dados privativo de nenhuma interface.
 - CLI e FastAPI chamam os mesmos casos de uso; nada de parsing ou regra de negócio duplicada nos adapters de entrada.
@@ -27,19 +31,21 @@ src/stream_lens/
 ├── application/       # coordenação, casos de uso, contratos e DTOs
 │   ├── manifest_inspector.py  # seleção HLS/DASH
 │   ├── container_analyzer.py  # seleção fMP4/MPEG-TS
+│   ├── capture_plan.py        # plano de janela e candidatos DASH
+│   ├── capture_service.py     # orquestra resolução, captura e timeline (sem I/O)
 │   ├── use_cases/
 │   ├── ports/
 │   └── dto/
-├── parsers/           # hls.py, dash.py, fmp4.py, mpegts.py; sem I/O
+├── parsers/           # hls.py, hls_playlist.py, dash.py, fmp4.py, mpegts.py; sem I/O
 ├── adapters/
 │   ├── inbound/
 │   │   ├── http/      # FastAPI
 │   │   └── cli/       # CLI (ex.: `stream-lens inspect <url>`)
 │   └── outbound/
 │       ├── fetching/     # dispatcher por esquema + safe HTTP fetcher (SSRF, limites) + fixtures locais
-│       ├── segments/     # planejamento da janela + captura de bytes + serialização
+│       ├── segments/     # serialização de segmentos capturados (sem I/O)
 │       ├── ffprobe.py    # execução de subprocess, evidência derivada
-│       ├── filesystem/   # repositório + serialização de manifestos e containers
+│       ├── filesystem/   # repositório + serialização + bytes de segmentos
 │       ├── jobs/         # JobQueue (in-process)
 │       └── providers.py  # implementações concretas para o composition root
 └── bootstrap.py      # composition root
@@ -56,10 +62,12 @@ infraestrutura. `ManifestFetcher`, `SegmentFetcher`, `MediaProbe`,
 `Clock`/`IdGenerator` permitem determinismo nos testes.
 
 O fluxo de parsing é `RunInspection → inspector/analyzer → parsers → modelos
-do domínio`. A biblioteca `m3u8` fica encapsulada em `parsers/hls.py`; importar
-uma biblioteca de parsing não implica I/O. A captura existente ainda combina
-planejamento e escrita em `adapters/outbound/segments/capture_service.py`;
-sua separação não faz parte deste refactor.
+do domínio`. A biblioteca `m3u8` fica encapsulada em `parsers/hls.py` e
+`parsers/hls_playlist.py`; importar uma biblioteca de parsing não implica I/O.
+Para segmentos, o fluxo é
+`UnifiedManifest → CapturePlan → SegmentCaptureService (application) → SegmentFetcher/SegmentStore (adapters)`:
+a aplicação decide a janela e coordena a captura; o adapter busca e grava os
+bytes.
 
 ## Fluxo de execução alvo
 
@@ -89,6 +97,9 @@ Ver `docs/adr/`. Nenhuma biblioteca crítica é escolhida silenciosamente.
 
 - ADR-0007: seleção de parsers na aplicação e parsing puro em `parsers/`;
   supera a localização dos parsers em outbound definida no ADR-0002.
+
+- ADR-0008: `CapturePlan` e `SegmentCaptureService` pertencem à aplicação; os
+  adapters apenas buscam e persistem os bytes via ports.
 
 - ADR-0006: projeto Python na raiz da Lens (`src/`, `tests/`, pyproject,
   requirements e Dockerfile), sem o nível redundante `backend/`.

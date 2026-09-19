@@ -12,10 +12,9 @@ from stream_lens.adapters.outbound.filesystem.inspection_repository import (
     _snapshot_from_dict,
     snapshot_to_dict,
 )
-from stream_lens.adapters.outbound.segments.capture_service import (
-    CapturePlan,
-    SegmentCaptureService,
-)
+from stream_lens.adapters.outbound.filesystem.segment_store import FilesystemSegmentStore
+from stream_lens.application.capture_plan import CapturePlan
+from stream_lens.application.capture_service import SegmentCaptureService
 from stream_lens.application.manifest_inspector import DeclarativeManifestInspector
 from stream_lens.application.ports.manifest_fetcher import FetchedManifest
 from stream_lens.domain.value_objects.manifest_summary import ManifestSummary
@@ -172,7 +171,8 @@ def test_captura_persiste_status_http_de_segmento_que_falhou(tmp_path):
             )
 
     service = SegmentCaptureService(
-        LocalFixtureFetcher(FIXTURES_ROOT), FailingFetcher(), FrozenClock()
+        LocalFixtureFetcher(FIXTURES_ROOT), FailingFetcher(), FrozenClock(),
+        store=FilesystemSegmentStore(),
     )
     plan = CapturePlan(
         planned=[PlannedSegment("v1", "video", "https://cdn.example/s1.m4s", 1)]

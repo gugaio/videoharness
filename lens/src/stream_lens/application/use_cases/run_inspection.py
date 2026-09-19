@@ -11,10 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from stream_lens.adapters.outbound.segments.capture_service import (
-    CapturePlan,
-    SegmentCaptureService,
-)
+from stream_lens.application.capture_plan import CapturePlan
+from stream_lens.application.capture_service import SegmentCaptureService
 from stream_lens.application.ports.container_analyzer import ContainerAnalyzer
 from stream_lens.application.ports.manifest_fetcher import ManifestFetcher
 from stream_lens.application.ports.manifest_inspector import ManifestInspector

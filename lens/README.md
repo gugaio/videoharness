@@ -63,6 +63,7 @@ make cli inspect url=https://exemplo.com/master.m3u8
 - `AGENTS.md` — instruções para agentes que trabalham no repositório
 - `docs/PRODUCT.md` — problema, usuários, escopo e não objetivos
 - `docs/ARCHITECTURE.md` — arquitetura hexagonal e fluxos
+- `docs/HLS_PARSER.md` — fluxo e mapeamento do parser HLS
 - `docs/API.md` — endpoints implementados e planejados
 - `docs/SNAPSHOT_SCHEMA.md` — contrato canônico do snapshot
 - `docs/ROADMAP.md` — fases, gates e progresso
@@ -93,3 +94,5 @@ O layout foi simplificado no ADR-0006; o serviço standalone do Compose é `api`
 No ADR-0007, a seleção de parsers fica na aplicação e a interpretação de
 HLS/DASH/fMP4/MPEG-TS em `parsers/`, sem I/O. Adapters cuidam das integrações,
 como fetch HTTP, persistência e execução de ffprobe.
+O `CapturePlan` e o serviço de captura ficam na aplicação; os adapters só
+buscam e persistem os bytes via ports (ADR-0008).

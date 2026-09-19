@@ -1,4 +1,4 @@
-"""Resolução e captura limitada de segmentos (Fase 4).
+"""Orquestração da resolução e captura limitada de segmentos (Fase 4).
 
 Pipeline: plano determinístico dentro da janela -> captura com limites ->
 timeline normalizada. Nada aqui diagnostica; gaps/discontinuidades são
@@ -14,51 +14,35 @@ Política de janela:
 
 from __future__ import annotations
 
-import hashlib
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urljoin
 
-import m3u8
-
+from stream_lens.application.capture_plan import CapturePlan, DashCandidate
 from stream_lens.application.ports.manifest_fetcher import FetchedManifest, ManifestFetcher
 from stream_lens.application.ports.providers import Clock
 from stream_lens.application.ports.segment_fetcher import SegmentFetcher
+from stream_lens.application.ports.segment_store import SegmentStore
 from stream_lens.domain.value_objects.media import Representation, UnifiedManifest
 from stream_lens.domain.value_objects.segments import (
     CapturedSegment,
     CaptureLimits,
-    DeliveryObservation,
     LivePlaylistObservation,
     PlannedSegment,
     RepresentationTimeline,
     TimelineEntry,
+)
+from stream_lens.parsers.hls_playlist import (
+    HlsMediaPlaylist,
+    parse_hls_media_playlist,
 )
 
 _DURATION_RE = re.compile(
     r"^P(?:T(?:(?P<hours>\d+(?:\.\d+)?)H)?(?:(?P<minutes>\d+(?:\.\d+)?)M)?(?:(?P<seconds>\d+(?:\.\d+)?)S)?)?$"
 )
 MAX_DASH_TEMPLATE_SEGMENTS = 10_000
-
-
-@dataclass(slots=True)
-class CapturePlan:
-    planned: list[PlannedSegment] = field(default_factory=list)
-    # rep_id -> {index: discontinuity} para marcar a timeline
-    discontinuities: dict[str, dict[int, bool]] = field(default_factory=dict)
-    warnings: list[str] = field(default_factory=list)
-    manifest_requests: list[tuple[str, DeliveryObservation | None]] = field(default_factory=list)
-    live_playlists: list[LivePlaylistObservation] = field(default_factory=list)
-
-
-@dataclass(frozen=True, slots=True)
-class _DashCandidate:
-    uri: str
-    index: int
-    number: int | None
-    duration_seconds: float | None
 
 
 class SegmentCaptureService:
@@ -68,11 +52,13 @@ class SegmentCaptureService:
         segment_fetcher: SegmentFetcher,
         clock: Clock,
         limits: CaptureLimits | None = None,
+        store: SegmentStore | None = None,
     ) -> None:
         self._manifests = manifest_fetcher
         self._segments = segment_fetcher
         self._clock = clock
         self._limits = limits or CaptureLimits()
+        self._store = store
 
     @property
     def limits(self) -> CaptureLimits:
@@ -171,7 +157,7 @@ class SegmentCaptureService:
                 plan.warnings.append(f"rendição '{rep_id}' inacessível: {_short(exc)}")
                 continue
             plan.manifest_requests.append((fetched.url, fetched.delivery))
-            self._add_hls_playlist_segments(plan, rep_id, kind, fetched, from_master=True)
+            self._add_hls_playlist_segments(plan, rep_id, kind, fetched)
         return plan
 
     def _add_hls_playlist_segments(
@@ -180,10 +166,9 @@ class SegmentCaptureService:
         rep_id: str,
         group_kind: str,
         fetched: FetchedManifest,
-        from_master: bool = False,
     ) -> None:
         playlist_url = fetched.url
-        playlist = m3u8.loads(fetched.text)
+        playlist = parse_hls_media_playlist(fetched.text)
         self._record_live_playlist(plan, rep_id, fetched, playlist)
         segments = list(playlist.segments)
         if not segments:
@@ -191,47 +176,32 @@ class SegmentCaptureService:
             return
 
         is_live = not playlist.is_endlist
-        media_sequence = getattr(playlist, "media_sequence", None)
+        media_sequence = playlist.media_sequence
         chosen = _window_segments(
             segments,
-            lambda s: s.duration,
+            lambda segment: segment.duration_seconds,
             self._limits.window_seconds,
             from_end=is_live,
         )
 
         # EXT-X-MAP (init) quando presente
-        if playlist.segment_map:
-            seg_map = playlist.segment_map[0]
-            if seg_map and seg_map.uri:
-                byte_range = None
-                byterange = getattr(seg_map, "byterange", None)
-                if byterange:
-                    byte_range = _format_byterange(byterange, 0)
-                plan.planned.append(
-                    PlannedSegment(
-                        rep_id=rep_id,
-                        group_kind=group_kind,
-                        uri=_resolve(playlist_url, seg_map.uri),
-                        index=-1,
-                        is_init=True,
-                        byte_range=byte_range,
-                    )
+        if playlist.init_segment and playlist.init_segment.uri:
+            plan.planned.append(
+                PlannedSegment(
+                    rep_id=rep_id,
+                    group_kind=group_kind,
+                    uri=_resolve(playlist_url, playlist.init_segment.uri),
+                    index=-1,
+                    is_init=True,
+                    byte_range=playlist.init_segment.byte_range,
                 )
+            )
 
-        next_range_offset = 0
-        for index, seg in enumerate(playlist.segments):
-            byte_range = None
-            byterange = getattr(seg, "byterange", None)
-            if byterange:
-                byte_range = _format_byterange(byterange, next_range_offset)
-                if byte_range is not None:
-                    next_range_offset = byte_range[0] + byte_range[1]
-            if seg not in chosen:
-                if getattr(seg, "discontinuity", False):
-                    plan.discontinuities.setdefault(rep_id, {})[index] = True
-                continue
-            if getattr(seg, "discontinuity", False):
+        for index, seg in enumerate(segments):
+            if seg.discontinuity:
                 plan.discontinuities.setdefault(rep_id, {})[index] = True
+            if seg not in chosen:
+                continue
             plan.planned.append(
                 PlannedSegment(
                     rep_id=rep_id,
@@ -241,8 +211,8 @@ class SegmentCaptureService:
                     segment_sequence=(media_sequence + index)
                     if isinstance(media_sequence, int)
                     else None,
-                    declared_duration_seconds=seg.duration,
-                    byte_range=byte_range,
+                    declared_duration_seconds=seg.duration_seconds,
+                    byte_range=seg.byte_range,
                 )
             )
 
@@ -310,10 +280,10 @@ class SegmentCaptureService:
         plan: CapturePlan,
         rep_id: str | None,
         fetched: FetchedManifest,
-        playlist=None,
+        playlist: HlsMediaPlaylist | None = None,
     ) -> None:
         """Guarda somente fatos de uma playlist HLS live observada uma vez."""
-        playlist = playlist or m3u8.loads(fetched.text)
+        playlist = playlist or parse_hls_media_playlist(fetched.text)
         if playlist.is_endlist:
             return
         segments = list(playlist.segments)
@@ -321,11 +291,10 @@ class SegmentCaptureService:
         edge_time: datetime | None = None
         if segments:
             last = segments[-1]
-            value = getattr(last, "current_program_date_time", None) or getattr(
-                last, "program_date_time", None
-            )
-            if isinstance(value, datetime) and getattr(last, "duration", None) is not None:
-                edge_time = value + timedelta(seconds=last.duration)
+            if last.program_date_time is not None and last.duration_seconds is not None:
+                edge_time = last.program_date_time + timedelta(
+                    seconds=last.duration_seconds
+                )
         edge_distance: float | None = None
         if (
             edge_time is not None
@@ -333,7 +302,7 @@ class SegmentCaptureService:
             and observed_at.tzinfo is not None
         ):
             edge_distance = (observed_at - edge_time).total_seconds()
-        media_sequence = getattr(playlist, "media_sequence", None)
+        media_sequence = playlist.media_sequence
         plan.live_playlists.append(
             LivePlaylistObservation(
                 rep_id=rep_id,
@@ -343,10 +312,11 @@ class SegmentCaptureService:
                 last_segment_sequence=(media_sequence + len(segments) - 1)
                 if isinstance(media_sequence, int) and segments
                 else None,
-                target_duration_seconds=getattr(playlist, "target_duration", None),
+                target_duration_seconds=playlist.target_duration,
                 playlist_window_duration_seconds=sum(
-                    float(segment.duration or 0) for segment in segments
-                ) or None,
+                    float(segment.duration_seconds or 0) for segment in segments
+                )
+                or None,
                 live_edge_program_date_time=edge_time,
                 live_edge_distance_seconds=edge_distance,
                 delivery=fetched.delivery,
@@ -362,13 +332,16 @@ class SegmentCaptureService:
         workspace: Path,
         progress=None,
     ) -> list[CapturedSegment]:
-        segments_dir = workspace / inspection_id / "segments"
-        segments_dir.mkdir(parents=True, exist_ok=True)
+        store = self._store
+        if store is None:
+            raise RuntimeError("capture requires a SegmentStore")
         results: list[CapturedSegment] = []
         budget = self._limits.max_total_bytes
 
         for position, planned in enumerate(plan.planned):
-            captured = await self._capture_one(planned, position, segments_dir, budget)
+            captured = await self._capture_one(
+                store, inspection_id, planned, position, workspace
+            )
             results.append(captured)
             if captured.ok and captured.byte_size is not None:
                 budget -= captured.byte_size
@@ -395,8 +368,8 @@ class SegmentCaptureService:
         for first in initial:
             try:
                 fetched = await self._manifests.fetch(first.playlist_url)
-                playlist = m3u8.loads(fetched.text)
-                after_start = getattr(playlist, "media_sequence", None)
+                playlist = parse_hls_media_playlist(fetched.text)
+                after_start = playlist.media_sequence
                 after_segments = list(playlist.segments)
                 after_edge = (
                     after_start + len(after_segments) - 1
@@ -429,7 +402,12 @@ class SegmentCaptureService:
                 )
 
     async def _capture_one(
-        self, planned: PlannedSegment, position: int, segments_dir: Path, budget: int
+        self,
+        store: SegmentStore,
+        inspection_id: str,
+        planned: PlannedSegment,
+        position: int,
+        workspace: Path,
     ) -> CapturedSegment:
         try:
             fetched = await self._segments.fetch(planned.uri, planned.byte_range)
@@ -449,28 +427,13 @@ class SegmentCaptureService:
                 delivery=getattr(exc, "delivery", None),
             )
 
-        size = len(fetched.data)
-        digest = hashlib.sha256(fetched.data).hexdigest()
-        name = f"{position:04d}_{_safe_name(planned.uri, planned.is_init)}"
-        target = segments_dir / name
-        tmp = target.with_suffix(target.suffix + ".tmp")
-        tmp.write_bytes(fetched.data)
-        tmp.replace(target)
-        return CapturedSegment(
-            rep_id=planned.rep_id,
-            group_kind=planned.group_kind,
-            uri=planned.uri,
-            index=planned.index,
-            is_init=planned.is_init,
-            segment_sequence=planned.segment_sequence,
-            declared_duration_seconds=planned.declared_duration_seconds,
-            byte_range=planned.byte_range,
-            byte_size=size,
-            sha256=digest,
-            http_status=fetched.status,
+        return store.store(
+            inspection_id=inspection_id,
+            position=position,
+            planned=planned,
+            fetched=fetched,
+            workspace=workspace,
             fetched_at=self._clock.now(),
-            file=f"segments/{name}",
-            delivery=fetched.delivery,
         )
 
     # --------------------------------------------------------------- timeline
@@ -556,11 +519,11 @@ def _window_segments(segments, duration_of, window: float, from_end: bool):
 
 def _dash_candidates(
     rep: Representation, period_seconds: float | None, *, from_end: bool
-) -> tuple[list[_DashCandidate], str | None]:
+) -> tuple[list[DashCandidate], str | None]:
     if not rep.segments:
         if rep.uri:
             return [
-                _DashCandidate(
+                DashCandidate(
                     uri=rep.uri,
                     index=0,
                     number=None,
@@ -595,7 +558,7 @@ def _dash_candidates(
                 first.template, candidate_number, segment_time
             )
             candidates.append(
-                _DashCandidate(
+                DashCandidate(
                     uri=candidate_uri,
                     index=candidate_number,
                     number=candidate_number,
@@ -629,7 +592,7 @@ def _dash_candidates(
             )
         )
         candidates.append(
-            _DashCandidate(
+            DashCandidate(
                 uri=uri,
                 index=number if number is not None else position,
                 number=number,
@@ -644,8 +607,8 @@ def _sub_dash_template(template: str, number: int, time: int) -> str:
 
 
 def _validated_dash_candidates(
-    candidates: list[_DashCandidate], warning: str | None = None
-) -> tuple[list[_DashCandidate], str | None]:
+    candidates: list[DashCandidate], warning: str | None = None
+) -> tuple[list[DashCandidate], str | None]:
     unresolved = sorted(
         token
         for token in ("$Time$", "$Number$")
@@ -683,22 +646,6 @@ def _parse_iso_duration(value: str | None) -> float | None:
     minutes = float(m.group("minutes") or 0)
     seconds = float(m.group("seconds") or 0)
     return hours * 3600 + minutes * 60 + seconds
-
-
-def _format_byterange(spec: str, default_offset: int) -> tuple[int, int] | None:
-    """EXT-X-BYTERANGE: 'len[@offset]' -> (offset, length)."""
-    try:
-        if "@" in spec:
-            length, _, offset = spec.partition("@")
-            return int(offset), int(length)
-        return default_offset, int(spec)
-    except ValueError:
-        return None
-
-
-def _safe_name(uri: str, is_init: bool) -> str:
-    tail = uri.rstrip("/").split("?")[0].rsplit("/", 1)[-1] or ("init" if is_init else "segment")
-    return re.sub(r"[^A-Za-z0-9._-]", "_", tail)[:120]
 
 
 def _sequence_delta(before: int | None, after: int | None) -> int | None:

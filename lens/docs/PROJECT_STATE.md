@@ -17,7 +17,14 @@ subprocess e serialização de manifestos/containers fica junto ao filesystem.
 Contratos internos de injeção, HTTP/CLI e snapshots preservados. A mudança
 supera a localização prevista no ADR-0002 e não avança a fase do produto.
 
-Validação: 167 testes da Lens passam, Ruff e mypy passam (69 arquivos).
+`CapturePlan` também fica em `application/capture_plan.py` (ADR-0008): é estado
+de decisão sem I/O. `SegmentCaptureService` fica em
+`application/capture_service.py` e coordena a captura via ports; os adapters só
+buscam (`SegmentFetcher`) e gravam (`FilesystemSegmentStore`) os bytes. A
+leitura de playlist de mídia da captura vai para `parsers/hls_playlist.py`
+(`m3u8` encapsulado).
+
+Validação: 171 testes da Lens passam, Ruff e mypy passam (71 arquivos).
 No VH, 14 testes, checks TypeScript e build da UI passam; testes executados
 com Node 22.12 e `NODE_OPTIONS=--experimental-sqlite`. `git diff --check` limpo.
 
