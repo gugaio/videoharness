@@ -42,12 +42,23 @@ export class ApiError extends Error {
   }
 }
 
-type TokenGetter = () => Promise<string | null>;
+type TokenGetterOptions = { skipCache?: boolean };
+type TokenGetter = (options?: TokenGetterOptions) => Promise<string | null>;
 let tokenGetter: TokenGetter | null = null;
+let tokenRefresh: Promise<string | null> | null = null;
 
 /** Registrado pelo AuthTokenBridge (modo Clerk); dev-mode não registra. */
 export function setTokenGetter(getter: TokenGetter | null): void {
   tokenGetter = getter;
+  tokenRefresh = null;
+}
+
+function freshToken(): Promise<string | null> {
+  if (!tokenGetter) return Promise.resolve(null);
+  tokenRefresh ??= tokenGetter({ skipCache: true }).finally(() => {
+    tokenRefresh = null;
+  });
+  return tokenRefresh;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -59,6 +70,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
     response = await fetch(path, { ...init, headers });
+    if (response.status === 401 && tokenGetter) {
+      const token = await freshToken();
+      if (token) {
+        headers.set("authorization", `Bearer ${token}`);
+        response = await fetch(path, { ...init, headers });
+      }
+    }
   } catch (error) {
     throw new ApiError(0, error instanceof Error ? error.message : String(error));
   }

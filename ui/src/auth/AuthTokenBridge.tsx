@@ -11,7 +11,7 @@ export function AuthTokenBridge() {
   const { getToken } = useAuth();
 
   useEffect(() => {
-    setTokenGetter(() => getToken());
+    setTokenGetter((options) => getToken(options));
     return () => setTokenGetter(null);
   }, [getToken]);
 
