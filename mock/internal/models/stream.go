@@ -95,7 +95,7 @@ type Preset struct {
 
 var Presets = []Preset{
 	{Key: "clean", Label: "Clean", Description: "Pass-through with zero modification."},
-	{Key: "subway_3g", Label: "Subway 3G", Description: "1500-3000ms artificial latency and a 10% chance of HTTP 504."},
+	{Key: "subway_3g", Label: "Subway 3G", Description: "Throttled ~1.2-2.4 Mbps transfer, 100-400ms latency and a 10% chance of HTTP 504."},
 	{Key: "cdn_degradation", Label: "CDN Degradation", Description: "20% of segment requests fail with HTTP 500."},
 	{Key: "stale_live_manifest", Label: "Stale Live Manifest", Description: "Manifest refresh responses delayed by 4000ms."},
 	{Key: "drm_license_latency", Label: "DRM License Latency", Description: "ClearKey license responses are delayed by 3000ms."},

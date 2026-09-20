@@ -636,7 +636,7 @@ function LiveControls({ stream }: { stream: MockStream }) {
   return (
     <div className="streams-live">
       <div className="streams-live-info">
-        <strong>Live mock HLS</strong>
+        <strong title="Transmite o clone em modo live (HLS): o mock simula uma transmissão ao vivo a partir do clone, com janela deslizante.">Live simulada</strong>
         <span className="streams-live-status">{status ?? "—"}</span>
       </div>
       <div className="streams-live-actions">

@@ -253,11 +253,9 @@ export function PlaybackInspector({
 
           <div>
             <h4 className="pb-subtitle">Sinais por request</h4>
+            <CombinedThroughputChart requests={requests} />
             <div className="pb-lanes">
               <MetricLane label="Buffer" unit="ms" requests={requests} value={(request) => request.cmcd?.bl_ms} />
-              <MetricLane label="Bitrate" unit="kbps" requests={requests} value={(request) => request.cmcd?.br_kbps} />
-              <MetricLane label="Player mtp" unit="kbps" requests={requests} value={(request) => request.cmcd?.mtp_kbps} />
-              <MetricLane label="Entrega proxy" unit="kbps" requests={requests} value={(request) => request.effective_delivery_kbps} />
             </div>
           </div>
 
@@ -323,6 +321,9 @@ export function PlaybackInspector({
 
           <div>
             <h4 className="pb-subtitle">Waterfall de entrega</h4>
+            <p className="panel-hint">
+              Cada linha é um request HTTP da sessão, em ordem temporal. O ID é o request registrado no StreamMock.
+            </p>
             <div className="pb-waterfall">
               {requests.map((request) => (
                 <WaterfallRow
@@ -425,6 +426,118 @@ function MetricLane({
   );
 }
 
+interface ThroughputSeries {
+  key: string;
+  label: string;
+  color: string;
+  value: (request: RequestPoint) => number | undefined;
+}
+
+const throughputSeries: ThroughputSeries[] = [
+  { key: "bitrate", label: "Bitrate", color: "#2563eb", value: (request) => request.cmcd?.br_kbps },
+  { key: "mtp", label: "Player mtp", color: "#7c3aed", value: (request) => request.cmcd?.mtp_kbps },
+  { key: "delivery", label: "Entrega proxy", color: "#059669", value: (request) => request.effective_delivery_kbps },
+];
+
+const logFloorKbps = 100;
+
+function fmtThroughput(value: number): string {
+  const trim = (v: number) => v.toFixed(v < 10 ? 1 : 0);
+  if (value >= 1_000_000) return `${trim(value / 1_000_000)} Gbps`;
+  if (value >= 1_000) return `${trim(value / 1_000)} Mbps`;
+  return `${value} kbps`;
+}
+
+function barHeightPct(metric: number, max: number, log: boolean): number {
+  if (!log) return Math.max(4, (metric / max) * 100);
+  const top = Math.log10(Math.max(max, logFloorKbps * 10));
+  const value = Math.log10(Math.max(metric, logFloorKbps));
+  return Math.max(4, ((value - Math.log10(logFloorKbps)) / (top - Math.log10(logFloorKbps))) * 100);
+}
+
+function CombinedThroughputChart({ requests }: { requests: RequestPoint[] }) {
+  const [logScale, setLogScale] = useState(true);
+  const max = Math.max(
+    1,
+    ...requests.flatMap((request) => throughputSeries.map((series) => series.value(request) ?? 0)),
+  );
+  const decades: number[] = [];
+  if (logScale) {
+    for (let value = logFloorKbps; value <= max; value *= 10) decades.push(value);
+  }
+  return (
+    <div className="pb-chart" role="img" aria-label={`Throughput por request: bitrate, mtp do player e entrega do proxy, em kbps, escala ${logScale ? "logarítmica" : "linear"}`}>
+      <div className="pb-chart-head">
+        <div className="pb-chart-legend">
+          {throughputSeries.map((series) => (
+            <span key={series.key} className="pb-chart-legend-item">
+              <span className="pb-chart-swatch" style={{ background: series.color }} />
+              {series.label} (kbps)
+            </span>
+          ))}
+        </div>
+        <button type="button" className="streams-button pb-chart-toggle" onClick={() => setLogScale((value) => !value)}>
+          {logScale ? "Log" : "Linear"}
+        </button>
+      </div>
+      <div className="pb-chart-plotwrap">
+        {logScale && decades.length > 1 && (
+          <div className="pb-chart-grid" aria-hidden="true">
+            {decades.map((value) => (
+              <div
+                key={value}
+                className="pb-chart-gridline"
+                style={{ bottom: `${((Math.log10(value) - Math.log10(logFloorKbps)) / (Math.log10(Math.max(max, logFloorKbps * 10)) - Math.log10(logFloorKbps))) * 100}%` }}
+              >
+                <span>{fmtThroughput(value)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="pb-chart-plot">
+          {requests.map((request) => {
+            const values = throughputSeries.map((series) => series.value(request));
+            const summary = throughputSeries
+              .map((series, index) => {
+                const metric = values[index];
+                return `${series.label} ${metric == null ? "—" : Math.round(metric).toLocaleString()}`;
+              })
+              .join(" · ");
+            const missed = request.deadline_miss_ms != null;
+            return (
+              <div
+                key={request.request_id}
+                className={`pb-chart-col ${missed ? "pb-chart-col-miss" : ""}`}
+                title={`#${request.request_id} · ${summary} kbps${missed ? " · deadline perdido" : ""}`}
+              >
+                {throughputSeries.map((series, index) => {
+                  const metric = values[index];
+                  return metric == null ? (
+                    <span key={series.key} className="pb-chart-bar pb-chart-bar-empty" style={{ height: "4%" }} />
+                  ) : (
+                    <span
+                      key={series.key}
+                      className="pb-chart-bar"
+                      style={{
+                        height: `${barHeightPct(metric, max, logScale)}%`,
+                        background: `${series.color}4d`,
+                        borderTopColor: series.color,
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      {logScale && (
+        <p className="pb-chart-note">Escala logarítmica — em localhost a entrega supera o bitrate por ordens de magnitude.</p>
+      )}
+    </div>
+  );
+}
+
 function WaterfallRow({
   request,
   maxDuration,
@@ -436,14 +549,19 @@ function WaterfallRow({
   selected: boolean;
   onSelect: () => void;
 }) {
+  const failed =
+    request.status >= 400 || (request.injected_status ?? 0) >= 400 || request.transport_error != null;
+  const effectiveStatus = request.injected_status ?? request.status;
   return (
     <button
       type="button"
-      className={`pb-waterfall-row ${selected ? "pb-waterfall-selected" : ""}`}
+      className={`pb-waterfall-row ${selected ? "pb-waterfall-selected" : ""} ${failed ? "pb-waterfall-error" : ""}`}
+      title={`Request #${request.request_id} · HTTP ${effectiveStatus}${request.transport_error ? ` · ${request.transport_error}` : ""}`}
       onClick={onSelect}
     >
       <span className="pb-waterfall-id">
-        #{request.request_id} {request.kind}
+        Request #{request.request_id} · {request.kind}
+        {failed && <span className="pb-waterfall-status"> · HTTP {effectiveStatus}</span>}
       </span>
       <WaterfallTrack request={request} maxDuration={maxDuration} />
       <span className="pb-waterfall-duration">{formatMS(request.duration_ms)}</span>

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/base64"
 	"math/rand"
 	"net/http"
@@ -321,5 +322,88 @@ func TestRequestSinkCapturesArtificialManifestLatency(t *testing.T) {
 	got := logged[0]
 	if got.Intervention != "latency" || got.AddedLatencyMS != 4000 || got.InjectedStatus != 0 {
 		t.Fatalf("unexpected latency intervention: %+v", got)
+	}
+}
+
+func TestRequestSinkCapturesSubwayBandwidth(t *testing.T) {
+	streams := newTestStreamStore(t)
+	slug := "ws-subway"
+	stream := newEphemeralProxyStream("od-subway", "https://origin.example/master.m3u8", 60)
+	stream.WorkspaceSlug = &slug
+	stream.ActivePreset = presetSubway3G
+	if err := streams.Add(stream, false); err != nil {
+		t.Fatal(err)
+	}
+
+	var logged []models.ProxyRequest
+	engine := NewEngine(configForProxyEngine(), streams, instantDeterministicChaos()).WithRequestSink(func(req models.ProxyRequest) {
+		logged = append(logged, req)
+	})
+	mux := http.NewServeMux()
+	engine.Register(mux)
+
+	target := "https://origin.example/seg0.ts"
+	encoded := base64.RawURLEncoding.EncodeToString([]byte(target))
+	resp := httptest.NewRecorder()
+	mux.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/s/od-subway/r/"+encoded, nil))
+
+	if resp.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want injected 504", resp.Code)
+	}
+	if len(logged) != 1 {
+		t.Fatalf("logged %d requests, want 1", len(logged))
+	}
+	got := logged[0]
+	if got.Intervention != "bandwidth_latency_and_http_error" || got.InjectedStatus != http.StatusGatewayTimeout || got.AddedLatencyMS != 100 || got.Diagnostic == "" {
+		t.Fatalf("unexpected subway intervention: %+v", got)
+	}
+}
+
+type boundedSource struct{ value int64 }
+
+func (s *boundedSource) Int63() int64 { return s.value }
+func (s *boundedSource) Seed(int64)   {}
+
+func TestSubway3GShapesBandwidthWithoutInjecting(t *testing.T) {
+	c := &Chaos{rng: rand.New(&boundedSource{value: int64(1) << 62}), sleep: func(time.Duration) {}}
+
+	effect := c.Apply(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/seg0.ts", nil), false, presetSubway3G)
+	if effect.injectedStatus != 0 {
+		t.Fatalf("unexpected injected status %d", effect.injectedStatus)
+	}
+	if effect.bytesPerSecond < 150_000 || effect.bytesPerSecond > 300_000 {
+		t.Fatalf("shaped throughput out of range: %d", effect.bytesPerSecond)
+	}
+	if effect.addedLatency < 100*time.Millisecond || effect.addedLatency > 400*time.Millisecond {
+		t.Fatalf("added latency out of range: %v", effect.addedLatency)
+	}
+	if got := effect.intervention(); got != "bandwidth_latency" {
+		t.Fatalf("intervention = %q, want bandwidth_latency", got)
+	}
+
+	manifest := c.Apply(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/master.m3u8", nil), true, presetSubway3G)
+	if manifest.bytesPerSecond != 0 || manifest.addedLatency != 0 || manifest.injectedStatus != 0 {
+		t.Fatalf("manifests must bypass subway_3g: %+v", manifest)
+	}
+}
+
+func TestStatusWriterPacesBody(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sw := &statusWriter{ResponseWriter: rec, throttleBPS: 512 * 1024}
+	payload := bytes.Repeat([]byte{0}, 256*1024)
+
+	start := time.Now()
+	_, _ = sw.Write(payload[:len(payload)/2])
+	_, _ = sw.Write(payload[len(payload)/2:])
+	elapsed := time.Since(start)
+
+	if sw.bytes != int64(len(payload)) {
+		t.Fatalf("bytes = %d, want %d", sw.bytes, len(payload))
+	}
+	if elapsed < 200*time.Millisecond {
+		t.Fatalf("throttled body finished in %v, pacing did not engage", elapsed)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("throttled body took %v, pacing overshoot", elapsed)
 	}
 }

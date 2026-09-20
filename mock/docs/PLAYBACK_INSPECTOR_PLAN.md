@@ -595,7 +595,7 @@ transformar os sinais em explicações reproduzíveis.
 - Origem com TTFB alto.
 - Origem que envia body lentamente.
 - CDN degradation com erro injetado.
-- Subway 3G com latência e possível 504.
+- Subway 3G com banda estrangulada (~1,2-2,4 Mbps), latência e possível 504.
 - Deadline perdido e não perdido.
 - Reuso de conexão sem fases falsas zeradas.
 - Clone local sem campos de origem.

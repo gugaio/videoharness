@@ -60,7 +60,7 @@ export interface ProxyRequest {
   content_length?: number;
   range_result: "not_requested" | "satisfied" | "ignored" | "missing_content_range" | "failed";
   diagnostic?: string;
-	intervention?: "latency" | "http_error" | "latency_and_http_error" | "license_latency" | "license_http_error" | "license_retry" | "wrong_clearkey" | "malformed_license";
+  intervention?: "latency" | "http_error" | "latency_and_http_error" | "bandwidth_latency" | "bandwidth_latency_and_http_error" | "license_latency" | "license_http_error" | "license_retry" | "wrong_clearkey" | "malformed_license";
   added_latency_ms?: number;
   injected_status?: number;
 	started_at_ms: number;
@@ -224,7 +224,7 @@ export interface CreatedPlaybackSession {
 
 export const DEFAULT_PRESETS: Preset[] = [
   { key: "clean", label: "Clean", description: "Pass-through with zero modification." },
-  { key: "subway_3g", label: "Subway 3G", description: "1500-3000ms artificial latency and a 10% chance of HTTP 504." },
+  { key: "subway_3g", label: "Subway 3G", description: "Throttled ~1.2-2.4 Mbps transfer, 100-400ms latency and a 10% chance of HTTP 504." },
   { key: "cdn_degradation", label: "CDN Degradation", description: "20% of segment requests fail with HTTP 500." },
   { key: "stale_live_manifest", label: "Stale Live Manifest", description: "Manifest refresh responses delayed by 4000ms." },
   { key: "drm_license_latency", label: "DRM License Latency", description: "ClearKey license responses are delayed by 3000ms." },

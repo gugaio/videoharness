@@ -2670,6 +2670,116 @@ a {
 .pb-bar-miss { background: var(--danger); }
 .pb-bar-empty { background: var(--line); }
 
+.pb-chart {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  padding: 0.75rem;
+  margin-bottom: 0.6rem;
+}
+
+.pb-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.pb-chart-toggle { font-size: 0.7rem; padding: 0.2rem 0.5rem; }
+
+.pb-chart-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
+.pb-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+}
+
+.pb-chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.pb-chart-swatch {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 2px;
+}
+
+.pb-chart-plotwrap {
+  position: relative;
+}
+
+.pb-chart-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.pb-chart-gridline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px dashed var(--line);
+}
+
+.pb-chart-gridline span {
+  position: absolute;
+  right: 0;
+  top: -1.15em;
+  font-size: 0.6rem;
+  color: var(--muted);
+  background: #fff;
+  padding: 0 2px;
+  line-height: 1.1;
+}
+
+.pb-chart-plot {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 14rem;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+
+.pb-chart-col {
+  flex: 1;
+  min-width: 6px;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 1px;
+  z-index: 1;
+}
+
+.pb-chart-col:hover { background: rgba(0, 0, 0, 0.05); }
+.pb-chart-col-miss { box-shadow: inset 0 -3px 0 var(--danger); }
+
+.pb-chart-bar {
+  width: 100%;
+  max-width: 14px;
+  border-top: 2px solid;
+  border-radius: 2px 2px 0 0;
+}
+
+.pb-chart-bar-empty {
+  background: var(--line);
+  border-top-color: transparent;
+}
+
 .pb-columns {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
@@ -2770,6 +2880,16 @@ a {
 
 .pb-waterfall-row:hover { border-color: var(--line); }
 .pb-waterfall-selected { border-color: var(--blue); }
+
+.pb-waterfall-error {
+  border-color: rgba(220, 38, 38, 0.4);
+  background: rgba(220, 38, 38, 0.06);
+}
+
+.pb-waterfall-error .pb-waterfall-id,
+.pb-waterfall-error .pb-waterfall-duration { color: var(--danger); }
+
+.pb-waterfall-status { font-weight: 600; }
 
 .pb-waterfall-id {
   font-size: 0.7rem;

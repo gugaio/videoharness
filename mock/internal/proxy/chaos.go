@@ -30,11 +30,12 @@ func NewChaos() *Chaos {
 }
 
 type chaosEffect struct {
-	addedLatency   time.Duration
-	injectedStatus int
-	name           string
-	corruptKey     bool
-	malformedBody  bool
+	addedLatency    time.Duration
+	injectedStatus  int
+	bytesPerSecond  int64
+	name            string
+	corruptKey      bool
+	malformedBody   bool
 }
 
 func (e chaosEffect) handled() bool {
@@ -45,16 +46,25 @@ func (e chaosEffect) intervention() string {
 	if e.name != "" {
 		return e.name
 	}
-	switch {
-	case e.addedLatency > 0 && e.injectedStatus != 0:
-		return "latency_and_http_error"
-	case e.addedLatency > 0:
-		return "latency"
-	case e.injectedStatus != 0:
-		return "http_error"
-	default:
-		return ""
+	name := ""
+	if e.bytesPerSecond > 0 {
+		name = "bandwidth"
 	}
+	if e.addedLatency > 0 {
+		if name == "" {
+			name = "latency"
+		} else {
+			name = "bandwidth_latency"
+		}
+	}
+	if e.injectedStatus != 0 {
+		if name == "" {
+			name = "http_error"
+		} else {
+			name += "_and_http_error"
+		}
+	}
+	return name
 }
 
 func (c *Chaos) intn(n int) int {
@@ -87,7 +97,11 @@ func (c *Chaos) Apply(w http.ResponseWriter, r *http.Request, isManifest bool, p
 		if isManifest {
 			return effect
 		}
-		delay := 1500 + c.intn(1501) // 1500ms..3000ms
+		// Shaped throughput is the binding constraint so the player's ABR
+		// observes a genuinely narrow pipe; latency stays modest and the
+		// intermittent 504 keeps the "subway" character.
+		effect.bytesPerSecond = int64(150_000 + c.intn(150_001)) // 1.2-2.4 Mbps
+		delay := 100 + c.intn(301)                               // 100ms..400ms
 		effect.addedLatency = time.Duration(delay) * time.Millisecond
 		c.addLatency(effect.addedLatency)
 		if c.float64() < 0.10 {

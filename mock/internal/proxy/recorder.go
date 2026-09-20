@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"crypto/tls"
+	"fmt"
 	"net/http"
 	"net/http/httptrace"
 	"strings"
@@ -33,7 +34,8 @@ func (e *Engine) WithCMCDDecoder(decoder cmcd.Decoder) *Engine {
 }
 
 // statusWriter captures the status code and byte count of a response so the
-// request sink can record them.
+// request sink can record them. When throttleBPS is set, body writes are paced
+// so the client observes the shaped throughput of the active chaos preset.
 type statusWriter struct {
 	http.ResponseWriter
 	status         int
@@ -47,11 +49,33 @@ type statusWriter struct {
 	intervention   string
 	addedLatencyMS int64
 	injectedStatus int
+	throttleBPS    int64
+	throttleStart  time.Time
+	throttledBytes int64
 	startedAt      time.Time
 	local          bool
 	transportError string
 	trace          originTrace
 	originBodyMS   *int64
+}
+
+// throttleBurst allows a small initial burst so the pacing mimics TCP slow
+// start instead of penalizing the first chunk of every body.
+const throttleBurst = 32 * 1024
+
+// pace sleeps just long enough for the cumulative body bytes to honor
+// throttleBPS. It runs on the handler goroutine before each write; if the
+// client disconnects, the failing write stops io.Copy and pacing ends with it.
+func (w *statusWriter) pace(incoming int) {
+	now := time.Now()
+	if w.throttleStart.IsZero() {
+		w.throttleStart = now
+	}
+	target := int64(now.Sub(w.throttleStart).Seconds()*float64(w.throttleBPS)) + throttleBurst
+	if overflow := w.throttledBytes + int64(incoming) - target; overflow > 0 {
+		time.Sleep(time.Duration(float64(overflow) / float64(w.throttleBPS) * float64(time.Second)))
+	}
+	w.throttledBytes += int64(incoming)
 }
 
 type originTrace struct {
@@ -125,6 +149,10 @@ func (e *Engine) applyChaos(w http.ResponseWriter, r *http.Request, isManifest b
 		sw.intervention = effect.intervention()
 		sw.addedLatencyMS = effect.addedLatency.Milliseconds()
 		sw.injectedStatus = effect.injectedStatus
+		sw.throttleBPS = effect.bytesPerSecond
+		if effect.bytesPerSecond > 0 && sw.diagnostic == "" {
+			sw.diagnostic = fmt.Sprintf("body throttled to %d kbps", effect.bytesPerSecond*8/1000)
+		}
 	}
 	return effect.handled()
 }
@@ -137,6 +165,9 @@ func (w *statusWriter) WriteHeader(code int) {
 }
 
 func (w *statusWriter) Write(b []byte) (int, error) {
+	if w.throttleBPS > 0 && len(b) > 0 {
+		w.pace(len(b))
+	}
 	n, err := w.ResponseWriter.Write(b)
 	w.bytes += int64(n)
 	return n, err
