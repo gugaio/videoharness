@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"streammock/internal/basepath"
 	"streammock/internal/cmcd"
 	"streammock/internal/config"
 	"streammock/internal/live"
@@ -526,7 +527,7 @@ func (e *Engine) proxiedURL(streamID string, base *url.URL, ref string) string {
 	if name := path.Base(resolved.Path); name != "" && name != "." && name != "/" {
 		enc += "~" + url.PathEscape(name)
 	}
-	return "/s/" + streamID + "/r/" + enc
+	return basepath.Path("/s/" + streamID + "/r/" + enc)
 }
 
 func parseEXTINFDuration(line string) (float64, bool) {

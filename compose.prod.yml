@@ -34,6 +34,7 @@ services:
       VH_APP_PORT: 3210
       LENS_URL: http://lens:8000
       MOCK_URL: http://mock:8080
+      MOCK_PUBLIC_URL: ${MOCK_PUBLIC_URL:?set in deploy platform}
       VH_SERVICE_TOKEN: ${VH_SERVICE_TOKEN:?set in deploy platform}
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?set in deploy platform}
       VH_DATABASE_PATH: /data/history.sqlite
@@ -65,8 +66,9 @@ services:
   mock:
     image: ghcr.io/gugaio/videoharness/mock:latest
     pull_policy: always
-    networks: [internal]
+    networks: [internal, public]
     environment:
+      STREAMMOCK_BASE_PATH: /mock
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?set in deploy platform}
       STREAMMOCK_SERVICE_TOKEN: ${VH_SERVICE_TOKEN:?set in deploy platform}
       STREAMMOCK_CLONE_MAX_BYTES: ${STREAMMOCK_CLONE_MAX_BYTES:-1073741824}

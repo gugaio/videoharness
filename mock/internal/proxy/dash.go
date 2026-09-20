@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"path"
 	"strings"
+
+	"streammock/internal/basepath"
 )
 
 const maxDASHManifestBytes = 1 << 20
@@ -137,7 +139,7 @@ func resolveDASHURL(base *url.URL, reference string) (*url.URL, error) {
 
 func (e *Engine) dashProxyBase(streamID string, origin *url.URL) string {
 	encoded := base64.RawURLEncoding.EncodeToString([]byte(origin.String()))
-	return "/s/" + streamID + "/d/" + encoded + "/"
+	return basepath.Path("/s/" + streamID + "/d/" + encoded + "/")
 }
 
 func (e *Engine) rewriteDASHAttributes(attrs []xml.Attr, base *url.URL, streamID string) []xml.Attr {

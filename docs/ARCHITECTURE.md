@@ -37,8 +37,13 @@ infrastructure (configuração e composição do app)
 - Sem `internal: true`: lens/mock precisam de egress (clonar origens públicas,
   JWKS do Clerk). A segmentação é por associação de rede, não por bloqueio de
   egress.
-- Publicado no host (dev): `web` :8080, `app` :3210, `mock` :8081 (playback).
-  Lens **nunca** é publicada. `MOCK_PUBLIC_URL` é a base absoluta das capability
+- Produção: só `web` (nginx) e `app` recebem tráfego. O data plane do mock é
+  publicado pelo nginx do `web` sob `/mock` (mesma origem, sem CORS); o mock
+  fica na rede interna e o control plane `/api` dele não é exposto. O engine
+  emite as capability URLs já com o prefixo (`STREAMMOCK_BASE_PATH=/mock`) e o
+  nginx remove o prefixo antes de encaminhar.
+- Dev (compose): `web` :8080, `app` :3210; o mock também publica a porta :8081
+  para uso direto/standalone. `MOCK_PUBLIC_URL` é a base absoluta das capability
   URLs de playback usada pelo orquestrador ao montar `playback_url`.
 
 ## Modelo de autenticação
@@ -47,7 +52,7 @@ infrastructure (configuração e composição do app)
 |---|---|---|
 | Control plane (humano → app) | Clerk JWT no orquestrador | Bearer header |
 | Control plane interno (app → engines) | Service token (`VH_SERVICE_TOKEN`) | Rede interna + token |
-| Data plane (player → mock) | Capability URLs (slug/token em path, hash em repouso, TTL) | Sem header — players não enviam |
+| Data plane (player → `web`/nginx → mock) | Capability URLs (slug/token em path, hash em repouso, TTL) | Sem header — players não enviam |
 
 O mock mantém **dashboard próprio com Clerk** para uso standalone de dev/QA
 (times que só querem streams de teste sem o harness completo). Quando chamado
@@ -88,7 +93,8 @@ Implementado:
   (requests + eventos do observer + resumo + findings determinísticos).
 - Os streams devolvidos pelo orquestrador trazem `playback_url` absoluta,
   montada a partir de `MOCK_PUBLIC_URL` + path de playback do mock (data plane
-  por capability URL; o browser nunca fala com a API interna do mock).
+  por capability URL; o browser nunca fala com a API interna do mock). O path já
+  vem prefixado com `/mock` pelo engine e é servido pelo nginx do `web`.
 - Auth client: Clerk v6 com fallback dev-mode quando
   `VITE_CLERK_PUBLISHABLE_KEY` está ausente (nunca em produção).
 - Auth API: Clerk JWT (`@clerk/backend` verifyToken) nas rotas

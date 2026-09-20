@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"streammock/internal/basepath"
 	"streammock/internal/models"
 )
 
@@ -77,7 +78,7 @@ func NewManager(storageDir string) *Manager {
 	return &Manager{storageDir: storageDir, sessions: make(map[string]*session), now: time.Now}
 }
 
-func PlaybackPath(streamID string) string { return "/s/" + streamID + "/live.m3u8" }
+func PlaybackPath(streamID string) string { return basepath.Path("/s/" + streamID + "/live.m3u8") }
 
 func (m *Manager) Start(st *models.Stream, options Options) (State, error) {
 	if err := validStream(st); err != nil {

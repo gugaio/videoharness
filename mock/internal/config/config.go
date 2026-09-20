@@ -28,6 +28,7 @@ type Config struct {
 	LicenseRateLimitBurst     int
 	EphemeralTTL              time.Duration
 	SweeperInterval           time.Duration
+	BasePath                  string
 }
 
 func Load() Config {
@@ -54,6 +55,7 @@ func Load() Config {
 		LicenseRateLimitBurst:     envInt("STREAMMOCK_LICENSE_RATELIMIT_BURST", 20),
 		EphemeralTTL:              time.Duration(envInt("STREAMMOCK_EPHEMERAL_TTL_MINUTES", 60)) * time.Minute,
 		SweeperInterval:           10 * time.Minute,
+		BasePath:                  envOr("STREAMMOCK_BASE_PATH", ""),
 	}
 }
 

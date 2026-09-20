@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"streammock/internal/basepath"
 	"streammock/internal/capture"
 	"streammock/internal/config"
 	"streammock/internal/db"
@@ -70,6 +71,7 @@ func (v StreamVM) MarshalJSON() ([]byte, error) {
 
 func main() {
 	cfg := config.Load()
+	basepath.Set(cfg.BasePath)
 
 	clerk.SetKey(cfg.ClerkSecretKey)
 	if cfg.ClerkSecretKey == "" {
@@ -200,7 +202,7 @@ func seedBBBDemo(mem *store.MemoryStore, cfg config.Config) error {
 	return mem.Add(models.Stream{
 		ID:                       "big-buck-bunny",
 		OriginalURL:              cfg.BBBDemoURL,
-		ProxyPath:                "/s/big-buck-bunny/master.m3u8",
+		ProxyPath:                basepath.Path("/s/big-buck-bunny/master.m3u8"),
 		ActivePreset:             "clean",
 		Mode:                     models.ModeProxy,
 		CaptureStatus:            models.CaptureReady,
@@ -488,12 +490,12 @@ func (s *Server) handleAddStream(w http.ResponseWriter, r *http.Request) {
 		st.ExpiresAt = &expires
 	}
 	if protection == models.ProtectionClearKey {
-		licensePath := "/s/" + id + "/license/clearkey"
+		licensePath := basepath.Path("/s/" + id + "/license/clearkey")
 		st.LicensePath = &licensePath
 		// CENC raw-key signaling is interoperable through DASH Common PSSH.
 		// The HLS source is still preserved as the capture input, but protected
 		// playback uses the packaged local MPD.
-		st.ProxyPath = "/s/" + id + "/manifest.mpd"
+		st.ProxyPath = basepath.Path("/s/" + id + "/manifest.mpd")
 	}
 	// Clone bytes live on disk, so every clone needs durable metadata even when
 	// created anonymously. Ownership still controls workspace listing and edits.
@@ -749,9 +751,9 @@ func formatFromURL(rawURL string) string {
 
 func streamProxyPath(id, format string) string {
 	if format == models.FormatDASH {
-		return fmt.Sprintf("/s/%s/manifest.mpd", id)
+		return basepath.Path(fmt.Sprintf("/s/%s/manifest.mpd", id))
 	}
-	return fmt.Sprintf("/s/%s/master.m3u8", id)
+	return basepath.Path(fmt.Sprintf("/s/%s/master.m3u8", id))
 }
 
 func presetKeys() string {
@@ -899,9 +901,9 @@ func (s *Server) handleCreatePlaybackSession(w http.ResponseWriter, r *http.Requ
 			params.Set("duration", strconv.FormatFloat(duration, 'f', -1, 64))
 		}
 		if format == models.FormatDASH {
-			playbackURL = "/ws/" + slug + "/p.mpd?" + params.Encode()
+			playbackURL = basepath.Path("/ws/" + slug + "/p.mpd?" + params.Encode())
 		} else {
-			playbackURL = "/ws/" + slug + "/p.m3u8?" + params.Encode()
+			playbackURL = basepath.Path("/ws/" + slug + "/p.m3u8?" + params.Encode())
 		}
 	} else if streamID != "" {
 		stream, exists := s.store.Get(streamID)
@@ -960,7 +962,7 @@ func (s *Server) handleCreatePlaybackSession(w http.ResponseWriter, r *http.Requ
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"session": session, "cmcd_session_id": cmcdSID, "content_id": contentID, "playback_url": playbackURL,
-		"ingest_url": "/i/" + token + "/events", "ingest_expires_at_ms": expiresAt,
+		"ingest_url": basepath.Path("/i/" + token + "/events"), "ingest_expires_at_ms": expiresAt,
 		"protection_mode": protectionMode, "license_url": licenseURL,
 	})
 }
@@ -1148,7 +1150,7 @@ func (s *Server) handleGetWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"slug":            slug,
-		"playback_url":    fmt.Sprintf("/ws/%s/p.m3u8", slug),
+		"playback_url":    basepath.Path(fmt.Sprintf("/ws/%s/p.m3u8", slug)),
 		"stored_bytes":    storedBytes,
 		"quota_bytes":     s.cfg.UserQuotaBytes,
 		"clone_ttl_hours": int(s.cfg.CloneTTL.Hours()),
