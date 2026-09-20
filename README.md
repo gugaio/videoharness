@@ -59,7 +59,14 @@ npm run ui:dev   # UI com HMR
    ao serem obtidos;
    UI: formulário, progresso por estágio e snapshot JSON;
    validado E2E contra a Lens com stream público)
-4. Fase 3 — Streams (orquestrador → Mock; mock mantém uso standalone)
+4. ~~Fase 3 — Streams (orquestrador → Mock; mock mantém uso standalone)~~ ✅
+   (mock ganhou modo interno por service token; orquestrador proxia as workspace
+   APIs com ownership e injeta o `sub` do Clerk; UI de Streams: criar/listar/
+   excluir clones, trocar preset, controlar o live mock HLS, gerar URLs de
+   proxy on-demand sem clonar e acompanhar o consumo no painel de atividade
+   (requests, ranges, CMCD, timings, intervenções), com playback em capability
+   URLs do mock; Playback Lab com player embutido (CMCD + observer) e
+   Playback Inspector de sessões correlacionadas)
 5. Fase 4 — Investigations agênticas (baseline curta + aprofundamento por tools)
 6. Fase 5 — Experiments (clone + network shaping + replay em device)
 

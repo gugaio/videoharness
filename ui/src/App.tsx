@@ -7,7 +7,7 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import HomePage from "./pages/HomePage";
 import DashboardLayout from "./pages/DashboardLayout";
 import InspectPage, { InspectionDetailPage } from "./pages/InspectPage";
-import StreamsPage from "./pages/StreamsPage";
+import StreamsPage, { StreamDashboardPage, StreamPlayerPage } from "./pages/StreamsPage";
 import InvestigationsPage from "./pages/InvestigationsPage";
 
 function AppRoutes() {
@@ -20,6 +20,8 @@ function AppRoutes() {
           <Route path="inspect" element={<InspectPage />} />
           <Route path="inspect/:inspectionId" element={<InspectionDetailPage />} />
           <Route path="streams" element={<StreamsPage />} />
+          <Route path="streams/:streamId" element={<StreamDashboardPage />} />
+          <Route path="streams/:streamId/player" element={<StreamPlayerPage />} />
           <Route path="investigations" element={<InvestigationsPage />} />
         </Route>
       </Route>

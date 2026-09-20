@@ -173,6 +173,24 @@ func TestV1DecoderLimitBoundaries(t *testing.T) {
 	assertIssues(t, rawDecoder, `sid="ss"`, []Issue{{Code: IssuePayloadTooLarge}})
 }
 
+func TestV1DecoderAcceptsLongNextObjectRequest(t *testing.T) {
+	defaults := DefaultLimits()
+	decoder := NewV1Decoder(defaults)
+
+	// Players such as hls.js base64url-encode the next segment URL into nor
+	// (CTA-5004-B); signed CDN URLs routinely exceed 1 KiB.
+	nor := "aHR0cDovL2xpdmUtYmVyLnZpZGVvLmdsb2JvLmNvbS9zZWdtZW50cy8" + strings.Repeat("Q", 1200)
+	got, err := decoder.DecodeRequest(requestWithCMCD(`nor="` + nor + `"`))
+	if err != nil {
+		t.Fatalf("long nor rejected: %v", err)
+	}
+	if got.NextObjectRequest == nil || *got.NextObjectRequest != nor {
+		t.Fatalf("nor was not preserved")
+	}
+
+	assertIssues(t, decoder, `nor="`+strings.Repeat("Q", defaults.MaxStringBytes+1)+`"`, []Issue{{Code: IssueStringTooLong, Key: "nor"}})
+}
+
 func TestV1DecoderValidatesRequiredHundredIncrements(t *testing.T) {
 	decoder := NewV1Decoder(DefaultLimits())
 	for _, key := range []string{"bl", "dl", "mtp", "rtp"} {

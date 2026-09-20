@@ -21,6 +21,7 @@ type Config struct {
 	BBBDemoURL                string
 	HTTPTimeout               time.Duration
 	ClerkSecretKey            string
+	ServiceToken              string
 	RateLimitPerMinute        float64
 	RateLimitBurst            int
 	LicenseRateLimitPerMinute float64
@@ -45,6 +46,7 @@ func Load() Config {
 		BBBDemoURL:           envOr("STREAMMOCK_BBB_URL", "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"),
 		HTTPTimeout:          30 * time.Second,
 		ClerkSecretKey:       envOr("CLERK_SECRET_KEY", ""),
+		ServiceToken:         envOr("STREAMMOCK_SERVICE_TOKEN", ""),
 
 		RateLimitPerMinute:        envFloat("STREAMMOCK_RATELIMIT_RPM", 10),
 		RateLimitBurst:            envInt("STREAMMOCK_RATELIMIT_BURST", 5),

@@ -38,7 +38,8 @@ infrastructure (configuração e composição do app)
   JWKS do Clerk). A segmentação é por associação de rede, não por bloqueio de
   egress.
 - Publicado no host (dev): `web` :8080, `app` :3210, `mock` :8081 (playback).
-  Lens **nunca** é publicada.
+  Lens **nunca** é publicada. `MOCK_PUBLIC_URL` é a base absoluta das capability
+  URLs de playback usada pelo orquestrador ao montar `playback_url`.
 
 ## Modelo de autenticação
 
@@ -65,10 +66,34 @@ Implementado:
   primeira leitura (ou servido pela Lens enquanto ainda não arquivado).
 - `DELETE /v1/inspections/:id` → remove a inspeção do histórico do dono
   (404 se não existe ou não é dele; não afeta a Lens).
+- `GET /v1/streams` → streams (clones) do usuário autenticado, via mock.
+- `POST /v1/streams` → cria clone/proxy no mock; `202` com o stream.
+- `GET /v1/streams/:id` → stream do dono (404 se não existe no mock).
+- `DELETE /v1/streams/:id` → remove um clone (mock exige modo clone + dono).
+- `POST /v1/streams/:id/preset` → troca o preset de caos ativo.
+- `GET/POST /v1/streams/:id/live` → consulta/controla o live mock HLS local.
+- `GET /v1/workspace` → slug, armazenamento e TTL do workspace do dono.
+- `POST /v1/streams/proxy` → monta a capability URL de proxy on-demand do
+  workspace (sem persistir stream; nada é gravado no mock).
+- `GET /v1/workspace/requests` → board de consumo (proxy/clone): requests
+  recentes com status, bytes, duração, ranges, CMCD, timings de origem e
+  intervenções do preset.
+- `DELETE /v1/workspace/requests` → limpa a atividade de um stream/source.
+- `POST /v1/playback/sessions` → cria sessão de playback correlacionada no mock
+  (CMCD session id + ingest do observer); repassa `Origin` da requisição como
+  `allowed_origin` (o mock valida o header na ingestão).
+- `GET /v1/playback/sessions` → sessões do dono, filtráveis por
+  `stream_id`/`source`/`preset`.
+- `GET /v1/playback/sessions/:sessionId/timeline` → timeline correlacionada
+  (requests + eventos do observer + resumo + findings determinísticos).
+- Os streams devolvidos pelo orquestrador trazem `playback_url` absoluta,
+  montada a partir de `MOCK_PUBLIC_URL` + path de playback do mock (data plane
+  por capability URL; o browser nunca fala com a API interna do mock).
 - Auth client: Clerk v6 com fallback dev-mode quando
   `VITE_CLERK_PUBLISHABLE_KEY` está ausente (nunca em produção).
 - Auth API: Clerk JWT (`@clerk/backend` verifyToken) nas rotas
-  `/v1/inspections*`; sem `CLERK_SECRET_KEY`, rotas abertas em dev-mode.
+  `/v1/inspections*`, `/v1/streams*`, `/v1/workspace` e `/v1/playback*`; sem
+  `CLERK_SECRET_KEY`, rotas abertas em dev-mode.
 - Histórico: o orquestrador persiste `inspection_id`, owner (`sub` do Clerk),
   URL com credenciais de query redigidas, status e snapshots obtidos em SQLite.
   A Lens mantém seu TTL próprio;
@@ -77,10 +102,20 @@ Implementado:
   `/dashboard/inspect/:id` (polling + triagem de saúde/cobertura, comparação com
   snapshot anterior da mesma origem e timeline de representações com segmentos
   clicáveis, observações de bitrate/entrega, DRM DASH, warnings e snapshot JSON).
+  `/dashboard/streams` cria/listar/exclui clones, troca preset, controla o live
+  mock e gera URLs de proxy on-demand (sem clonar); playback abre a capability
+  URL do mock e um painel de atividade mostra o consumo (requests, ranges,
+  CMCD, timings, intervenções). O Playback Lab embute um player (hls.js com
+  `@streammock/playback-observer` para HLS; shaka-player para DASH/ClearKey,
+  ambos com CMCD nativo) e o Playback Inspector portado do mock (resumo,
+  findings, lanes de sinais, waterfall, eventos do observer, export JSON no
+  client). DASH usa só os eventos core do observer: o subpath `./shaka` não
+  existe no pacote publicado (`@streammock/playback-observer@0.1.0`); o bridge
+  dedicado fica para quando o pacote o publicar (não duplicamos código da
+  engine no VH).
 
-Planejado (Fase 3+):
+Planejado (Fase 4+):
 
-- `POST /api/streams/...` → proxy das workspace APIs do mock com ownership.
 - SSE `GET /api/events/...` → timeline de investigações (Fase 4).
 
 ## Limitações conhecidas
@@ -125,3 +160,5 @@ view e exigem nova inspeção; samples/PES estruturais permanecem independentes.
 | AD-0009 | Layout Python da Lens simplificado na raiz de `lens/`, conforme ADR-0006 da engine; Compose e CI usam `lens/Dockerfile`. Fronteiras HTTP e contratos permanecem iguais. |
 | AD-0010 | Lens separa seleção de formatos em `application/` e parsing puro em `parsers/` (ADR-0007 da engine); ffprobe e persistência continuam adapters. Integração do VH permanece HTTP, sem alteração de contrato. |
 | AD-0011 | Lens mantém `CapturePlan` e a orquestração de captura em `application/`; adapters só buscam e persistem bytes via ports, conforme ADR-0008 da engine; contratos HTTP e snapshot permanecem iguais. |
+| AD-0012 | StreamMock ganha modo interno: com `STREAMMOCK_SERVICE_TOKEN` configurado, `X-Service-Token` + `X-Owner-Id` identificam o dono injetado pelo orquestrador (comparação em tempo constante), sem exigir JWT do Clerk. O dashboard standalone do mock segue autenticado por Clerk. O orquestrador expõe `/v1/streams*` e `/v1/workspace` com a auth humana e reescreve paths de playback para `MOCK_PUBLIC_URL`; o browser nunca chama a API interna do mock. |
+| AD-0013 | CMCD no Playback Lab do VH: o player embutido usa o core + adapter HLS do `@streammock/playback-observer` publicado e CMCD nativo do hls.js/shaka. Como o subpath `./shaka` não existe no pacote publicado, DASH/ClearKey roda com os eventos core do observer (sem eventos do player) e CMCD nativo do shaka; o bridge shaka fica para quando o pacote o publicar — não duplicamos código da engine no VH. O export de sessão é montado no client a partir da timeline do orquestrador (sem rota de export no VH). |

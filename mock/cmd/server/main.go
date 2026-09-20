@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -1242,10 +1243,22 @@ func handlePreflight(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// authenticatedUserID verifies the Clerk session JWT from the Authorization
-// header and returns the user ID. A missing or invalid token yields (_, false),
-// i.e. an anonymous request.
+// authenticatedUserID resolves the owner of a request. The orchestrator uses
+// the internal service-token mode (X-Service-Token + X-Owner-Id) to act on
+// behalf of a verified Clerk user; browsers use the Clerk session JWT. A
+// missing or invalid credential yields (_, false) and the endpoint decides
+// whether that is anonymous or forbidden.
 func (s *Server) authenticatedUserID(r *http.Request) (string, bool) {
+	if s.cfg.ServiceToken != "" {
+		provided := strings.TrimSpace(r.Header.Get("X-Service-Token"))
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(s.cfg.ServiceToken)) == 1 {
+			owner := strings.TrimSpace(r.Header.Get("X-Owner-Id"))
+			if owner == "" {
+				return "", false
+			}
+			return owner, true
+		}
+	}
 	auth := r.Header.Get("Authorization")
 	token, ok := strings.CutPrefix(auth, "Bearer ")
 	if !ok || strings.TrimSpace(token) == "" {

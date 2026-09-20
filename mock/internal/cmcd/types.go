@@ -139,8 +139,11 @@ func DefaultLimits() Limits {
 		MaxKeys:              64,
 		MaxCustomKeys:        16,
 		MaxKeyBytes:          64,
-		MaxStringBytes:       1024,
-		MaxSessionIDRunes:    64,
-		MaxContentIDRunes:    64,
+		// `nor` carries whole segment URLs; players base64url-encode signed CDN
+		// URLs (CTA-5004-B) which routinely exceed 1 KiB. MaxRawValueBytes still
+		// bounds the payload as a whole.
+		MaxStringBytes:    4 * 1024,
+		MaxSessionIDRunes: 64,
+		MaxContentIDRunes: 64,
 	}
 }

@@ -58,9 +58,19 @@ sendo contratos HTTP.
    **Dependência**: barras de frame, GOP e sincronismo A/V exigem ffprobe na
    imagem da lens — adicionado ao `Dockerfile` da lens (fato dela,
    não do VH); sem ffprobe a Lens degrada silenciosamente (`_optional_ffprobe`).
-4. **Fase 3 — Streams**: orquestrador proxifica as workspace APIs do mock
-   injetando ownership; mock mantém dashboard próprio (uso standalone de
-   dev/QA) e ganha modo interno (service token).
+4. **Fase 3 — Streams** ✅: orquestrador proxifica as workspace APIs do mock
+   (`/v1/streams*`, `/v1/workspace`) injetando ownership (`sub` do Clerk via
+   `X-Owner-Id`) e monta `playback_url` absoluta com `MOCK_PUBLIC_URL`; o mock
+   mantém dashboard próprio (uso standalone de dev/QA) e ganhou modo interno por
+   service token (`STREAMMOCK_SERVICE_TOKEN` + `X-Service-Token`, comparação em
+   tempo constante, desligado se não configurado). UI `/dashboard/streams`:
+   criar/listar/excluir clones, trocar preset, controlar o live mock HLS,
+   gerar URLs de proxy on-demand (sem clonar) e acompanhar o consumo no painel
+   de atividade (requests, ranges, CMCD, timings e intervenções). Playback Lab
+   embute player com CMCD + observer (hls.js para HLS; shaka para DASH/ClearKey
+   só com eventos core do observer — subpath `./shaka` ausente do pacote
+   publicado) e o Playback Inspector portado do mock, correlacionados por
+   sessão (`/v1/playback/sessions*`).
 5. **Fase 4 — Investigations agênticas**: do zero. Baseline = snapshot da Lens
    (janela curta, default 10 s); agente aprofunda com tools estruturadas
    (`fetch_window`, `probe`, `decode_test`) com budget por chamada e teto por
@@ -101,6 +111,10 @@ npm run dev        # orquestrador em http://127.0.0.1:3210
 npm run ui:dev     # UI em http://127.0.0.1:5173 (proxia /api -> 3210)
 make dc-up         # stack completa (lens/mock sobem de ./lens e ./mock)
 ```
+
+Dev sem Docker exige as engines no host: `MOCK_URL=http://127.0.0.1:8080`,
+`MOCK_PUBLIC_URL=http://127.0.0.1:8080`, `LENS_URL=http://127.0.0.1:8000` e
+`STREAMMOCK_SERVICE_TOKEN` igual a `VH_SERVICE_TOKEN` no mock.
 
 ## Validação mínima
 

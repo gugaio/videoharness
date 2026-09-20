@@ -6,6 +6,7 @@ const config = {
   port: 0,
   lensUrl: "http://lens:8000",
   mockUrl: "http://mock:8080",
+  mockPublicUrl: "http://127.0.0.1:8081",
   serviceToken: "test-token",
 };
 
