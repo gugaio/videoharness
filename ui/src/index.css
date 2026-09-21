@@ -2097,7 +2097,8 @@ a {
 
 .stream-dashboard-header h2 { margin: 0.35rem 0; }
 .stream-back { color: var(--blue); font-size: 0.8125rem; text-decoration: none; }
-.stream-player-cta { flex-shrink: 0; text-decoration: none; }
+.stream-delete { display: flex; flex-direction: column; align-items: flex-end; gap: 0.35rem; flex-shrink: 0; }
+.stream-delete .streams-delete { margin-left: 0; }
 
 .stream-overview {
   display: grid;
@@ -2131,12 +2132,11 @@ a {
 }
 
 .stream-controls select { padding: 0.45rem 0.6rem; border: 1px solid var(--line-strong); border-radius: 8px; background: #fff; color: var(--text); font: inherit; font-size: 0.8125rem; }
-.stream-controls .streams-live { flex: 1 1 24rem; }
 .stream-player-lab { margin-top: 0; }
 
 @media (max-width: 680px) {
   .stream-dashboard-header { flex-direction: column; }
-  .stream-player-cta { width: 100%; justify-content: center; }
+  .stream-delete { width: 100%; align-items: stretch; }
 }
 
 .streams-delete {
@@ -2156,49 +2156,47 @@ a {
   cursor: not-allowed;
 }
 
-.streams-live {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.6rem 0.75rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #f8fafc;
+.streams-button-primary,
+.streams-button-success,
+.streams-button-live {
+  border-color: transparent;
+  color: #fff;
 }
 
-.streams-live-info {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
+.streams-button-primary { background: var(--blue); }
+.streams-button-success { background: var(--accent); }
+.streams-button-live { background: var(--danger); }
+
+.streams-button-primary:hover,
+.streams-button-success:hover,
+.streams-button-live:hover {
+  border-color: transparent;
+  color: #fff;
+  filter: brightness(0.9);
 }
 
-.streams-live-status {
-  font-size: 0.75rem;
-  text-transform: capitalize;
-  color: var(--muted);
-}
-
-.streams-live-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.streams-live-actions button {
-  padding: 0.35rem 0.7rem;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
+.streams-button-live.is-live {
   background: #fff;
-  color: var(--text-soft);
-  font-size: 0.75rem;
-  font-weight: 600;
-  cursor: pointer;
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
-.streams-live-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.streams-button-live.is-live:hover {
+  background: #fdebec;
+  color: var(--danger);
+  filter: none;
+}
+
+.streams-live-badge {
+  align-self: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: #fdebec;
+  color: var(--danger);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .content .badge-ready { background: #e4f5ec; color: #17633e; }

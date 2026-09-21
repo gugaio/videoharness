@@ -523,17 +523,15 @@ export function StreamDashboardPage() {
           <h2>{clone.label || "Dashboard do clone"}</h2>
           <p className="panel-hint">Acompanhe a configuração e os requests recentes deste clone.</p>
         </div>
-        {clone.capture_status === "ready" && (
-          <Link className="cta stream-player-cta" to={`/dashboard/streams/${encodeURIComponent(clone.id)}/player`}>
-            Player com CMCD
-          </Link>
-        )}
+        <CloneDeleteButton
+          stream={clone}
+          onDeleted={() => navigate("/dashboard/streams", { replace: true })}
+        />
       </header>
       <CloneOverview stream={clone} />
       <CloneManagement
         stream={clone}
         onChanged={() => void stream.refetch()}
-        onDeleted={() => navigate("/dashboard/streams", { replace: true })}
       />
       <MockActivityPanel mode="clone" streamId={clone.id} />
     </section>
@@ -583,11 +581,9 @@ function CloneOverview({ stream }: { stream: MockStream }) {
   );
 }
 
-function CloneManagement({ stream, onChanged, onDeleted }: { stream: MockStream; onChanged: () => void; onDeleted: () => void }) {
+function CloneManagement({ stream, onChanged }: { stream: MockStream; onChanged: () => void }) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const preset = useMutation({ mutationFn: (value: string) => setStreamPreset(stream.id, value), onSuccess: onChanged });
-  const remove = useMutation({ mutationFn: () => deleteStream(stream.id), onSuccess: onDeleted });
-  const busy = ACTIVE_CAPTURE.has(stream.capture_status);
 
   async function copyPlayback() {
     try {
@@ -600,17 +596,35 @@ function CloneManagement({ stream, onChanged, onDeleted }: { stream: MockStream;
   return (
     <section className="stream-controls" aria-label="Controles do clone">
       <label className="streams-preset"><span>Preset</span><select value={stream.active_preset} disabled={preset.isPending} onChange={(event) => preset.mutate(event.target.value)}>{stream.presets.map((item) => <option key={item.key} value={item.key} title={item.description}>{item.label}</option>)}</select></label>
-      {stream.capture_status === "ready" && <button type="button" className="streams-button" onClick={() => void copyPlayback()}>{copyState === "copied" ? "URL copiada" : "Copiar URL"}</button>}
-      {stream.format === "hls" && stream.protection_mode === "clear" && stream.capture_status === "ready" && <LiveControls stream={stream} />}
-      <button type="button" className="streams-delete" disabled={busy || remove.isPending} onClick={() => { if (window.confirm("Excluir este clone e seus arquivos locais?")) remove.mutate(); }}>{remove.isPending ? "Excluindo…" : "Excluir clone"}</button>
+      {stream.capture_status === "ready" && <button type="button" className="streams-button streams-button-success" onClick={() => void copyPlayback()}>{copyState === "copied" ? "URL copiada" : "Copiar URL"}</button>}
+      {stream.capture_status === "ready" && <Link className="streams-button streams-button-primary" to={`/dashboard/streams/${encodeURIComponent(stream.id)}/player`}>Player com CMCD</Link>}
+      {stream.format === "hls" && stream.protection_mode === "clear" && stream.capture_status === "ready" && <LivecastControl stream={stream} />}
       {copyState === "error" && <span className="state-error">Não foi possível copiar.</span>}
-      {remove.isError && <span role="alert" className="state-error">{errorMessage(remove.error)}</span>}
       {preset.isError && <span role="alert" className="state-error">{errorMessage(preset.error)}</span>}
     </section>
   );
 }
 
-function LiveControls({ stream }: { stream: MockStream }) {
+function CloneDeleteButton({ stream, onDeleted }: { stream: MockStream; onDeleted: () => void }) {
+  const remove = useMutation({ mutationFn: () => deleteStream(stream.id), onSuccess: onDeleted });
+  const busy = ACTIVE_CAPTURE.has(stream.capture_status);
+
+  return (
+    <div className="stream-delete">
+      <button
+        type="button"
+        className="streams-delete"
+        disabled={busy || remove.isPending}
+        onClick={() => { if (window.confirm("Excluir este clone e seus arquivos locais?")) remove.mutate(); }}
+      >
+        {remove.isPending ? "Excluindo…" : "Excluir clone"}
+      </button>
+      {remove.isError && <span role="alert" className="state-error">{errorMessage(remove.error)}</span>}
+    </div>
+  );
+}
+
+function LivecastControl({ stream }: { stream: MockStream }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const live = useQuery({
     queryKey: ["live", stream.id],
@@ -628,59 +642,35 @@ function LiveControls({ stream }: { stream: MockStream }) {
 
   if (live.isError) return null;
   const status = live.data?.live.status;
-
-  function run(action: LiveAction) {
-    control.mutate(action);
-  }
+  const active = Boolean(status && status !== "stopped" && status !== "ended");
 
   return (
-    <div className="streams-live">
-      <div className="streams-live-info">
-        <strong title="Transmite o clone em modo live (HLS): o mock simula uma transmissão ao vivo a partir do clone, com janela deslizante.">Live simulada</strong>
-        <span className="streams-live-status">{status ?? "—"}</span>
-      </div>
-      <div className="streams-live-actions">
-        {(!status || status === "stopped" || status === "ended") && (
-          <button type="button" disabled={control.isPending} onClick={() => run("start")}>
-            Iniciar
-          </button>
-        )}
-        {status === "playing" && (
-          <button type="button" disabled={control.isPending} onClick={() => run("pause")}>
-            Pausar
-          </button>
-        )}
-        {status === "paused" && (
-          <button type="button" disabled={control.isPending} onClick={() => run("resume")}>
-            Retomar
-          </button>
-        )}
-        {(status === "playing" || status === "paused") && (
-          <>
-            <button type="button" disabled={control.isPending} onClick={() => run("restart")}>
-              Reiniciar
-            </button>
-            <button type="button" disabled={control.isPending} onClick={() => run("stop")}>
-              Parar
-            </button>
-          </>
-        )}
-        {status && status !== "stopped" && live.data && (
-          <a
-            className="streams-button"
-            href={live.data.live.playback_url}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Abrir live
-          </a>
-        )}
-      </div>
+    <>
+      <button
+        type="button"
+        className={`streams-button streams-button-live${active ? " is-live" : ""}`}
+        disabled={control.isPending}
+        title="Transmite o clone em modo live (HLS): o mock simula uma transmissão ao vivo a partir do clone, com janela deslizante."
+        onClick={() => control.mutate(active ? "stop" : "start")}
+      >
+        {control.isPending ? "…" : active ? "Encerrar livecast" : "Livecast"}
+      </button>
+      {active && status && <span className="streams-live-badge">{status}</span>}
+      {active && live.data && (
+        <a
+          className="streams-button"
+          href={live.data.live.playback_url}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Abrir live
+        </a>
+      )}
       {actionError && (
         <span role="alert" className="state-error">
           {actionError}
         </span>
       )}
-    </div>
+    </>
   );
 }

@@ -133,4 +133,10 @@ Registrar no status o que não foi executado e por quê.
 - Alterou arquitetura/rede/contratos → atualizar `docs/ARCHITECTURE.md` e a
   tabela de decisões.
 - Alterou fase/escopo → atualizar a lista de fases deste arquivo.
+- **Criou, renomeou, removeu ou alterou o comportamento/default de qualquer
+  variável de ambiente** (no código, `.env.example`, `compose.yml`,
+  `compose.prod.yml` ou build args) → atualizar `docs/ENVIRONMENT.md` no mesmo
+  conjunto de mudanças, incluindo a variável na seção correta e refletindo o
+  novo default. Se a variável for de uma engine (`lens/`/`mock/`), registrar
+  também a mudança nos docs da engine conforme o processo dela.
 - Nenhum documento pode alegar capacidade que o código não implementa.
