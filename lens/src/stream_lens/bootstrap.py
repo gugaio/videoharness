@@ -42,9 +42,13 @@ from stream_lens.adapters.outbound.filesystem.inspection_repository import (
     FilesystemInspectionRepository,
 )
 from stream_lens.adapters.outbound.filesystem.segment_store import FilesystemSegmentStore
+from stream_lens.adapters.outbound.filesystem.supplemental_capture_repository import (
+    FilesystemSupplementalCaptureRepository,
+)
 from stream_lens.adapters.outbound.jobs.in_process_job_queue import InProcessJobQueue
 from stream_lens.adapters.outbound.providers import SystemClock, UuidIdGenerator
 from stream_lens.application.capture_service import SegmentCaptureService
+from stream_lens.application.supplemental_capture import SupplementalCaptureService
 from stream_lens.application.container_analyzer import (
     SniffingContainerAnalyzer,
 )
@@ -73,6 +77,7 @@ class Container:
     create_inspection: CreateInspection
     run_inspection: RunInspection
     repository: InspectionRepository
+    supplemental_captures: SupplementalCaptureService
     workspace: Path
     purge_interval_seconds: int
 
@@ -145,13 +150,14 @@ def build_container(
         limits=limits,
         store=FilesystemSegmentStore(),
     )
+    container_analyzer = SniffingContainerAnalyzer()
     runner = RunInspection(
         fetcher=fetcher,
         inspector=inspector,
         repository=repository,
         capture_service=capture_service,
         workspace=workspace,
-        container_analyzer=SniffingContainerAnalyzer(),
+        container_analyzer=container_analyzer,
         media_probe=_optional_ffprobe(),
     )
     queue = InProcessJobQueue(runner, max_concurrency=concurrency)
@@ -162,11 +168,22 @@ def build_container(
         clock=clock,
         ttl_seconds=ttl,
     )
+    supplemental_captures = SupplementalCaptureService(
+        inspections=repository,
+        captures=FilesystemSupplementalCaptureRepository(workspace),
+        fetcher=fetcher,
+        inspector=inspector,
+        capture_service=capture_service,
+        workspace=workspace,
+        container_analyzer=container_analyzer,
+        max_concurrency=max(1, min(concurrency, 2)),
+    )
 
     return Container(
         create_inspection=create,
         run_inspection=runner,
         repository=repository,
+        supplemental_captures=supplemental_captures,
         workspace=workspace,
         purge_interval_seconds=purge_interval,
     )

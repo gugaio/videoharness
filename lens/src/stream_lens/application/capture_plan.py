@@ -19,6 +19,9 @@ from stream_lens.domain.value_objects.segments import (
 @dataclass(slots=True)
 class CapturePlan:
     planned: list[PlannedSegment] = field(default_factory=list)
+    # Todos os segmentos declarados nas playlists observadas. A captura padrão
+    # continua usando `planned`; esta lista permite cobertura sem baixar mídia.
+    coverage: list[PlannedSegment] = field(default_factory=list)
     # rep_id -> {index: discontinuity} para marcar a timeline
     discontinuities: dict[str, dict[int, bool]] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
@@ -36,3 +39,13 @@ class DashCandidate:
     index: int
     number: int | None
     duration_seconds: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class CaptureSelection:
+    """Seleção explícita para uma coleta adicional, resolvida pela Lens."""
+
+    segment_refs: tuple[str, ...] = ()
+    representation_ids: tuple[str, ...] = ()
+    start_seconds: float | None = None
+    duration_seconds: float | None = None

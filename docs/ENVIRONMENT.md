@@ -24,7 +24,7 @@ Variáveis consumidas pelos arquivos Compose e pelos build args.
 | `VITE_CLERK_PUBLISHABLE_KEY` | vazio | build args do `web` e do `mock` | Chave pública do Clerk. Ausente ⇒ frontend em dev-mode aberto (banner amarelo). |
 | `CLERK_SECRET_KEY` | vazio (dev) | `app` e `mock` | Secret do Clerk. Ausente ⇒ rotas autenticadas abertas em dev-mode. Obrigatória em produção. |
 | `VH_SERVICE_TOKEN` | `dev-internal-token` | `app` e `mock` (como `STREAMMOCK_SERVICE_TOKEN`) | Token de serviço interna `app → engines` (header `X-Service-Token`). Obrigatória em produção. |
-| `VH_DATABASE_PATH` | `.video-harness-data/history.sqlite` | `app` | Caminho do SQLite de histórico de inspeções. No compose é `/data/history.sqlite` (volume `app-data`). |
+| `VH_DATABASE_PATH` | `.video-harness-data/history.sqlite` | `app` | Caminho do SQLite de histórico de inspeções e hashes/metadados de tokens MCP. No compose é `/data/history.sqlite` (volume `app-data`). |
 | `STREAMMOCK_CLONE_MAX_BYTES` | `1073741824` (1 GiB) | `mock` | Tamanho máximo por clone. |
 | `STREAMMOCK_USER_QUOTA_BYTES` | `5368709120` (5 GiB) | `mock` | Cota agregada de clones por dono (`0` desliga). |
 | `STREAMMOCK_CLONE_TTL_HOURS` | `0` | `mock` | Expiração de clones; `0` desliga. |
@@ -44,10 +44,15 @@ Validado com Zod; pode rodar fora do compose (host ou Docker direto).
 | `MOCK_URL` | `http://mock:8080` | Base da API interna do mock (rede interna). |
 | `MOCK_PUBLIC_URL` | `http://127.0.0.1:8081` | Base absoluta das capability URLs de playback montadas para o browser. |
 | `VH_SERVICE_TOKEN` | `dev-internal-token` | Token enviado às engines no control plane interno. |
-| `VH_DATABASE_PATH` | `.video-harness-data/history.sqlite` | SQLite de histórico/ownership. |
+| `VH_DATABASE_PATH` | `.video-harness-data/history.sqlite` | SQLite de histórico/ownership e hashes/metadados de tokens MCP. |
 | `CLERK_SECRET_KEY` | ausente | Verificação de JWT (`@clerk/backend`). Ausente ⇒ rotas abertas em dev-mode. |
 
 ## 3. UI `web` (`ui/`)
+
+O MCP não exige variável de segredo compartilhado: cada usuário gera seu token
+na página `/dashboard/mcp`. `/mcp` sempre exige esse Bearer, mesmo sem
+`CLERK_SECRET_KEY`. A ausência da chave Clerk mantém somente as rotas de
+gerenciamento no fallback `dev-user`; não usar esse modo em produção.
 
 | Variável | Padrão | Descrição |
 |---|---|---|

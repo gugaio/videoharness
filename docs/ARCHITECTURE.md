@@ -15,7 +15,7 @@ O `src/` segue arquitetura hexagonal. O domínio e os casos de uso não importam
 Fastify, Clerk, SQLite ou os contratos HTTP das engines:
 
 ```text
-adapters/inbound/http (Fastify + Clerk)
+adapters/inbound/http (Fastify + Clerk) / adapters/inbound/mcp (token pessoal)
               ↓
 application/use-cases → application/ports ← adapters/outbound (Lens + SQLite)
               ↓
@@ -51,6 +51,7 @@ infrastructure (configuração e composição do app)
 | Plano | Quem | Mecanismo |
 |---|---|---|
 | Control plane (humano → app) | Clerk JWT no orquestrador | Bearer header |
+| Control plane (agente → app MCP) | Token pessoal gerado em `/dashboard/mcp`, vinculado ao owner | Bearer header; hash SHA-256 em SQLite, validade e revogação |
 | Control plane interno (app → engines) | Service token (`VH_SERVICE_TOKEN`) | Rede interna + token |
 | Data plane (player → `web`/nginx → mock) | Capability URLs (slug/token em path, hash em repouso, TTL) | Sem header — players não enviam |
 
@@ -62,6 +63,28 @@ pelo orquestrador, recebe contexto de owner via modo interno.
 
 Implementado:
 
+- `GET/POST /v1/mcp/tokens` e `DELETE /v1/mcp/tokens/:id` — gerenciamento com
+  auth humana existente (Clerk; fallback `dev-user` sem secret em dev).
+  Criação revela o segredo uma vez; listagem retorna apenas metadados/prefixo.
+- `POST /mcp` (público via nginx: `/api/mcp`) — MCP Streamable HTTP sem sessão,
+  autenticado exclusivamente com token pessoal, inclusive em dev. Tools:
+  `create_inspection`, `list_inspections`, `get_inspection`,
+  `get_inspection_snapshot`, além de investigação incremental e leitura de
+  evidências. Reutilizam casos de uso, ownership e SQLite do app.
+- `POST /v1/investigations` cria um orçamento vinculado a uma inspeção concluída;
+  cobertura lê manifestos via Lens, `capture_segments` e `capture_window` pedem
+  coletas explícitas e `get_capture` reconcilia o uso. A reserva transacional e
+  a chave de idempotência ficam em SQLite. URL de origem é exigida em cada
+  leitura/coleta, validada pela Lens contra a baseline e nunca persistida sem
+  redaction; consumo desconhecido continua reservado.
+- A Lens guarda cada pedido adicional sob a pasta/TTL da inspeção base. A
+  evidência tem ID próprio e não altera o snapshot baseline. O app arquiva a
+  evidência no SQLite quando observa a captura terminal. `GET/DELETE /mcp`
+  autenticados retornam 405.
+- UI `/dashboard/mcp`: nome, validade (7/30/90/365 dias), geração, cópia única,
+  listagem e revogação de tokens; apresenta endpoint e header ao usuário.
+  Clientes precisam aceitar configuração manual de Bearer; não há fluxo OAuth
+  MCP nem descoberta de authorization server. Ver [MCP](MCP.md).
 - `GET /health` (app) — liveness.
 - `GET /v1/services` (app) — URLs configuradas das engines.
 - `POST /v1/inspections` → 202 + `{inspection_id, status, ...}` (proxy Lens).
@@ -120,9 +143,17 @@ Implementado:
   dedicado fica para quando o pacote o publicar (não duplicamos código da
   engine no VH).
 
-Planejado (Fase 4+):
+Limitações da primeira fatia da Fase 4:
 
-- SSE `GET /api/events/...` → timeline de investigações (Fase 4).
+- Capturas pedem no máximo 16 segmentos e 25 MB por chamada, com teto de 100 MB
+  por investigação e 500 MB agregados por dono. O limite de tempo ainda não é
+  orçado; a concorrência fica limitada a duas capturas ativas por dono e duas
+  tarefas na Lens.
+- A origem autenticada precisa ser reapresentada em cada chamada. Credenciais
+  permanecem apenas na memória durante a coleta. A cobertura lê no máximo 2.000
+  referências por leitura; DASH pode truncar no limite de materialização da Lens.
+- Se a Lens reiniciar enquanto uma captura está ativa, o estado de consumo é
+  desconhecido e a reserva não é liberada automaticamente.
 
 ## Limitações conhecidas
 
@@ -155,6 +186,8 @@ view e exigem nova inspeção; samples/PES estruturais permanecem independentes.
 
 | ID | Decisão |
 |---|---|
+| AD-0014 | MCP é adapter de entrada do app, compartilhando casos de uso de inspeção com REST. Usuários geram tokens pessoais pela UI autenticada; agentes usam Bearer com owner derivado do token, sem OAuth MCP. Segredos aleatórios de 256 bits são exibidos uma vez e persistidos apenas como SHA-256. Endpoint sempre exige token, inclusive em dev. Nenhuma mudança nas engines ou implementação de LLM. |
+| AD-0015 | Investigação incremental mantém o snapshot baseline imutável. VH reserva bytes transacionalmente por investigação e por dono, usa idempotência em SQLite e atribui cada captura a um ID de evidência. Lens resolve referências no manifesto atual e aplica caps durante o streaming. A URL de origem é reapresentada por chamada e nunca persistida em claro. O MCP oferece ferramentas de cobertura, timeline, segmentos/janelas e evidência; não executa LLM. |
 | AD-0001 | Reset do repo: novo VH é orquestrador; engines permanecem os repos `streamlens` e `streammock`, integrados por HTTP (tag `legacy-pre-reset`). |
 | AD-0002 | Coleta de mídia: baseline determinística curta (janela ~10 s, orçamento por chamada); aprofundamento é explícito, via tools do agente com budget e evidence atribuída (Fase 4). |
 | AD-0003 | StreamMock permanece serviço standalone (uso dev/QA) e interno (modo service token para o orquestrador); não é fundido ao VH. |

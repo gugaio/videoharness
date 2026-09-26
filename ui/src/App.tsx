@@ -9,6 +9,7 @@ import DashboardLayout from "./pages/DashboardLayout";
 import InspectPage, { InspectionDetailPage } from "./pages/InspectPage";
 import StreamsPage, { StreamDashboardPage, StreamPlayerPage } from "./pages/StreamsPage";
 import InvestigationsPage from "./pages/InvestigationsPage";
+import McpPage from "./pages/McpPage";
 
 function AppRoutes() {
   return (
@@ -23,6 +24,7 @@ function AppRoutes() {
           <Route path="streams/:streamId" element={<StreamDashboardPage />} />
           <Route path="streams/:streamId/player" element={<StreamPlayerPage />} />
           <Route path="investigations" element={<InvestigationsPage />} />
+          <Route path="mcp" element={<McpPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

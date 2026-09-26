@@ -34,7 +34,11 @@ from stream_lens.domain.value_objects.media import (
     CapabilityStatus,
     UnifiedManifest,
 )
-from stream_lens.domain.value_objects.segments import CaptureReport, DeliveryReport
+from stream_lens.domain.value_objects.segments import (
+    CaptureReport,
+    DeliveryReport,
+    SegmentCoverage,
+)
 from stream_lens.domain.value_objects.snapshot import (
     ANALYZER_VERSION,
     SCHEMA_VERSION,
@@ -153,6 +157,7 @@ class RunInspection:
             self._repository.save(inspection)
             try:
                 plan = await self._capture.plan(media, fetched.url, root_fetched=fetched)
+                self._capture.identify(plan, inspection_id)
             except Exception as exc:
                 inspection.warnings.append(
                     f"resolução de segmentos falhou: {type(exc).__name__}: {exc}"[:200]
@@ -282,6 +287,33 @@ class RunInspection:
                 captured=sum(1 for c in captured if c.ok),
                 failed=failed,
                 total_bytes=sum(c.byte_size or 0 for c in captured if c.ok),
+                coverage=tuple(
+                    SegmentCoverage(
+                        segment_ref=item.segment_ref or "",
+                        rep_id=item.rep_id,
+                        group_kind=item.group_kind,
+                        index=item.index,
+                        segment_sequence=item.segment_sequence,
+                        start_seconds=item.timeline_start_seconds,
+                        duration_seconds=item.declared_duration_seconds,
+                        status=(
+                            "captured"
+                            if any(
+                                cap.segment_ref == item.segment_ref and cap.ok
+                                for cap in captured
+                            )
+                            else "failed"
+                            if any(
+                                cap.segment_ref == item.segment_ref and not cap.ok
+                                for cap in captured
+                            )
+                            else "available"
+                        ),
+                        is_init=item.is_init,
+                    )
+                    for item in plan.coverage
+                    if item.segment_ref
+                ),
             )
         timed_containers = apply_timing_health(tuple(containers), tuple(captured))
         abr_alignment = measure_abr_alignment(

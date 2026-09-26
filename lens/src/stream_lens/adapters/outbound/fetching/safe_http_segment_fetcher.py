@@ -58,7 +58,13 @@ class SafeHttpSegmentFetcher:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def fetch(self, url: str, byte_range: tuple[int, int] | None = None) -> FetchedBytes:
+    async def fetch(
+        self,
+        url: str,
+        byte_range: tuple[int, int] | None = None,
+        max_bytes: int | None = None,
+    ) -> FetchedBytes:
+        byte_limit = min(self._max_bytes, max_bytes) if max_bytes is not None else self._max_bytes
         headers: dict[str, str] = {}
         if byte_range is not None:
             offset, length = byte_range
@@ -104,21 +110,33 @@ class SafeHttpSegmentFetcher:
                     f"HTTP {response.status_code} ao obter segmento", delivery
                 )
 
-            body = b""
             total = 0
             chunks: list[bytes] = []
             ttfb_ms: int | None = None
+            content_length = response.headers.get("content-length")
+            expected_length = int(content_length) if content_length and content_length.isdigit() else None
             try:
-                async for chunk in response.aiter_bytes():
+                async for chunk in response.aiter_bytes(
+                    chunk_size=max(1, min(64 * 1024, byte_limit))
+                ):
                     if chunk and ttfb_ms is None:
                         ttfb_ms = _elapsed_ms(started)
                     total += len(chunk)
-                    if total > self._max_bytes:
-                        raise InspectionError(
+                    if total > byte_limit:
+                        error = InspectionError(
                             "capturing_segments",
-                            f"segmento excede o limite de {self._max_bytes} bytes",
+                            f"segmento excede o limite de {byte_limit} bytes",
                         )
+                        error.bytes_received = total
+                        raise error
                     chunks.append(chunk)
+                    if total == byte_limit and expected_length != total:
+                        error = InspectionError(
+                            "capturing_segments",
+                            f"segmento atingiu o limite de {byte_limit} bytes antes do fim da resposta",
+                        )
+                        error.bytes_received = total
+                        raise error
             finally:
                 await response.aclose()
             body = b"".join(chunks)

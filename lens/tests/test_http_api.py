@@ -5,6 +5,7 @@ no mesmo loop do teste; fazemos polling até estado terminal.
 """
 
 import asyncio
+from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -88,8 +89,57 @@ class TestCreateInspectionAsync:
         snapshot = await client.get(detail["snapshot_url"])
         assert snapshot.status_code == 200
         snap = snapshot.json()
-        assert snap["schema_version"] == "1.13"
+        assert snap["schema_version"] == "1.14"
         assert snap["source"]["display_url"] == "fixture://hls-ts/master.m3u8"
+
+    async def test_cobertura_e_captura_seletiva_preservam_o_baseline(self, client):
+        created = await client.post(
+            "/api/v1/inspections", json={"url": "fixture://hls-ts/master.m3u8"}
+        )
+        inspection_id = created.json()["inspection_id"]
+        await _wait_terminal(client, inspection_id)
+        baseline_before = (await client.get(f"/api/v1/inspections/{inspection_id}/snapshot")).json()
+
+        coverage = await client.post(
+            f"/api/v1/inspections/{inspection_id}/coverage",
+            json={"source_url": "fixture://hls-ts/master.m3u8"},
+        )
+        assert coverage.status_code == 200
+        candidates = [item for item in coverage.json()["coverage"] if not item["is_init"]]
+        assert candidates
+        selected = candidates[-1]
+        assert selected["segment_ref"].startswith("seg_")
+
+        capture_id = str(uuid4())
+        submitted = await client.post(
+            f"/api/v1/inspections/{inspection_id}/captures/{capture_id}",
+            json={
+                "source_url": "fixture://hls-ts/master.m3u8",
+                "segment_refs": [selected["segment_ref"]],
+                "max_bytes": 100_000,
+                "max_segments": 4,
+            },
+        )
+        assert submitted.status_code == 202
+
+        for _ in range(100):
+            status = await client.get(
+                f"/api/v1/inspections/{inspection_id}/captures/{capture_id}"
+            )
+            if status.json()["status"] in {"completed", "partial", "failed"}:
+                break
+            await asyncio.sleep(0.01)
+        assert status.json()["status"] == "completed"
+        assert status.json()["bytes_received"] > 0
+
+        evidence = await client.get(
+            f"/api/v1/inspections/{inspection_id}/captures/{capture_id}/evidence"
+        )
+        assert evidence.status_code == 200
+        assert len(evidence.json()["segments"]) == 1
+        assert evidence.json()["segments"][0]["segment_ref"] == selected["segment_ref"]
+        baseline_after = (await client.get(f"/api/v1/inspections/{inspection_id}/snapshot")).json()
+        assert baseline_after == baseline_before
 
     async def test_fluxo_dash(self, client):
         created = await client.post(

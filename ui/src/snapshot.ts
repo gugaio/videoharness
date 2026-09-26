@@ -114,10 +114,12 @@ export interface CapturedSegment {
   uri: string;
   index: number;
   is_init: boolean;
+  segment_ref?: string | null;
   segment_sequence?: number | null;
   declared_duration_seconds: number | null;
   byte_range: ByteRange | null;
   byte_size: number | null;
+  bytes_received?: number;
   sha256: string | null;
   http_status: number | null;
   fetched_at: string | null;
@@ -158,6 +160,19 @@ export interface CaptureReport {
   captured: number;
   failed: number;
   total_bytes: number;
+  coverage?: CaptureCoverageEntry[];
+}
+
+export interface CaptureCoverageEntry {
+  segment_ref: string;
+  rep_id: string;
+  group_kind: string;
+  index: number;
+  segment_sequence: number | null;
+  start_seconds: number | null;
+  duration_seconds: number | null;
+  status: "captured" | "failed" | "available";
+  is_init: boolean;
 }
 
 export interface TimelineEntry {
@@ -167,6 +182,7 @@ export interface TimelineEntry {
   duration_seconds: number | null;
   status: "captured" | "failed" | "planned" | "init";
   discontinuity: boolean;
+  segment_ref?: string | null;
 }
 
 export interface RepresentationTimeline {

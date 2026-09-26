@@ -101,6 +101,13 @@ compatibilidade de device ou problema de lipsync.
 O payload PSSH não é persistido e a UI não confunde sinalização do manifesto com
 teste de licença, CDM ou compatibilidade de device. HLS fica fora desta fase.
 
+**Extensão aprovada — captura incremental (ADR-0009)**: ✅ schema 1.14 expõe
+cobertura com referências de segmentos; a API resolve cobertura sem baixar mídia
+e permite capturas adicionais por referências ou janela de até 60 s, limitadas e
+persistidas em evidência separada do snapshot base. A origem é reapresentada por
+pedido, sem persistir URL/credenciais. Execução autônoma de agente e interpretações
+diagnósticas continuam fora da Lens.
+
 ## Fase 7 — Skills e API para agentes
 
 Skill principal revisada para endpoints/schemas reais; referências HLS/DASH/TS/ISOBMFF coerentes com o suporte atual; catálogo versionado; endpoints de skills; compatibilidade com `schema_version`; exemplos com fixtures; evals; testes de referências/paths/versões; ação "Use with an agent" na UI; `capabilities` e `recommended_skills` no snapshot. Agente carrega só módulos relevantes.

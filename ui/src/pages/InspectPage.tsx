@@ -222,6 +222,17 @@ export function InspectionDetailPage() {
   const manifest = snapshot.data?.manifest ?? data.manifest;
   const sourceUrl = snapshot.data?.source?.display_url;
   const media = snapshot.data?.media ?? null;
+  const metaParts: string[] = [];
+  if (manifest) {
+    metaParts.push(manifest.is_live ? "modo Live" : "modo VOD");
+    if (manifest.variant_count != null) {
+      metaParts.push(`${manifest.variant_count} ${manifest.protocol === "DASH" ? "adaptation sets" : "variantes"}`);
+    }
+  }
+  if (snapshot.data?.capture) {
+    metaParts.push(`captura ${snapshot.data.capture.captured}/${snapshot.data.capture.planned}`);
+    metaParts.push(`dados ${formatBytes(snapshot.data.capture.total_bytes)}`);
+  }
 
   return (
     <section className="panel inspect-detail">
@@ -230,11 +241,7 @@ export function InspectionDetailPage() {
           <span className={`badge badge-${status}`}>{status}</span>
           <h2>{data.protocol ?? (isRunning ? "Inspeção" : "—")}</h2>
           {manifest && <span className="manifest-kind">{KIND_LABELS[manifest.kind] ?? manifest.kind}</span>}
-          {snapshot.data && (
-            <span className="snapshot-meta">
-              schema {snapshot.data.schema_version} · analyzer {snapshot.data.analyzer_version}
-            </span>
-          )}
+          {metaParts.length > 0 && <span className="snapshot-meta">{metaParts.join(" · ")}</span>}
         </div>
         {sourceUrl && (
           <p className="source-url" title={sourceUrl}>
@@ -242,35 +249,6 @@ export function InspectionDetailPage() {
           </p>
         )}
       </header>
-
-      {manifest && (
-        <dl className="inspection-metrics">
-          <div>
-            <dt>Modo</dt>
-            <dd>{manifest.is_live ? "Live" : "VOD"}</dd>
-          </div>
-          {manifest.variant_count != null && (
-            <div>
-              <dt>{manifest.protocol === "DASH" ? "Adaptation sets" : "Variantes"}</dt>
-              <dd>{manifest.variant_count}</dd>
-            </div>
-          )}
-          {snapshot.data?.capture && (
-            <div>
-              <dt>Captura</dt>
-              <dd>
-                {snapshot.data.capture.captured}/{snapshot.data.capture.planned}
-              </dd>
-            </div>
-          )}
-          {snapshot.data?.capture && (
-            <div>
-              <dt>Dados</dt>
-              <dd>{formatBytes(snapshot.data.capture.total_bytes)}</dd>
-            </div>
-          )}
-        </dl>
-      )}
 
       {isRunning && (
         <p className="state progress-state" role="status">
@@ -312,7 +290,7 @@ export function InspectionDetailPage() {
               ))}
             </ul>
           )}
-          <HealthOverview snapshot={snapshot.data} />
+          
           <SnapshotComparison current={snapshot.data} previous={previousSnapshot.data ?? null} />
           <DrmOverview media={media} />
           <TimelineView
@@ -331,6 +309,8 @@ export function InspectionDetailPage() {
               <code>{JSON.stringify(snapshot.data, null, 2)}</code>
             </pre>
           </details>
+          <HealthOverview snapshot={snapshot.data} />
+
         </>
       )}
     </section>

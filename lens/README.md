@@ -11,8 +11,9 @@ canônico versionado, compartilhável dentro de um TTL.
 FastAPI + CLI** — o frontend foi removido (ADR-0005); a visualização cabe aos
 clientes do snapshot canônico, como o orquestrador do Video Harness. Uma
 inspeção percorre manifesto, captura uma janela e analisa cada segmento
-fMP4/CMAF ou MPEG-TS. O snapshot 1.13 inclui árvore de boxes ou estatísticas
-TS, samples fMP4 e unidades PES com tamanho/PTS/DTS. Quando o `ffprobe` consegue
+fMP4/CMAF ou MPEG-TS. O snapshot 1.14 inclui cobertura com referências estáveis,
+árvore de boxes ou estatísticas TS, samples fMP4 e unidades PES com tamanho/PTS/DTS.
+Quando o `ffprobe` consegue
 ler o vídeo, inclui também frames I/P/B exatos e seus tempos; essa leitura
 permanece opcional e derivada e alimenta um resumo de GOP/keyframes observado.
 O snapshot também compara o alinhamento ABR, calcula bitrate por segmento a

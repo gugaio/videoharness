@@ -43,6 +43,8 @@ class FilesystemSegmentStore:
             fetched_at=fetched_at,
             file=f"segments/{name}",
             delivery=fetched.delivery,
+            segment_ref=planned.segment_ref,
+            bytes_received=len(fetched.data),
         )
 
 

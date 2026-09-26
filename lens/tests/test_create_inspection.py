@@ -93,7 +93,7 @@ class TestRunInspection:
         assert result.protocol is Protocol.HLS
         snapshot = repo.get_snapshot(inspection.inspection_id)
         assert snapshot is not None
-        assert snapshot.schema_version == "1.13"
+        assert snapshot.schema_version == "1.14"
         assert snapshot.source.display_url == "fixture://hls-ts/master.m3u8"
         assert snapshot.manifest.variant_count == 2
 

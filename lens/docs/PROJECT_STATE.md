@@ -3,11 +3,13 @@
 Fotografia concisa do estado atual. Atualizada ao final de cada fase. Histórico
 arquitetural fica nos ADRs; histórico de mudanças no Git.
 
-**Data**: 2026-09-19 · **Fase concluída**: 6 + extensões aprovadas · **Produto
+**Data**: 2026-09-26 · **Fase concluída**: 6 + extensões aprovadas · **Produto
 funcional**: ✅ v1.0 (headless, ADR-0005) — captura limitada + inspeção estrutural fMP4/MPEG-TS,
 Timeline Health, matriz ABR, bitrate por segmento, visualização de frames/samples e HDR
 (entrega HTTP/live, matriz ABR por sequência, configuração efetiva de bitstream/A/V
-e DRM declarado no DASH; snapshot 1.13, analyzer 1.5.5)
+e DRM declarado no DASH; snapshot 1.14, analyzer 1.6.0). Extensão aprovada:
+cobertura de segmentos e capturas suplementares por referência/janela, sem alterar
+o snapshot baseline (ADR-0009).
 
 ## Mudança estrutural mais recente (parsers — ADR-0007)
 
@@ -24,9 +26,11 @@ buscam (`SegmentFetcher`) e gravam (`FilesystemSegmentStore`) os bytes. A
 leitura de playlist de mídia da captura vai para `parsers/hls_playlist.py`
 (`m3u8` encapsulado).
 
-Validação: 171 testes da Lens passam, Ruff e mypy passam (71 arquivos).
-No VH, 14 testes, checks TypeScript e build da UI passam; testes executados
-com Node 22.12 e `NODE_OPTIONS=--experimental-sqlite`. `git diff --check` limpo.
+Validação histórica da mudança de parsers: 171 testes da Lens passaram, Ruff e
+mypy passaram (71 arquivos). Nesta extensão, `python3 -m compileall` passou;
+`make test`/lint não puderam ser executados porque o checkout não tem
+`lens/.venv` e o ambiente global não tem pytest/Ruff. A validação atual da
+extensão está registrada ao final deste documento.
 
 ## Layout na raiz (ADR-0006)
 
@@ -123,6 +127,23 @@ player.
 **Validação atual**: suíte backend (pytest) e lint (ruff + mypy); sem suíte
 frontend desde o ADR-0005 (contagens de frontend nas seções históricas
 referem-se à UI removida).
+
+## Captura incremental (ADR-0009)
+
+`POST /coverage` resolve novamente o manifesto e devolve referências opacas sem
+baixar mídia. Coletas adicionais aceitam referências ou janelas, aplicam limite
+de até 16 segmentos e até 100 MB no endpoint da Lens, e guardam bytes/evidência
+em `captures/<capture_id>/` sob a inspeção base. O snapshot canônico é imutável;
+os artefatos herdam seu TTL. A URL é exigida de novo e validada contra a origem
+redigida do baseline; ela não é persistida. O serviço Lens não autentica essas
+rotas: deve permanecer somente na rede interna, com autorização/ownership no VH.
+
+**Validação desta extensão (2026-09-26)**: `python3 -m compileall -q
+lens/src/stream_lens` passou. `make test` e lint indisponíveis: o host não tem
+`python3-venv`/`ensurepip`, então `make bootstrap` não conseguiu criar o ambiente;
+pytest, Ruff e httpx também não estão no Python global. No VH, `npm test` passou
+com 51 testes, `npm run check`, `npm --prefix ui run check` e `npm --prefix ui
+run build` passaram. O build emitiu apenas o aviso do chunk maior que 500 kB.
 
 ## Status atual
 

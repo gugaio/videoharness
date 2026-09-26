@@ -2,7 +2,7 @@
 
 Contrato atual do backend. **Fase 6 concluída + extensões de observabilidade (v1.0)**: captura limitada de
 segmentos, timeline normalizada e inspeção estrutural de containers no snapshot
-**schema 1.13**. O estágio `inspecting_containers` ocorre depois da captura; o
+**schema 1.14**. O estágio `inspecting_containers` ocorre depois da captura; o
 resultado inclui análise determinística fMP4/MPEG-TS, samples/PES temporizados e
 frames I/P/B, resumo de GOP derivado, Timeline Health, matriz ABR e bitrate calculado
 por segmento, evidência de entrega HTTP/live limitada à captura e configuração
@@ -21,6 +21,52 @@ completo do snapshot está em [SNAPSHOT_SCHEMA.md](SNAPSHOT_SCHEMA.md).
 | POST | `/api/v1/inspections` | 202 | Cria a inspeção e enfileira o job |
 | GET | `/api/v1/inspections/{id}` | 200/404/410 | Estado atual + resumo do manifesto |
 | GET | `/api/v1/inspections/{id}/snapshot` | 200/404/410 | Snapshot canônico completo |
+| POST | `/api/v1/inspections/{id}/coverage` | 200 | Resolve cobertura da origem sem baixar mídia |
+| POST | `/api/v1/inspections/{id}/captures/{capture_id}` | 202/409 | Enfileira coleta adicional idempotente |
+| GET | `/api/v1/inspections/{id}/captures/{capture_id}` | 200/404/410 | Estado e consumo da coleta adicional |
+| GET | `/api/v1/inspections/{id}/captures/{capture_id}/evidence` | 200/404/409/410 | Evidência terminal daquela coleta |
+
+## Cobertura e captura adicional
+
+Uma coleta adicional fica vinculada à inspeção base e não reescreve seu snapshot.
+As capturas adicionais e seus bytes são armazenados em
+`<workspace>/<inspection_id>/captures/<capture_id>/` e expiram com a inspeção.
+Se o processo reiniciar durante a tarefa, o estado vira `failed` com consumo
+desconhecido.
+
+`POST /coverage` recebe `{ "source_url": "…" }`. A URL precisa redigir para a
+mesma origem do snapshot baseline. A Lens relê o manifesto e, para HLS master,
+as playlists de representação limitadas por `STREAM_LENS_MAX_PLAYLISTS`; não
+baixa segmentos de mídia. Retorna referências `seg_…`, representação, sequence,
+índice, posição/duração e estado `available`, paginados no máximo em 2.000 itens
+por resposta (`truncated` indica corte). O agente reenvia a URL em cada chamada;
+ela é usada em memória e não persistida.
+
+O corpo de `POST /captures/{capture_id}` aceita exatamente uma seleção:
+
+```json
+{
+  "source_url": "https://cdn.example/master.m3u8?token=…",
+  "segment_refs": ["seg_0123456789abcdef01234567"],
+  "max_bytes": 25000000,
+  "max_segments": 16
+}
+```
+
+Ou uma janela `{ representation_ids, start_seconds, duration_seconds }`, com
+duração até 60 s. A Lens só aceita referências resolvidas no manifesto atual;
+em live, referências que saíram da janela DVR aparecem como indisponíveis. Para
+fMP4, o segmento init da representação é incluído automaticamente quando
+declarado. Limites absolutos da chamada: 100 MB, 16 segmentos de mídia e 8
+representações; o cap global/por segmento já configurado continua valendo.
+O fetcher recebe o saldo antes de cada leitura e interrompe o streaming quando
+atinge o limite, registrando bytes recebidos mesmo em falhas.
+
+O `capture_id` UUID é a chave idempotente ponta a ponta. Repetir o mesmo ID e os
+mesmos parâmetros devolve o estado existente; alterar parâmetros retorna 409.
+O status fica em `queued`, `running`, `completed`, `partial` ou `failed`.
+Evidência adicional inclui segmentos, timeline e containers com a mesma
+proveniência e redaction do snapshot canônico.
 
 OpenAPI: `GET /openapi.json` (docs interativas em `/docs` quando o servidor sobe).
 
@@ -76,8 +122,8 @@ fragmento; mensagem com estágio, sem segredos), `404`, `410`.
 
 ```json
 {
-  "schema_version": "1.13",
-  "analyzer_version": "1.5.0",
+  "schema_version": "1.14",
+  "analyzer_version": "1.6.0",
   "inspection_id": "…",
   "created_at": "ISO-8601",
   "expires_at": "ISO-8601",

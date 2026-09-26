@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { InspectionCreated, InspectionDetail } from "../../../domain/inspections.js";
-import { InspectionEngineError, type InspectionEngine } from "../../../application/ports/inspection-engine.js";
+import { InspectionEngineError, type CaptureCoverage, type IncrementalInspectionEngine, type InspectionEngine, type LensCaptureRequest } from "../../../application/ports/inspection-engine.js";
 
 const ManifestSummarySchema = z.object({
   protocol: z.string(),
@@ -34,6 +34,29 @@ const InspectionCreatedSchema = z.object({
   expires_at: z.string(),
 });
 
+const CaptureCoverageSchema = z.object({
+  inspection_id: z.string(),
+  observed_at: z.string(),
+  protocol: z.string(),
+  is_live: z.boolean(),
+  coverage: z.array(z.object({
+    segment_ref: z.string(),
+    rep_id: z.string(),
+    group_kind: z.string(),
+    index: z.number().int(),
+    segment_sequence: z.number().int().nullable().optional(),
+    start_seconds: z.number().nullable().optional(),
+    duration_seconds: z.number().nullable().optional(),
+    is_init: z.boolean(),
+    status: z.string(),
+  })),
+  total: z.number().int(),
+  truncated: z.boolean(),
+  warnings: z.array(z.string()),
+});
+
+const CaptureRecordSchema = z.record(z.unknown());
+
 export type LensInspectionCreated = InspectionCreated;
 export type LensInspectionDetail = InspectionDetail;
 
@@ -48,7 +71,7 @@ export type LensFetch = (url: string, init?: RequestInit) => Promise<Response>;
 
 const REQUEST_TIMEOUT_MS = 120_000;
 
-export class LensClient implements InspectionEngine {
+export class LensClient implements IncrementalInspectionEngine {
   constructor(
     private readonly baseUrl: string,
     private readonly fetchImpl: LensFetch = fetch,
@@ -83,6 +106,48 @@ export class LensClient implements InspectionEngine {
       throw new LensApiError(502, "snapshot da lens não é um objeto");
     }
     return body;
+  }
+
+  async getCaptureCoverage(inspectionId: string, sourceUrl: string): Promise<CaptureCoverage> {
+    const response = await this.fetchJson(
+      `${this.baseUrl}/api/v1/inspections/${encodeURIComponent(inspectionId)}/coverage`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ source_url: sourceUrl }),
+      },
+    );
+    return CaptureCoverageSchema.parse(await response.json()) as CaptureCoverage;
+  }
+
+  async createCapture(
+    inspectionId: string,
+    captureId: string,
+    input: LensCaptureRequest,
+  ): Promise<Record<string, unknown>> {
+    const response = await this.fetchJson(
+      `${this.baseUrl}/api/v1/inspections/${encodeURIComponent(inspectionId)}/captures/${encodeURIComponent(captureId)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      },
+    );
+    return CaptureRecordSchema.parse(await response.json());
+  }
+
+  async getCapture(inspectionId: string, captureId: string): Promise<Record<string, unknown>> {
+    const response = await this.fetchJson(
+      `${this.baseUrl}/api/v1/inspections/${encodeURIComponent(inspectionId)}/captures/${encodeURIComponent(captureId)}`,
+    );
+    return CaptureRecordSchema.parse(await response.json());
+  }
+
+  async getCaptureEvidence(inspectionId: string, captureId: string): Promise<Record<string, unknown>> {
+    const response = await this.fetchJson(
+      `${this.baseUrl}/api/v1/inspections/${encodeURIComponent(inspectionId)}/captures/${encodeURIComponent(captureId)}/evidence`,
+    );
+    return CaptureRecordSchema.parse(await response.json());
   }
 
   private async fetchJson(url: string, init?: RequestInit): Promise<Response> {

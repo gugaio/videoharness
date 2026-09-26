@@ -4,6 +4,7 @@ import { SessionControls } from "../auth/AuthControls";
 const NAV_ITEMS = [
   { to: "/dashboard/inspect", label: "Inspect", hint: "Inspecionar um stream (Stream Lens)" },
   { to: "/dashboard/streams", label: "Streams", hint: "Clones e mocks (Stream Mock)" },
+  { to: "/dashboard/mcp", label: "MCP", hint: "Conectar seu agente com um token pessoal" },
   {
     to: "/dashboard/investigations",
     label: "Investigations",

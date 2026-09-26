@@ -15,12 +15,17 @@ Política de janela:
 from __future__ import annotations
 
 import re
+import hashlib
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
-from stream_lens.application.capture_plan import CapturePlan, DashCandidate
+from stream_lens.application.capture_plan import (
+    CapturePlan,
+    CaptureSelection,
+    DashCandidate,
+)
 from stream_lens.application.ports.manifest_fetcher import FetchedManifest, ManifestFetcher
 from stream_lens.application.ports.providers import Clock
 from stream_lens.application.ports.segment_fetcher import SegmentFetcher
@@ -104,23 +109,20 @@ class SegmentCaptureService:
             from_end=media.is_live,
         )
         if rep.init_segment and rep.init_segment.uri:
-            plan.planned.append(
-                PlannedSegment(
+            init = PlannedSegment(
                     rep_id=rep.id,
                     group_kind=kind,
                     uri=_resolve(base_url, rep.init_segment.uri),
                     index=-1,
                     is_init=True,
                 )
-            )
+            plan.planned.append(init)
+            plan.coverage.append(init)
         media_sequence = media.protocol_specific.get("hls", {}).get("media_sequence")
         for index, seg in enumerate(rep.segments):
             if seg.discontinuity:
                 plan.discontinuities.setdefault(rep.id, {})[index] = True
-            if seg not in chosen:
-                continue
-            plan.planned.append(
-                PlannedSegment(
+            candidate = PlannedSegment(
                     rep_id=rep.id,
                     group_kind=kind,
                     uri=_resolve(base_url, seg.uri or ""),
@@ -130,7 +132,9 @@ class SegmentCaptureService:
                     else None,
                     declared_duration_seconds=seg.duration_seconds,
                 )
-            )
+            plan.coverage.append(candidate)
+            if seg in chosen:
+                plan.planned.append(candidate)
         return plan
 
     async def _plan_hls_master(self, media: UnifiedManifest, base_url: str) -> CapturePlan:
@@ -186,8 +190,7 @@ class SegmentCaptureService:
 
         # EXT-X-MAP (init) quando presente
         if playlist.init_segment and playlist.init_segment.uri:
-            plan.planned.append(
-                PlannedSegment(
+            init = PlannedSegment(
                     rep_id=rep_id,
                     group_kind=group_kind,
                     uri=_resolve(playlist_url, playlist.init_segment.uri),
@@ -195,15 +198,13 @@ class SegmentCaptureService:
                     is_init=True,
                     byte_range=playlist.init_segment.byte_range,
                 )
-            )
+            plan.planned.append(init)
+            plan.coverage.append(init)
 
         for index, seg in enumerate(segments):
             if seg.discontinuity:
                 plan.discontinuities.setdefault(rep_id, {})[index] = True
-            if seg not in chosen:
-                continue
-            plan.planned.append(
-                PlannedSegment(
+            candidate = PlannedSegment(
                     rep_id=rep_id,
                     group_kind=group_kind,
                     uri=_resolve(playlist_url, seg.uri or ""),
@@ -214,7 +215,9 @@ class SegmentCaptureService:
                     declared_duration_seconds=seg.duration_seconds,
                     byte_range=seg.byte_range,
                 )
-            )
+            plan.coverage.append(candidate)
+            if seg in chosen:
+                plan.planned.append(candidate)
 
     def _plan_dash(self, media: UnifiedManifest, base_url: str) -> CapturePlan:
         plan = CapturePlan()
@@ -225,15 +228,15 @@ class SegmentCaptureService:
             for rep in group.representations:
                 kind = group.kind.value
                 if rep.init_segment and rep.init_segment.uri:
-                    plan.planned.append(
-                        PlannedSegment(
+                    init = PlannedSegment(
                             rep_id=rep.id,
                             group_kind=kind,
                             uri=_resolve(base_url, rep.init_segment.uri),
                             index=-1,
                             is_init=True,
                         )
-                    )
+                    plan.planned.append(init)
+                    plan.coverage.append(init)
                 candidate_period = (
                     rep.total_duration_seconds
                     if rep.total_duration_seconds is not None
@@ -260,10 +263,7 @@ class SegmentCaptureService:
                     from_end=media.is_live,
                 )
                 for candidate in candidates:
-                    if candidate not in chosen:
-                        continue
-                    plan.planned.append(
-                        PlannedSegment(
+                    planned = PlannedSegment(
                             rep_id=rep.id,
                             group_kind=kind,
                             uri=_resolve(base_url, candidate.uri),
@@ -272,8 +272,72 @@ class SegmentCaptureService:
                             segment_sequence=candidate.number,
                             declared_duration_seconds=candidate.duration_seconds,
                         )
-                    )
+                    plan.coverage.append(planned)
+                    if candidate in chosen:
+                        plan.planned.append(planned)
         return plan
+
+    def identify(self, plan: CapturePlan, inspection_id: str) -> None:
+        """Atribui referências estáveis e a posição absoluta observada."""
+        starts: dict[str, float] = {}
+        coverage: list[PlannedSegment] = []
+        for item in sorted(plan.coverage, key=lambda part: (part.rep_id, part.index)):
+            start = None if item.is_init else starts.get(item.rep_id, 0.0)
+            identified = replace(
+                item,
+                segment_ref=_segment_ref(inspection_id, item),
+                timeline_start_seconds=start,
+            )
+            coverage.append(identified)
+            if not item.is_init and item.declared_duration_seconds is not None:
+                starts[item.rep_id] = (start or 0.0) + item.declared_duration_seconds
+        plan.coverage = coverage
+        coverage_by_key = {
+            (item.rep_id, item.index, item.is_init): item for item in coverage
+        }
+        plan.planned = [
+            coverage_by_key.get((item.rep_id, item.index, item.is_init), item)
+            for item in plan.planned
+        ]
+
+    def select(self, plan: CapturePlan, selection: CaptureSelection) -> None:
+        """Reduz o plano à seleção pedida, resolvida contra a playlist observada."""
+        requested = set(selection.segment_refs)
+        representations = set(selection.representation_ids)
+        selected_media: list[PlannedSegment] = []
+        for item in plan.coverage:
+            if item.is_init:
+                continue
+            if requested:
+                include = item.segment_ref in requested
+            elif selection.start_seconds is not None and selection.duration_seconds is not None:
+                end = selection.start_seconds + selection.duration_seconds
+                start = item.timeline_start_seconds
+                item_end = (
+                    start + (item.declared_duration_seconds or 0)
+                    if start is not None
+                    else None
+                )
+                include = item_end is not None and start < end and item_end > selection.start_seconds
+            else:
+                include = False
+            if include and (not representations or item.rep_id in representations):
+                selected_media.append(item)
+
+        if requested:
+            found = {item.segment_ref for item in selected_media}
+            if requested - found:
+                plan.warnings.append(
+                    f"{len(requested - found)} referências não estão disponíveis nesta leitura do manifesto"
+                )
+        if not selected_media:
+            plan.warnings.append("nenhum segmento correspondeu à seleção solicitada")
+        selected_reps = {item.rep_id for item in selected_media}
+        init = [
+            item for item in plan.coverage
+            if item.is_init and item.rep_id in selected_reps
+        ]
+        plan.planned = init + selected_media
 
     def _record_live_playlist(
         self,
@@ -331,24 +395,40 @@ class SegmentCaptureService:
         plan: CapturePlan,
         workspace: Path,
         progress=None,
+        max_total_bytes: int | None = None,
     ) -> list[CapturedSegment]:
         store = self._store
         if store is None:
             raise RuntimeError("capture requires a SegmentStore")
         results: list[CapturedSegment] = []
-        budget = self._limits.max_total_bytes
+        budget = (
+            min(self._limits.max_total_bytes, max_total_bytes)
+            if max_total_bytes is not None
+            else self._limits.max_total_bytes
+        )
 
         for position, planned in enumerate(plan.planned):
+            if budget <= 0:
+                if position < len(plan.planned):
+                    plan.warnings.append(
+                        "orçamento total de bytes esgotado; segmentos restantes não capturados"
+                    )
+                break
             captured = await self._capture_one(
-                store, inspection_id, planned, position, workspace
+                store,
+                inspection_id,
+                planned,
+                position,
+                workspace,
+                budget - min(64 * 1024, budget // 2),
             )
             results.append(captured)
-            if captured.ok and captured.byte_size is not None:
-                budget -= captured.byte_size
+            budget -= captured.bytes_received
             if budget <= 0:
-                plan.warnings.append(
-                    "orçamento total de bytes esgotado; segmentos restantes não capturados"
-                )
+                if position + 1 < len(plan.planned):
+                    plan.warnings.append(
+                        "orçamento total de bytes esgotado; segmentos restantes não capturados"
+                    )
                 break
             if progress is not None:
                 progress(
@@ -408,9 +488,10 @@ class SegmentCaptureService:
         planned: PlannedSegment,
         position: int,
         workspace: Path,
+        max_bytes: int,
     ) -> CapturedSegment:
         try:
-            fetched = await self._segments.fetch(planned.uri, planned.byte_range)
+            fetched = await self._segments.fetch(planned.uri, planned.byte_range, max_bytes)
         except Exception as exc:
             return CapturedSegment(
                 rep_id=planned.rep_id,
@@ -425,15 +506,22 @@ class SegmentCaptureService:
                 fetched_at=self._clock.now(),
                 http_status=getattr(getattr(exc, "delivery", None), "http_status", None),
                 delivery=getattr(exc, "delivery", None),
+                segment_ref=planned.segment_ref,
+                bytes_received=int(getattr(exc, "bytes_received", 0)),
             )
 
-        return store.store(
+        result = store.store(
             inspection_id=inspection_id,
             position=position,
             planned=planned,
             fetched=fetched,
             workspace=workspace,
             fetched_at=self._clock.now(),
+        )
+        return replace(
+            result,
+            segment_ref=planned.segment_ref,
+            bytes_received=len(fetched.data),
         )
 
     # --------------------------------------------------------------- timeline
@@ -462,13 +550,14 @@ class SegmentCaptureService:
                 entries.append(
                     TimelineEntry(
                         index=planned.index,
-                        start_seconds=start if duration is not None else None,
+                        start_seconds=planned.timeline_start_seconds if planned.timeline_start_seconds is not None else (start if duration is not None else None),
                         duration_seconds=duration,
                         status=status,
                         segment_sequence=planned.segment_sequence,
                         discontinuity=plan.discontinuities.get(rep_id, {}).get(
                             planned.index, False
                         ),
+                        segment_ref=planned.segment_ref,
                     )
                 )
                 if duration is not None:
@@ -496,6 +585,27 @@ def _resolve(base_url: str, ref: str | None) -> str:
     if base_url.startswith("fixture://") and not ref.startswith("/"):
         return base_url.rsplit("/", 1)[0] + "/" + ref.lstrip("./")
     return urljoin(base_url, ref)
+
+
+def _segment_ref(inspection_id: str, segment: PlannedSegment) -> str:
+    """Referência opaca estável dentro da observação original da inspeção."""
+    parts = urlsplit(segment.uri)
+    location = f"{parts.scheme}://{parts.netloc}{parts.path}"
+    identity = segment.segment_sequence
+    if identity is None:
+        identity = segment.index
+    range_value = segment.byte_range or (0, 0)
+    raw = "\0".join(
+        (
+            inspection_id,
+            segment.rep_id,
+            str(identity),
+            location,
+            str(range_value[0]),
+            str(range_value[1]),
+        )
+    )
+    return "seg_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
 

@@ -27,6 +27,21 @@ e derivados — uma falha do binário não invalida a análise determinística.
 
 `STREAM_LENS_ALLOW_LOOPBACK=1` existe exclusivamente para dev/testes locais; **não** é definido no compose.
 
+## Capturas incrementais
+
+- Cobertura e captura suplementar aceitam `source_url` novamente em cada pedido;
+  a Lens valida a URL com a política existente e exige que sua forma redigida
+  corresponda à origem registrada no baseline. O segredo só permanece em memória
+  durante aquela operação; o estado guarda hash do pedido e URLs redigidas.
+- Referências de segmento são opacas, limitadas à inspeção e derivadas do caminho
+  sem query, representação e identidade/byte-range do segmento.
+- A rota Lens não autentica usuários. Ela deve permanecer em rede interna; o VH
+  faz autenticação humana/de agente e ownership antes de encaminhar pedidos.
+- O endpoint limita cada seleção a 16 segmentos e 100 MB; o VH impõe 25 MB por
+  chamada, 100 MB por investigação e 500 MB agregados por owner. Bytes recebidos,
+  incluindo leitura parcial, são contabilizados; consumo desconhecido após falha
+  permanece reservado pelo VH.
+
 ## Limitações explícitas
 
 - **O ID compartilhável não é autenticação.** Qualquer pessoa com o ID acessa a inspeção dentro do TTL.

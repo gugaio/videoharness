@@ -25,4 +25,9 @@ class SegmentFetcher(Protocol):
     `byte_range` é (offset, length) para Range: bytes=o-l.
     """
 
-    async def fetch(self, url: str, byte_range: tuple[int, int] | None = None) -> FetchedBytes: ...
+    async def fetch(
+        self,
+        url: str,
+        byte_range: tuple[int, int] | None = None,
+        max_bytes: int | None = None,
+    ) -> FetchedBytes: ...

@@ -42,6 +42,26 @@ export class ApiError extends Error {
   }
 }
 
+export type McpToken = {
+  id: string; name: string; prefix: string; created_at: string;
+  expires_at: string; last_used_at: string | null;
+};
+
+export function listMcpTokens(): Promise<{ tokens: McpToken[] }> {
+  return request("/api/v1/mcp/tokens");
+}
+
+export function createMcpToken(name: string, expiresInDays: number): Promise<{ token: McpToken; secret: string }> {
+  return request("/api/v1/mcp/tokens", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name, expires_in_days: expiresInDays }),
+  });
+}
+
+export function revokeMcpToken(id: string): Promise<{ ok: boolean }> {
+  return request(`/api/v1/mcp/tokens/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
 type TokenGetterOptions = { skipCache?: boolean };
 type TokenGetter = (options?: TokenGetterOptions) => Promise<string | null>;
 let tokenGetter: TokenGetter | null = null;
@@ -111,6 +131,125 @@ export function deleteInspection(inspectionId: string): Promise<{ ok: boolean }>
 
 export function getSnapshot(inspectionId: string): Promise<Snapshot> {
   return request<Snapshot>(`/api/v1/inspections/${encodeURIComponent(inspectionId)}/snapshot`);
+}
+
+export type InvestigationRecord = {
+  id: string;
+  inspection_id: string;
+  created_at: string;
+  budget_bytes: number;
+  reserved_bytes: number;
+  consumed_bytes: number;
+  available_bytes: number;
+  captures?: Array<{
+    id: string;
+    status: string;
+    requested_bytes: number;
+    bytes_received: number | null;
+    consumption_known: boolean;
+    created_at: string;
+    updated_at: string;
+  }>;
+};
+
+export type CaptureCoverageItem = {
+  segment_ref: string;
+  rep_id: string;
+  group_kind: string;
+  index: number;
+  segment_sequence?: number | null;
+  start_seconds?: number | null;
+  duration_seconds?: number | null;
+  is_init: boolean;
+  status: string;
+};
+
+export type SupplementalCapture = {
+  id: string;
+  investigation_id: string;
+  status: string;
+  requested_bytes: number;
+  bytes_received: number | null;
+  consumption_known: boolean;
+  created_at: string;
+  updated_at: string;
+  evidence_available: boolean;
+  lens_status?: Record<string, unknown>;
+};
+
+export type SupplementalEvidence = {
+  inspection_id: string;
+  capture_id: string;
+  captured_at: string;
+  evidence: {
+    source?: { display_url: string; protocol: string; is_live: boolean };
+    captured_at?: string;
+    segments?: Array<Record<string, unknown>>;
+    timeline?: Array<Record<string, unknown>>;
+    containers?: Array<Record<string, unknown>>;
+  };
+};
+
+export function listInvestigations(): Promise<{ investigations: InvestigationRecord[] }> {
+  return request("/api/v1/investigations");
+}
+
+export function createInvestigation(inspectionId: string, budgetBytes = 50_000_000): Promise<InvestigationRecord> {
+  return request("/api/v1/investigations", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ inspection_id: inspectionId, budget_bytes: budgetBytes }),
+  });
+}
+
+export function getCaptureCoverage(investigationId: string, sourceUrl: string, offset = 0): Promise<{
+  coverage: CaptureCoverageItem[]; total: number; truncated: boolean; warnings: string[];
+}> {
+  return request(`/api/v1/investigations/${encodeURIComponent(investigationId)}/coverage`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ source_url: sourceUrl, offset, limit: 100 }),
+  });
+}
+
+export function getInvestigationTimeline(investigationId: string): Promise<{
+  timeline: Array<Record<string, unknown>>; coverage: Array<Record<string, unknown>>;
+}> {
+  return request(`/api/v1/investigations/${encodeURIComponent(investigationId)}/timeline?limit=100`);
+}
+
+export function captureSegments(
+  investigationId: string,
+  sourceUrl: string,
+  segmentRefs: string[],
+  idempotencyKey: string,
+  maxBytes = 25_000_000,
+): Promise<SupplementalCapture> {
+  return request(`/api/v1/investigations/${encodeURIComponent(investigationId)}/captures`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ source_url: sourceUrl, segment_refs: segmentRefs, idempotency_key: idempotencyKey, max_bytes: maxBytes }),
+  });
+}
+
+export function captureWindow(
+  investigationId: string,
+  sourceUrl: string,
+  representationIds: string[],
+  startSeconds: number,
+  durationSeconds: number,
+  idempotencyKey: string,
+  maxBytes = 25_000_000,
+): Promise<SupplementalCapture> {
+  return request(`/api/v1/investigations/${encodeURIComponent(investigationId)}/captures`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ source_url: sourceUrl, representation_ids: representationIds, start_seconds: startSeconds, duration_seconds: durationSeconds, idempotency_key: idempotencyKey, max_bytes: maxBytes }),
+  });
+}
+
+export function getSupplementalCapture(investigationId: string, captureId: string): Promise<SupplementalCapture> {
+  return request(`/api/v1/investigations/${encodeURIComponent(investigationId)}/captures/${encodeURIComponent(captureId)}`);
+}
+
+export function getSupplementalEvidence(investigationId: string, captureId: string): Promise<SupplementalEvidence> {
+  return request(`/api/v1/investigations/${encodeURIComponent(investigationId)}/captures/${encodeURIComponent(captureId)}/evidence`);
 }
 
 export type StreamFormat = "hls" | "dash";

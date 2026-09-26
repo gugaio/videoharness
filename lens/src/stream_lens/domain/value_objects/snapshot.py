@@ -18,8 +18,8 @@ from stream_lens.domain.value_objects.segments import (
     RepresentationTimeline,
 )
 
-SCHEMA_VERSION = "1.13"
-ANALYZER_VERSION = "1.5.5"
+SCHEMA_VERSION = "1.14"
+ANALYZER_VERSION = "1.6.0"
 
 
 @dataclass(frozen=True, slots=True)

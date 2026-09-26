@@ -1,7 +1,7 @@
 # SNAPSHOT_SCHEMA.md
 
-**Status: implementado (Fase 6 + extensões de observabilidade) — `schema_version` 1.13,
-analyzer 1.5.5** (schema 1.13 estrutura a sinalização DRM declarada no DASH). Contrato
+**Status: implementado (Fase 6 + extensões de observabilidade) — `schema_version` 1.14,
+analyzer 1.6.0** (schema 1.14 acrescenta cobertura e referências estáveis de segmentos). Contrato
 validado por testes de round-trip, captura, parsers estruturais e adapter derivado
 offline.
 
@@ -86,7 +86,13 @@ offline.
   "max_total_bytes": 500000000,
   "max_segment_bytes": 20000000,
   "max_playlists_followed": 8,
-  "planned": 9, "captured": 9, "failed": 0, "total_bytes": 1126
+  "planned": 9, "captured": 9, "failed": 0, "total_bytes": 1126,
+  "coverage": [
+    { "segment_ref": "seg_0123456789abcdef01234567", "rep_id": "v360",
+      "group_kind": "video", "index": 1, "segment_sequence": 1,
+      "start_seconds": 0.0, "duration_seconds": 4.0,
+      "status": "captured", "is_init": false }
+  ]
 },
 "segments": [
   {
@@ -94,12 +100,14 @@ offline.
     "uri": "fixture://dash-mpd/video/v360/1.m4s",
     "index": 1,
     "is_init": false,
+    "segment_ref": "seg_0123456789abcdef01234567",
     "declared_duration_seconds": 4.0,
     "byte_range": null,
     "byte_size": 118, "sha256": "…", "http_status": null,
     "fetched_at": "ISO-8601",
     "file": "segments/0001_1.m4s",
-    "error": null
+    "error": null,
+    "bytes_received": 118
   }
 ],
 "timeline": [
@@ -107,7 +115,7 @@ offline.
     "rep_id": "v360", "group_kind": "video",
     "entries": [
       { "index": -1, "start_seconds": null, "duration_seconds": null, "status": "init", "discontinuity": false },
-      { "index": 1, "start_seconds": 0.0, "duration_seconds": 4.0, "status": "captured", "discontinuity": false }
+      { "index": 1, "start_seconds": 0.0, "duration_seconds": 4.0, "status": "captured", "discontinuity": false, "segment_ref": "seg_0123456789abcdef01234567" }
     ]
   }
 ]
@@ -118,6 +126,15 @@ offline.
 - Bytes isolados em `<workspace>/<id>/segments/` (purge TTL junto com a inspeção).
 - Status de entry: `captured | failed | planned | init`; `discontinuity` marca `EXT-X-DISCONTINUITY`/quebras declaradas (representado, sem diagnóstico).
 - Falha de segmento vira `partial` com `error` por segmento — nunca derruba a inspeção.
+- `capture.coverage` lista candidatos declarados nas playlists efetivamente
+  observadas. `captured` e `failed` refletem esta inspeção; `available` não
+  significa que os bytes foram baixados. Cada candidato recebe `segment_ref`,
+  estável dentro da inspeção e resolvível apenas contra uma nova leitura
+  compatível do manifesto. A referência usa representação, sequence ou índice,
+  caminho sem query e byte range; credenciais não entram nela.
+- Coletas adicionais ficam em endpoint/documento separado e nunca alteram
+  `segments`, `timeline` nem `capture.coverage` do baseline. `bytes_received` é
+  incluído por segmento para contabilizar leituras parciais, inclusive falhas.
 - DASH `SegmentTemplate@duration` é enumerado pela duração do Period. Templates
   `$Number$` e `$Time$` são materializados antes da captura; em `SegmentTimeline`, o
   valor de `$Time$` é `S@t` ou o início inferido pela soma das durações anteriores.
@@ -533,6 +550,14 @@ coleção vazia.
 - O bloco prova apenas o que o MPD declarou. Não testa init/mídia cifrada, licença,
   CDM ou compatibilidade de device.
 - Detalhes, limites e roteiro QA: [DASH_DRM.md](DASH_DRM.md).
+
+## Bloco 1.14 (cobertura e referências de segmento)
+
+O resumo `capture` acrescenta `coverage[]`; itens em `segments[]` e
+`timeline.entries[]` acrescentam `segment_ref`. A referência é opaca e escopada
+ao ID da inspeção. Ela não contém query string nem credenciais e só é válida
+enquanto o segmento puder ser identificado em uma leitura atual do manifesto.
+Snapshots legados continuam sem o campo e permanecem válidos.
 
 ## Carregamento sob demanda
 

@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@clerk/backend": "^1.34.0",
+    "@modelcontextprotocol/sdk": "^1.30.1",
     "dotenv": "^17.3.1",
     "fastify": "^5.10.0",
     "zod": "^3.24.2"

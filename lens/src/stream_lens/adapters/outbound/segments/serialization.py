@@ -17,6 +17,7 @@ from stream_lens.domain.value_objects.segments import (
     RepresentationBitrate,
     RepresentationBitstream,
     RepresentationTimeline,
+    SegmentCoverage,
     SegmentBitrate,
     TimelineEntry,
 )
@@ -337,6 +338,7 @@ def captured_to_dict(seg: CapturedSegment) -> dict:
         "uri": redact_url(seg.uri) if "://" in seg.uri else seg.uri,
         "index": seg.index,
         "is_init": seg.is_init,
+        "segment_ref": seg.segment_ref,
         "segment_sequence": seg.segment_sequence,
         "declared_duration_seconds": seg.declared_duration_seconds,
         "byte_range": (
@@ -345,6 +347,7 @@ def captured_to_dict(seg: CapturedSegment) -> dict:
             else None
         ),
         "byte_size": seg.byte_size,
+        "bytes_received": seg.bytes_received,
         "sha256": seg.sha256,
         "http_status": seg.http_status,
         "fetched_at": _iso(seg.fetched_at),
@@ -362,10 +365,12 @@ def captured_from_dict(data: dict) -> CapturedSegment:
         uri=data["uri"],
         index=data["index"],
         is_init=data["is_init"],
+        segment_ref=data.get("segment_ref"),
         segment_sequence=data.get("segment_sequence"),
         declared_duration_seconds=data.get("declared_duration_seconds"),
         byte_range=(br["offset"], br["length"]) if br else None,
         byte_size=data.get("byte_size"),
+        bytes_received=data.get("bytes_received", data.get("byte_size") or 0),
         sha256=data.get("sha256"),
         http_status=data.get("http_status"),
         fetched_at=_parse_dt(data.get("fetched_at")),
@@ -385,6 +390,20 @@ def capture_report_to_dict(report: CaptureReport) -> dict:
         "captured": report.captured,
         "failed": report.failed,
         "total_bytes": report.total_bytes,
+        "coverage": [
+            {
+                "segment_ref": item.segment_ref,
+                "rep_id": item.rep_id,
+                "group_kind": item.group_kind,
+                "index": item.index,
+                "segment_sequence": item.segment_sequence,
+                "start_seconds": item.start_seconds,
+                "duration_seconds": item.duration_seconds,
+                "status": item.status,
+                "is_init": item.is_init,
+            }
+            for item in report.coverage
+        ],
     }
 
 
@@ -398,6 +417,20 @@ def capture_report_from_dict(data: dict) -> CaptureReport:
         captured=data["captured"],
         failed=data["failed"],
         total_bytes=data["total_bytes"],
+        coverage=tuple(
+            SegmentCoverage(
+                segment_ref=item["segment_ref"],
+                rep_id=item["rep_id"],
+                group_kind=item["group_kind"],
+                index=item["index"],
+                segment_sequence=item.get("segment_sequence"),
+                start_seconds=item.get("start_seconds"),
+                duration_seconds=item.get("duration_seconds"),
+                status=item["status"],
+                is_init=item.get("is_init", False),
+            )
+            for item in data.get("coverage", [])
+        ),
     )
 
 
@@ -413,6 +446,7 @@ def timeline_to_dict(tl: RepresentationTimeline) -> dict:
                 "duration_seconds": e.duration_seconds,
                 "status": e.status,
                 "discontinuity": e.discontinuity,
+                "segment_ref": e.segment_ref,
             }
             for e in tl.entries
         ],
@@ -431,6 +465,7 @@ def timeline_from_dict(data: dict) -> RepresentationTimeline:
                 duration_seconds=e.get("duration_seconds"),
                 status=e["status"],
                 discontinuity=e.get("discontinuity", False),
+                segment_ref=e.get("segment_ref"),
             )
             for e in data.get("entries", [])
         ),

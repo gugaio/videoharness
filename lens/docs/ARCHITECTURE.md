@@ -33,6 +33,7 @@ src/stream_lens/
 │   ├── container_analyzer.py  # seleção fMP4/MPEG-TS
 │   ├── capture_plan.py        # plano de janela e candidatos DASH
 │   ├── capture_service.py     # orquestra resolução, captura e timeline (sem I/O)
+│   ├── supplemental_capture.py # cobertura e coletas adicionais limitadas
 │   ├── use_cases/
 │   ├── ports/
 │   └── dto/
@@ -46,6 +47,7 @@ src/stream_lens/
 │       ├── segments/     # serialização de segmentos capturados (sem I/O)
 │       ├── ffprobe.py    # execução de subprocess, evidência derivada
 │       ├── filesystem/   # repositório + serialização + bytes de segmentos
+│       │   └── supplemental_capture_repository.py # estado atômico, TTL da base
 │       ├── jobs/         # JobQueue (in-process)
 │       └── providers.py  # implementações concretas para o composition root
 └── bootstrap.py      # composition root
@@ -68,6 +70,15 @@ Para segmentos, o fluxo é
 `UnifiedManifest → CapturePlan → SegmentCaptureService (application) → SegmentFetcher/SegmentStore (adapters)`:
 a aplicação decide a janela e coordena a captura; o adapter busca e grava os
 bytes.
+
+Para aprofundamento, `SupplementalCaptureService` consulta o manifesto sem
+baixar mídia, gera referências estáveis para os candidatos e filtra um novo
+`CapturePlan` por referências ou janela. Os requests e evidências ficam em
+`<workspace>/<baseline>/captures/<capture_id>/`, preservando o snapshot base e
+herdando seu TTL. O caso de uso impõe limite por seleção; `SegmentFetcher`
+recebe o saldo restante para interromper a leitura, enquanto adapters continuam
+responsáveis por safe fetch, bytes e escrita atômica. A URL fornecida não é
+persistida. Ver ADR-0009.
 
 ## Fluxo de execução alvo
 
@@ -100,6 +111,10 @@ Ver `docs/adr/`. Nenhuma biblioteca crítica é escolhida silenciosamente.
 
 - ADR-0008: `CapturePlan` e `SegmentCaptureService` pertencem à aplicação; os
   adapters apenas buscam e persistem os bytes via ports.
+
+- ADR-0009: cobertura sem download e capturas suplementares seletivas são
+  coordenadas pela aplicação, limitadas pelos fetchers e persistidas separadas
+  do snapshot baseline dentro do seu TTL.
 
 - ADR-0006: projeto Python na raiz da Lens (`src/`, `tests/`, pyproject,
   requirements e Dockerfile), sem o nível redundante `backend/`.

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Snapshot } from "../snapshot";
 
 type State = "issue" | "observed" | "unknown";
@@ -84,6 +85,7 @@ function checks(snapshot: Snapshot): Check[] {
 }
 
 export function HealthOverview({ snapshot }: { snapshot: Snapshot }) {
+  const [open, setOpen] = useState(false);
   const items = checks(snapshot);
   const issues = items.filter((item) => item.state === "issue").length;
   const unknown = items.filter((item) => item.state === "unknown").length;
@@ -92,17 +94,22 @@ export function HealthOverview({ snapshot }: { snapshot: Snapshot }) {
   return <section className="health-overview" aria-labelledby="health-overview-heading">
     <header>
       <div><span className="eyebrow">Triagem da janela capturada</span><h2 id="health-overview-heading">Saúde e cobertura</h2></div>
-      <p><strong>{issues}</strong> desvios · <strong>{unknown}</strong> não comparáveis</p>
+      <div className="health-overview-actions">
+        <p><strong>{issues}</strong> desvios · <strong>{unknown}</strong> não comparáveis</p>
+        <button type="button" className={`streams-button health-toggle${open ? " is-open" : ""}`} aria-expanded={open} aria-controls="health-overview-body" onClick={() => setOpen((value) => !value)}>Triagem<span aria-hidden="true">{open ? "▴" : "▾"}</span></button>
+      </div>
     </header>
-    <p className="health-disclaimer">“Sem desvio observado” vale somente para a janela e para as evidências comparáveis desta inspeção.</p>
-    {primary && <article className={`health-primary health-${primary.state}`}>
-      <span>{attention.length > 0 ? "Principal ponto de atenção" : "Cobertura a ampliar"}</span><h3>{primary.title}</h3><strong>{primary.value}</strong><p>{primary.detail}</p>
-    </article>}
-    {attention.length > 1 && <div className="health-grid">{attention.slice(1).map((item) => <article className={`health-check health-${item.state}`} key={item.title}>
-      <span>{STATE_LABEL[item.state]}</span><h3>{item.title}</h3><strong>{item.value}</strong><p>{item.detail}</p>
-    </article>)}</div>}
-    <details className="health-details"><summary>Ver cobertura e todas as medições</summary><div className="health-grid">{items.filter((item) => item !== primary && !attention.includes(item)).map((item) => <article className={`health-check health-${item.state}`} key={item.title}>
-      <span>{STATE_LABEL[item.state]}</span><h3>{item.title}</h3><strong>{item.value}</strong><p>{item.detail}</p>
-    </article>)}</div></details>
+    {open && <div id="health-overview-body">
+      <p className="health-disclaimer">“Sem desvio observado” vale somente para a janela e para as evidências comparáveis desta inspeção.</p>
+      {primary && <article className={`health-primary health-${primary.state}`}>
+        <span>{attention.length > 0 ? "Principal ponto de atenção" : "Cobertura a ampliar"}</span><h3>{primary.title}</h3><strong>{primary.value}</strong><p>{primary.detail}</p>
+      </article>}
+      {attention.length > 1 && <div className="health-grid">{attention.slice(1).map((item) => <article className={`health-check health-${item.state}`} key={item.title}>
+        <span>{STATE_LABEL[item.state]}</span><h3>{item.title}</h3><strong>{item.value}</strong><p>{item.detail}</p>
+      </article>)}</div>}
+      <details className="health-details"><summary>Ver cobertura e todas as medições</summary><div className="health-grid">{items.filter((item) => item !== primary && !attention.includes(item)).map((item) => <article className={`health-check health-${item.state}`} key={item.title}>
+        <span>{STATE_LABEL[item.state]}</span><h3>{item.title}</h3><strong>{item.value}</strong><p>{item.detail}</p>
+      </article>)}</div></details>
+    </div>}
   </section>;
 }

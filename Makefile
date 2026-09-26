@@ -17,22 +17,22 @@ build:
 	npm run build
 	npm --prefix ui run build
 
-dc-up:
+up:
 	docker compose up -d --build
 
-dc-down:
+down:
 	docker compose down
 
-dc-logs:
+logs:
 	docker compose logs -f
 
-dc-logs-app:
+logs-app:
 	docker compose logs -f app
 
-dc-logs-lens:
+logs-lens:
 	docker compose logs -f lens
 
-dc-logs-mock:
+logs-mock:
 	docker compose logs -f mock
 
-.PHONY: dev dev-api dev-ui check test build dc-up dc-down dc-logs dc-logs-app dc-logs-lens dc-logs-mock
+.PHONY: dev dev-api dev-ui check test build up down logs logs-app logs-lens logs-mock

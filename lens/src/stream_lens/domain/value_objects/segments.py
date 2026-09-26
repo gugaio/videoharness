@@ -40,6 +40,8 @@ class PlannedSegment:
     declared_duration_seconds: float | None = None
     byte_range: tuple[int, int] | None = None  # (offset, length)
     is_init: bool = False
+    segment_ref: str | None = None
+    timeline_start_seconds: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +115,8 @@ class CapturedSegment:
     file: str | None = None  # nome relativo dentro de segments/ da inspeção
     error: str | None = None  # sem segredos; falha de segmento ≠ inspeção falha
     delivery: DeliveryObservation | None = None
+    segment_ref: str | None = None
+    bytes_received: int = 0
 
     @property
     def ok(self) -> bool:
@@ -131,6 +135,7 @@ class TimelineEntry:
     # Permite distinguir a mesma posição local de segmentos de instantes distintos.
     segment_sequence: int | None = None
     discontinuity: bool = False  # EXT-X-DISCONTINUITY / quebra declarada
+    segment_ref: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,3 +311,19 @@ class CaptureReport:
     captured: int
     failed: int
     total_bytes: int
+    coverage: tuple["SegmentCoverage", ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class SegmentCoverage:
+    """Estado observado de um candidato declarado, capturado ou não."""
+
+    segment_ref: str
+    rep_id: str
+    group_kind: str
+    index: int
+    segment_sequence: int | None
+    start_seconds: float | None
+    duration_seconds: float | None
+    status: str
+    is_init: bool = False

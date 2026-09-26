@@ -68,6 +68,9 @@ TS (PAT/PMT/PES/PCR) e fMP4 (init e fragmentos). Sem mídia protegida por copyri
 - DRM DASH fase 1: escopo de `ContentProtection`, UUIDs conhecidos, KID
   normalizado, PSSH válido/inválido sem persistir payload, redaction e limites
   explícitos no contrato; HLS e snapshots legados não recebem o bloco DASH.
+- Cobertura/captura incremental: resolução sem download de mídia, referência
+  estável, seleção de um segmento, orçamento efetivo de bytes, evidência
+  separada e invariância do snapshot baseline.
 - Strings de codec de áudio: decomposição de `mp4a.40.2`, identificação de
   `ac-3`/`ec-3` e ausência explícita de inferência sobre
   bitrate, canais, Atmos ou compatibilidade.
@@ -78,3 +81,9 @@ Implementados: `help`, `bootstrap`, `dev`, `test`, `lint`, `format`,
 `clean-expired`, `cli inspect url=…`.
 
 Ainda não implementado: `test-e2e` (Fase 8).
+
+**Validação incremental (2026-09-26)**: o novo teste HTTP de cobertura e captura
+seletiva está em `tests/test_http_api.py`, mas não foi executado neste checkout:
+`make bootstrap` falha porque o host não tem `python3-venv`/`ensurepip`; pytest e
+Ruff também não existem no Python global. `python3 -m compileall -q
+src/stream_lens` passou; isso não substitui a suíte de testes.

@@ -164,7 +164,7 @@ def test_delivery_roundtrip_redige_urls_e_mantem_ausencia_de_evidencia():
 
 def test_captura_persiste_status_http_de_segmento_que_falhou(tmp_path):
     class FailingFetcher:
-        async def fetch(self, _url, _byte_range=None):
+        async def fetch(self, _url, _byte_range=None, _max_bytes=None):
             raise SegmentHttpError(
                 "HTTP 503 ao obter segmento",
                 DeliveryObservation(http_status=503, download_duration_ms=21),

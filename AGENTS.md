@@ -71,10 +71,16 @@ sendo contratos HTTP.
    só com eventos core do observer — subpath `./shaka` ausente do pacote
    publicado) e o Playback Inspector portado do mock, correlacionados por
    sessão (`/v1/playback/sessions*`).
-5. **Fase 4 — Investigations agênticas**: do zero. Baseline = snapshot da Lens
-   (janela curta, default 10 s); agente aprofunda com tools estruturadas
-   (`fetch_window`, `probe`, `decode_test`) com budget por chamada e teto por
-   investigation; toda coleta extra vira evidence atribuída.
+   Integração MCP: `/dashboard/mcp` gerencia tokens pessoais (hash em SQLite,
+   validade e revogação); `/mcp` no app, publicado como `/api/mcp`, expõe as
+   tools de inspeção e investigação via Streamable HTTP. Exige Bearer MCP mesmo
+   em dev. Capturas adicionais usam seleção explícita, orçamento e evidência
+   vinculada ao baseline, sem reescrever seu snapshot.
+5. **Fase 4 — Investigations agênticas**: em andamento. Baseline = snapshot da
+   Lens (janela curta, default 10 s); agente consulta cobertura/timeline e pode
+   pedir segmentos por referência ou janela, com reserva idempotente de bytes e
+   evidência atribuída. `probe`, `decode_test`, budgets de tempo/concurrency mais
+   amplos e execução autônoma de LLM continuam pendentes.
 6. **Fase 5 — Experiments**: clone do mock + network shaper no orquestrador;
    data plane serve somente recurso registrado.
 

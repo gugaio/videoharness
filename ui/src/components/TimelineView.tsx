@@ -699,7 +699,6 @@ export function TimelineView({
     <section className="stream-map" aria-labelledby="representations-heading">
       <header className="stream-map-header">
         <div>
-          <span className="eyebrow">Apresentação do stream</span>
           <h2 id="representations-heading">Representações</h2>
         </div>
         {capture && (
@@ -711,18 +710,6 @@ export function TimelineView({
           </div>
         )}
       </header>
-
-      <p className="representations-intro">Compare as variantes. Expanda uma linha para explorar codecs, segmentos e medições.</p>
-      <details className="representation-help">
-        <summary>Como ler os dados</summary>
-        <p>Bitrate medido é o total de bytes dividido pela duração dos segmentos capturados; declarado é o valor do manifesto. Essas taxas não medem qualidade de imagem. Tempos HTTP são observados pelo cliente de captura, não pelo player. Ausência de medição não indica entrega saudável.</p>
-      <div className="segment-legend" aria-label="Legenda dos segmentos">
-        <span><i className="legend-dot captured" />capturado</span>
-        <span><i className="legend-dot init" />init</span>
-        <span><i className="legend-dot failed" />falhou</span>
-        <span><i className="legend-container">◇</i>container</span>
-      </div>
-      </details>
 
       <div className="track-groups">
         {groups.map((group) => {
