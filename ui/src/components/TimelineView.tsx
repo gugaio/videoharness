@@ -75,14 +75,6 @@ function formatMilliseconds(value: number | null): string {
   return value === null ? "não observado" : `${value} ms`;
 }
 
-function timingRange(values: (number | null | undefined)[]): string {
-  const measured = values.filter((value): value is number => value != null && Number.isFinite(value));
-  if (measured.length === 0) return "Não observado";
-  const low = Math.min(...measured);
-  const high = Math.max(...measured);
-  return low === high ? `${low} ms` : `${low}–${high} ms`;
-}
-
 function formatRatio(ratio: number | null): string {
   return ratio === null ? "sem referência declarada" : `${(ratio * 100).toFixed(0)}% do declarado`;
 }
@@ -266,6 +258,30 @@ function representationSpecs(rep: Representation | null): string[] {
   if (rep.frame_rate !== null) specs.push(`${rep.frame_rate} fps`);
   if (rep.audio_sampling_rate !== null) specs.push(`${(rep.audio_sampling_rate / 1000).toFixed(1)} kHz`);
   return specs;
+}
+
+function RepresentationKindIcon({ kind }: { kind: string }) {
+  return (
+    <span className="variant-kind-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" focusable="false">
+        {kind === "video" ? (
+          <>
+            <rect x="3" y="5.5" width="18" height="13" rx="2" />
+            <path d="m10 9 5 3-5 3z" fill="currentColor" stroke="none" />
+          </>
+        ) : kind === "audio" ? (
+          <path d="M4 10v4h3l5 4V6l-5 4H4Zm12-1a5 5 0 0 1 0 6m2.5-8.5a9 9 0 0 1 0 11" />
+        ) : kind === "subtitle" || kind === "closed_captions" ? (
+          <>
+            <rect x="3.5" y="5.5" width="17" height="13" rx="2" />
+            <path d="M7 10h4m-4 4h7m2-4h1" />
+          </>
+        ) : (
+          <path d="M5 7h14M5 12h14M5 17h9" />
+        )}
+      </svg>
+    </span>
+  );
 }
 
 function CodecSummary({ value }: { value: string }) {
@@ -573,12 +589,21 @@ function RepresentationRow({
   return (
     <details className={`variant-disclosure kind-${row.kind}`}>
       <summary className="variant-summary">
-        <span className="variant-title"><strong>{label}</strong><small>{specs.join(" · ") || KIND_LABELS[row.kind]}</small></span>
-        <span className="variant-metric"><small>Codecs</small><strong>{codecs}</strong></span>
-        <span className="variant-metric"><small>Bitrate</small><strong>{formatBandwidth(observation?.average_bitrate_bps ?? null)} <small>medido</small></strong><small>{formatBandwidth(bitrate)} declarado</small></span>
-        <span className="variant-metric"><small>Captura</small><strong className={failed > 0 ? "value-warning" : undefined}>{mediaEntries.length > 0 ? `${captured}/${mediaEntries.length} segmentos` : "Sem captura"}</strong><small>{formatBytes(sizes.length > 0 ? sizes.reduce((sum, value) => sum + value, 0) : null)}{failed > 0 ? ` · ${failed} falhas` : ""}</small></span>
-        <span className="variant-metric"><small>TTFB · faixa</small><strong>{timingRange(requests.map((item) => item.delivery?.ttfb_ms))}</strong><small>Download: {timingRange(requests.map((item) => item.delivery?.download_duration_ms))}</small></span>
-        <span className="variant-metric"><small>Entrega HTTP</small><strong className={httpFailures > 0 ? "value-warning" : undefined}>{statuses.length > 0 ? statuses.join(" · ") : "Não observada"}</strong><small>{httpFailures > 0 ? `${httpFailures} com erro · ` : ""}{requests.length} medições</small></span>
+        <span className="variant-title">
+          <RepresentationKindIcon kind={row.kind} />
+          <strong>{label}</strong>
+          <small>{specs.join(" · ") || KIND_LABELS[row.kind]}</small>
+        </span>
+        <span className="variant-codec" title={rep?.codecs ?? undefined}>{codecs}</span>
+        <span className="variant-metric variant-bitrate" aria-label={`Bitrate declarado: ${formatBandwidth(bitrate)}`}>
+          <strong>{formatBandwidth(bitrate)}</strong>
+          <span className="variant-bitrate-track" aria-hidden="true"><span style={{ width: `${barWidth}%` }} /></span>
+        </span>
+        <span className="variant-metric variant-measured" aria-label={`Bitrate medido: ${formatBandwidth(observation?.average_bitrate_bps ?? null)}`}><strong>{formatBandwidth(observation?.average_bitrate_bps ?? null)}</strong></span>
+        <span className="variant-metric variant-capture" aria-label={`${captured} de ${mediaEntries.length} segmentos capturados`} title={`${formatBytes(sizes.length > 0 ? sizes.reduce((sum, value) => sum + value, 0) : null)} capturados${failed > 0 ? ` · ${failed} falhas` : ""}`}>
+          <strong className={failed > 0 ? "value-warning" : undefined}>{mediaEntries.length > 0 ? `${captured}/${mediaEntries.length}` : "—"}{failed > 0 && <small> · {failed} falhas</small>}</strong>
+        </span>
+        <span className="variant-http" aria-label={`HTTP: ${statuses.length > 0 ? statuses.join(", ") : "não observado"}`}><span className={`variant-status ${httpFailures > 0 ? "is-error" : requests.length > 0 ? "is-ok" : ""}`}>{statuses.length > 0 ? statuses.join(" · ") : "—"}</span></span>
         <span className="variant-toggle" aria-hidden="true">⌄</span>
       </summary>
       <div className="variant-content">
@@ -595,7 +620,7 @@ function RepresentationRow({
 
       <div className="bitrate-cell">
         <div className="bitrate-value">
-          <span>Declarado</span>
+          <span>Bitrate declarado</span>
           <strong>{formatBandwidth(bitrate)}</strong>
         </div>
         <div className="bitrate-track" aria-hidden="true">
@@ -703,9 +728,9 @@ export function TimelineView({
         </div>
         {capture && (
           <div className="capture-inline" aria-label="Resumo da captura">
-            <span><strong>{capture.captured}/{capture.planned}</strong> segmentos capturados</span>
+            <span><strong>{capture.captured}/{capture.planned}</strong> segmentos</span>
             <span><strong>{formatBytes(capture.total_bytes)}</strong></span>
-            <span><strong>{capture.window_seconds}s</strong> de janela</span>
+            <span><strong>{capture.window_seconds}s</strong></span>
             {capture.failed > 0 && <span className="value-warning"><strong>{capture.failed}</strong> falhas</span>}
           </div>
         )}
@@ -727,6 +752,9 @@ export function TimelineView({
                 <span>{group.rows.length}</span>
               </header>
               <div className="representation-list">
+                <div className="variant-columns" aria-hidden="true">
+                  <span>Qualidade</span><span>Codec</span><span>Bitrate declarado</span><span>Bitrate medido</span><span>Segmentos</span><span>HTTP</span><span />
+                </div>
                 {group.rows.map((row, index) => (
                   <RepresentationRow
                     key={`${group.key}-${row.repId}-${index}`}

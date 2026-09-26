@@ -1,7 +1,7 @@
 # SNAPSHOT_SCHEMA.md
 
 **Status: implementado (Fase 6 + extensões de observabilidade) — `schema_version` 1.14,
-analyzer 1.6.0** (schema 1.14 acrescenta cobertura e referências estáveis de segmentos). Contrato
+analyzer 1.7.0** (schema 1.14 acrescenta cobertura e referências estáveis de segmentos). Contrato
 validado por testes de round-trip, captura, parsers estruturais e adapter derivado
 offline.
 
@@ -85,7 +85,7 @@ offline.
   "window_seconds": 10.0,
   "max_total_bytes": 500000000,
   "max_segment_bytes": 20000000,
-  "max_playlists_followed": 8,
+  "max_playlists_followed": 0,
   "planned": 9, "captured": 9, "failed": 0, "total_bytes": 1126,
   "coverage": [
     { "segment_ref": "seg_0123456789abcdef01234567", "rep_id": "v360",
@@ -121,8 +121,9 @@ offline.
 ]
 ```
 
-- Janela: default conservador 10s, **teto absoluto 60s** (`STREAM_LENS_WINDOW_SECONDS`); VOD captura desde o início, live captura os últimos declarados.
-- Limites por env: `STREAM_LENS_MAX_TOTAL_BYTES` (orçamento, default 500MB), `STREAM_LENS_MAX_SEGMENT_BYTES` (cap por segmento, default 20MB), `STREAM_LENS_MAX_PLAYLISTS` (rendições HLS seguidas).
+- Janela: default 10s, **teto absoluto 60s** (`STREAM_LENS_WINDOW_SECONDS`); VOD captura desde o início, live captura os últimos declarados. A janela padrão seleciona no mínimo dois segmentos de mídia por representação quando há dois ou mais capturáveis e pode se estender para isso.
+- Limites por env: `STREAM_LENS_MAX_TOTAL_BYTES` (orçamento base, default 500MB; a reserva da cobertura mínima pode elevá-lo), `STREAM_LENS_MAX_SEGMENT_BYTES` (cap por segmento, default 20MB), `STREAM_LENS_MAX_PLAYLISTS` (teto HLS opcional; zero segue todas).
+- Na inspeção padrão, `capture.max_total_bytes` é o teto efetivo depois de reservar espaço para até dois segmentos de mídia por representação e os init segments declarados. Ele pode superar os 500 MB base quando a quantidade de representações exigir. `max_playlists_followed: 0` significa que todas as playlists declaradas no master HLS são seguidas; um valor positivo registra um teto configurado pelo operador.
 - Bytes isolados em `<workspace>/<id>/segments/` (purge TTL junto com a inspeção).
 - Status de entry: `captured | failed | planned | init`; `discontinuity` marca `EXT-X-DISCONTINUITY`/quebras declaradas (representado, sem diagnóstico).
 - Falha de segmento vira `partial` com `error` por segmento — nunca derruba a inspeção.

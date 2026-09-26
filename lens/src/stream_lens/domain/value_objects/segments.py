@@ -16,13 +16,14 @@ MAX_WINDOW_SECONDS = 60.0  # teto absoluto da janela, independente de config
 
 @dataclass(frozen=True, slots=True)
 class CaptureLimits:
-    """Limites conservadores da janela de captura (fonte: env/bootstrap)."""
+    """Limites de captura (fonte: env/bootstrap)."""
 
     window_seconds: float = 10.0  # default conservador
     max_window_seconds: float = 60.0  # teto absoluto
     max_total_bytes: int = 500_000_000
     max_segment_bytes: int = 20_000_000
-    max_playlists_followed: int = 8  # rendições HLS seguidas a partir do master
+    # Zero segue todas as playlists declaradas por um master HLS.
+    max_playlists_followed: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,7 +302,7 @@ class RepresentationBitstream:
 
 @dataclass(frozen=True, slots=True)
 class CaptureReport:
-    """Resumo da janela de captura aplicada nesta inspeção."""
+    """Resumo da captura; max_total_bytes é o teto efetivo desta inspeção."""
 
     window_seconds: float
     max_total_bytes: int

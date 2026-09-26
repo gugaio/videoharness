@@ -7,9 +7,9 @@ apenas representados.
 Política de janela:
 - VOD: primeiros segmentos desde o início (determinístico).
 - live: últimos segmentos declarados (janela deslizante honesta).
+- inspeção padrão: prioriza dois segmentos de mídia por representação, quando disponíveis.
 - Ordem de representações HLS no master: variantes por bandwidth
-  crescente, depois renditions por grupo — limitada por
-  `max_playlists_followed`.
+  crescente, depois renditions por grupo; teto de playlists é opcional.
 """
 
 from __future__ import annotations
@@ -48,6 +48,9 @@ _DURATION_RE = re.compile(
     r"^P(?:T(?:(?P<hours>\d+(?:\.\d+)?)H)?(?:(?P<minutes>\d+(?:\.\d+)?)M)?(?:(?P<seconds>\d+(?:\.\d+)?)S)?)?$"
 )
 MAX_DASH_TEMPLATE_SEGMENTS = 10_000
+MINIMUM_MEDIA_SEGMENTS_PER_REPRESENTATION = 2
+DEFAULT_CAPTURE_BUDGET_BYTES = 500_000_000
+CAPTURE_BUDGET_MARGIN_BYTES = 64 * 1024
 
 
 class SegmentCaptureService:
@@ -69,6 +72,47 @@ class SegmentCaptureService:
     def limits(self) -> CaptureLimits:
         return self._limits
 
+    def effective_budget_bytes(
+        self,
+        plan: CapturePlan,
+        *,
+        max_total_bytes: int | None = None,
+        reserve_minimum: bool = False,
+    ) -> int:
+        """Return the byte ceiling, reserving space for default minimum coverage."""
+        budget = (
+            min(self._limits.max_total_bytes, max_total_bytes)
+            if max_total_bytes is not None
+            else self._limits.max_total_bytes
+        )
+        # A lower operator-configured limit remains a hard override. With the
+        # standard default budget, reserve the worst case for each init + two
+        # media segments so earlier renditions cannot consume another's floor.
+        if (
+            not reserve_minimum
+            or self._limits.max_total_bytes < DEFAULT_CAPTURE_BUDGET_BYTES
+            or (
+                max_total_bytes is not None
+                and max_total_bytes < DEFAULT_CAPTURE_BUDGET_BYTES
+            )
+        ):
+            return budget
+
+        by_rep: dict[tuple[str, str], list[int]] = {}
+        for item in plan.planned:
+            counts = by_rep.setdefault((item.group_kind, item.rep_id), [0, 0])
+            counts[0 if item.is_init else 1] += 1
+
+        count = 0
+        for init_count, media_count in by_rep.values():
+            if media_count:
+                count += min(media_count, MINIMUM_MEDIA_SEGMENTS_PER_REPRESENTATION)
+                count += init_count
+        reserve = count * (
+            self._limits.max_segment_bytes + CAPTURE_BUDGET_MARGIN_BYTES
+        )
+        return max(budget, reserve)
+
     # ------------------------------------------------------------------ plan
 
     async def plan(
@@ -84,6 +128,7 @@ class SegmentCaptureService:
             if root_fetched is not None:
                 plan.manifest_requests.append((root_fetched.url, root_fetched.delivery))
                 self._record_live_playlist(plan, None, root_fetched)
+            self._prioritize_minimum_segments(plan)
             return plan
         if media.kind == "hls_master_playlist":
             plan = await self._plan_hls_master(media, base_url)
@@ -91,7 +136,31 @@ class SegmentCaptureService:
             plan = self._plan_dash(media, base_url)
         if root_fetched is not None:
             plan.manifest_requests.insert(0, (root_fetched.url, root_fetched.delivery))
+        self._prioritize_minimum_segments(plan)
         return plan
+
+    @staticmethod
+    def _prioritize_minimum_segments(plan: CapturePlan) -> None:
+        """Reserve capture order for two media segments in each planned rendition."""
+        rep_order = list(
+            dict.fromkeys((item.group_kind, item.rep_id) for item in plan.planned)
+        )
+        by_rep: dict[tuple[str, str], list[PlannedSegment]] = {
+            rep_key: [] for rep_key in rep_order
+        }
+        for item in plan.planned:
+            by_rep[(item.group_kind, item.rep_id)].append(item)
+
+        prioritized: list[PlannedSegment] = []
+        remaining: list[PlannedSegment] = []
+        for rep_key in rep_order:
+            items = by_rep[rep_key]
+            inits = [item for item in items if item.is_init]
+            media = [item for item in items if not item.is_init]
+            prioritized.extend(inits)
+            prioritized.extend(media[:MINIMUM_MEDIA_SEGMENTS_PER_REPRESENTATION])
+            remaining.extend(media[MINIMUM_MEDIA_SEGMENTS_PER_REPRESENTATION:])
+        plan.planned = prioritized + remaining
 
     def _plan_hls_media(self, media: UnifiedManifest, base_url: str) -> CapturePlan:
         plan = CapturePlan()
@@ -107,6 +176,7 @@ class SegmentCaptureService:
             lambda s: s.duration_seconds,
             self._limits.window_seconds,
             from_end=media.is_live,
+            minimum_segments=self._minimum_segments_for_window(),
         )
         if rep.init_segment and rep.init_segment.uri:
             init = PlannedSegment(
@@ -144,11 +214,14 @@ class SegmentCaptureService:
             for rep in group.representations:
                 if rep.uri:
                     targets.append((rep.id, group.kind.value, _resolve(base_url, rep.uri)))
-        # determinístico: variantes (vídeo) por bandwidth crescente já vem em ordem
-        # declarada; apenas limitamos a quantidade de playlists seguidas.
+        # Determinístico: mantém a ordem declarada e aplica apenas um teto
+        # operacional positivo; o default segue todas as playlists.
         followed = 0
         for rep_id, kind, playlist_url in targets:
-            if followed >= self._limits.max_playlists_followed:
+            if (
+                self._limits.max_playlists_followed > 0
+                and followed >= self._limits.max_playlists_followed
+            ):
                 plan.warnings.append(
                     f"limite de {self._limits.max_playlists_followed} rendições seguidas; "
                     f"'{rep_id}' não foi inspecionada"
@@ -186,6 +259,7 @@ class SegmentCaptureService:
             lambda segment: segment.duration_seconds,
             self._limits.window_seconds,
             from_end=is_live,
+            minimum_segments=self._minimum_segments_for_window(),
         )
 
         # EXT-X-MAP (init) quando presente
@@ -261,6 +335,7 @@ class SegmentCaptureService:
                     lambda candidate: candidate.duration_seconds,
                     self._limits.window_seconds,
                     from_end=media.is_live,
+                    minimum_segments=self._minimum_segments_for_window(),
                 )
                 for candidate in candidates:
                     planned = PlannedSegment(
@@ -387,6 +462,15 @@ class SegmentCaptureService:
             )
         )
 
+    def _minimum_segments_for_window(self) -> int:
+        # The two-segment floor belongs to the standard 10-second baseline;
+        # an explicitly shorter window remains a shorter inspection.
+        return (
+            MINIMUM_MEDIA_SEGMENTS_PER_REPRESENTATION
+            if self._limits.window_seconds >= 10.0
+            else 1
+        )
+
     # --------------------------------------------------------------- capture
 
     async def capture(
@@ -396,15 +480,16 @@ class SegmentCaptureService:
         workspace: Path,
         progress=None,
         max_total_bytes: int | None = None,
+        reserve_minimum: bool = False,
     ) -> list[CapturedSegment]:
         store = self._store
         if store is None:
             raise RuntimeError("capture requires a SegmentStore")
         results: list[CapturedSegment] = []
-        budget = (
-            min(self._limits.max_total_bytes, max_total_bytes)
-            if max_total_bytes is not None
-            else self._limits.max_total_bytes
+        budget = self.effective_budget_bytes(
+            plan,
+            max_total_bytes=max_total_bytes,
+            reserve_minimum=reserve_minimum,
         )
 
         for position, planned in enumerate(plan.planned):
@@ -609,18 +694,29 @@ def _segment_ref(inspection_id: str, segment: PlannedSegment) -> str:
 
 
 
-def _window_segments(segments, duration_of, window: float, from_end: bool):
+def _window_segments(
+    segments,
+    duration_of,
+    window: float,
+    from_end: bool,
+    minimum_segments: int = MINIMUM_MEDIA_SEGMENTS_PER_REPRESENTATION,
+):
     chosen: list[object] = []
     total = 0.0
     iterable = reversed(segments) if from_end else segments
     for seg in iterable:
         duration = duration_of(seg)
         if duration is None or duration <= 0:
-            if not chosen:
+            if len(chosen) < minimum_segments:
                 chosen.append(seg)
+                continue
             break
         d = duration
-        if total > 0 and total + d > window:
+        if (
+            total > 0
+            and total + d > window
+            and len(chosen) >= minimum_segments
+        ):
             break
         chosen.append(seg)
         total += d

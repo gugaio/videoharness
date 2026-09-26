@@ -123,7 +123,7 @@ fragmento; mensagem com estágio, sem segredos), `404`, `410`.
 ```json
 {
   "schema_version": "1.14",
-  "analyzer_version": "1.6.0",
+  "analyzer_version": "1.7.0",
   "inspection_id": "…",
   "created_at": "ISO-8601",
   "expires_at": "ISO-8601",

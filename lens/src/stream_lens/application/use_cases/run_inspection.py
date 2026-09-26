@@ -174,7 +174,11 @@ class RunInspection:
 
             try:
                 captured = await self._capture.capture(
-                    inspection_id, plan, self._workspace, progress=_progress
+                    inspection_id,
+                    plan,
+                    self._workspace,
+                    progress=_progress,
+                    reserve_minimum=True,
                 )
             except Exception as exc:  # captura inteira falhou: parcial, não fatal
                 inspection.warnings.append(
@@ -275,12 +279,15 @@ class RunInspection:
             len(plan.planned), sum(1 for c in captured if c.ok), failed
         )
 
-        limits = self._capture.limits if self._capture is not None else None
         report = None
-        if limits is not None:
+        capture_service = self._capture
+        if capture_service is not None:
+            limits = capture_service.limits
             report = CaptureReport(
                 window_seconds=limits.window_seconds,
-                max_total_bytes=limits.max_total_bytes,
+                max_total_bytes=capture_service.effective_budget_bytes(
+                    plan, reserve_minimum=True
+                ),
                 max_segment_bytes=limits.max_segment_bytes,
                 max_playlists_followed=limits.max_playlists_followed,
                 planned=len(plan.planned),

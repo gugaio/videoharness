@@ -77,7 +77,8 @@ sendo contratos HTTP.
    em dev. Capturas adicionais usam seleção explícita, orçamento e evidência
    vinculada ao baseline, sem reescrever seu snapshot.
 5. **Fase 4 — Investigations agênticas**: em andamento. Baseline = snapshot da
-   Lens (janela curta, default 10 s); agente consulta cobertura/timeline e pode
+   Lens (janela default 10 s, com ao menos 2 segmentos de mídia por representação
+   que tenha 2 ou mais segmentos capturáveis); agente consulta cobertura/timeline e pode
    pedir segmentos por referência ou janela, com reserva idempotente de bytes e
    evidência atribuída. `probe`, `decode_test`, budgets de tempo/concurrency mais
    amplos e execução autônoma de LLM continuam pendentes.

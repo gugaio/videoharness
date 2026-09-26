@@ -7,7 +7,7 @@ arquitetural fica nos ADRs; histórico de mudanças no Git.
 funcional**: ✅ v1.0 (headless, ADR-0005) — captura limitada + inspeção estrutural fMP4/MPEG-TS,
 Timeline Health, matriz ABR, bitrate por segmento, visualização de frames/samples e HDR
 (entrega HTTP/live, matriz ABR por sequência, configuração efetiva de bitstream/A/V
-e DRM declarado no DASH; snapshot 1.14, analyzer 1.6.0). Extensão aprovada:
+e DRM declarado no DASH; snapshot 1.14, analyzer 1.7.0). Extensão aprovada:
 cobertura de segmentos e capturas suplementares por referência/janela, sem alterar
 o snapshot baseline (ADR-0009).
 
@@ -147,6 +147,14 @@ run build` passaram. O build emitiu apenas o aviso do chunk maior que 500 kB.
 
 ## Status atual
 
+A inspeção padrão agora prioriza ao menos dois segmentos de mídia por representação
+de áudio, legenda e vídeo que tenha dois ou mais segmentos capturáveis. HLS segue todas as
+playlists declaradas por padrão;
+`STREAM_LENS_MAX_PLAYLISTS` aceita teto operacional positivo. A reserva mínima
+eleva o orçamento efetivo acima dos 500 MB base quando a quantidade de
+representações exigir; o cap de 20 MB por segmento permanece. Essa mudança é o
+analyzer 1.7.0 (schema 1.14 sem alteração estrutural).
+
 `analysis.samples` preserva até 1.000 samples fMP4 de `trun` ou unidades PES TS,
 com tamanho, PTS/DTS, duração, timescale e sync quando disponível. A UI mostra cada
 track/PID em uma linha horizontal como fallback. Quando `probe.frames` está
@@ -187,8 +195,9 @@ Após `capturing_segments`, inspeções entram em `inspecting_containers`. Cada 
 capturado com sucesso gera um item `containers` no snapshot **schema 1.2**: fMP4 traz
 árvore de boxes com offsets absolutos, tamanho e campos selecionados; MPEG-TS traz
 sync, programas, PIDs, continuity counters, PCR e PES/PTS/DTS. Erro de um container
-ou de `ffprobe` não derruba a inspeção. A captura continua limitada a **500MB** totais
-e **20MB** por segmento por padrão (ambos configuráveis por env). DASH resolve
+ou de `ffprobe` não derruba a inspeção. A captura usa **500MB** como orçamento base
+e **20MB** por segmento por padrão; a reserva de dois segmentos por representação
+pode elevar o teto efetivo (valores configurados pelo operador prevalecem). DASH resolve
 `SegmentTemplate` por `$Number$` e `$Time$`; `SegmentTimeline` aplica `S@t`, tempo
 implícito e `S@r`, e `Representation/BaseURL` direto é capturável como segmento único.
 

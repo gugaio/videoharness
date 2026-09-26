@@ -19,11 +19,15 @@ O Stream Lens baixa URLs fornecidas por usuários anônimos. Riscos principais: 
 - **Redaction** de query strings/userinfo/fragmento em snapshot e UI (`source.display_url`); URL crua nunca é persistida.
 - Mensagens de erro com estágio, sem segredos.
 
-**Implementados nas Fases 4–5**: teto de janela de 60s, orçamento padrão de 500MB
-por inspeção, cap padrão de 20MB por segmento e limite de rendições seguidas; falhas
-de segmento viram resultado parcial. `ffprobe` usa lista fixa de argumentos, sem
-shell, caminho somente do workspace e timeout de 10s. Seus resultados são opcionais
-e derivados — uma falha do binário não invalida a análise determinística.
+**Implementados nas Fases 4–5**: teto de janela de 60s, orçamento base de 500MB
+por inspeção e cap padrão de 20MB por segmento. A inspeção padrão pode elevar o
+teto efetivo para reservar até dois segmentos por representação e os init segments;
+o aumento acompanha o número de representações declaradas. Todas as playlists HLS
+são seguidas por padrão; `STREAM_LENS_MAX_PLAYLISTS` positivo aplica um teto
+operacional. Falhas de segmento viram resultado parcial. `ffprobe` usa lista fixa
+de argumentos, sem shell, caminho somente do workspace e timeout de 10s. Seus
+resultados são opcionais e derivados — uma falha do binário não invalida a análise
+determinística.
 
 `STREAM_LENS_ALLOW_LOOPBACK=1` existe exclusivamente para dev/testes locais; **não** é definido no compose.
 

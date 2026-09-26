@@ -79,11 +79,18 @@ variáveis de cada engine (e seus defaults próprios) fica nos AGENTS/README de
 | `STREAM_LENS_TTL_SECONDS` | `3600` | TTL das inspeções no repositório da Lens. |
 | `STREAM_LENS_MAX_CONCURRENCY` | `4` | Concorrência máxima do job queue in-process. |
 
-Outras aceitas pela engine (não definidas pelo compose): `STREAM_LENS_WORKSPACE`,
-`STREAM_LENS_FIXTURES`, `STREAM_LENS_PURGE_INTERVAL_SECONDS`,
-`STREAM_LENS_WINDOW_SECONDS`, `STREAM_LENS_MAX_TOTAL_BYTES`,
-`STREAM_LENS_MAX_SEGMENT_BYTES`, `STREAM_LENS_MAX_PLAYLISTS`,
-`STREAM_LENS_ALLOW_LOOPBACK`.
+Outras aceitas pela engine (não definidas pelo compose):
+
+| Variável | Default | Descrição |
+|---|---:|---|
+| `STREAM_LENS_WORKSPACE` | `.runtime/inspections` | Diretório de inspeções. |
+| `STREAM_LENS_FIXTURES` | `fixtures/` | Diretório de fixtures locais. |
+| `STREAM_LENS_PURGE_INTERVAL_SECONDS` | `60` | Intervalo de limpeza por TTL. |
+| `STREAM_LENS_WINDOW_SECONDS` | `10` | Janela de captura; a inspeção padrão seleciona pelo menos 2 segmentos por representação que tenha 2 ou mais capturáveis. Teto de 60 s. |
+| `STREAM_LENS_MAX_TOTAL_BYTES` | `500000000` | Orçamento base; a Lens reserva bytes para a cobertura mínima e pode elevar o teto efetivo. Um valor configurado abaixo de 500 MB é um teto explícito. |
+| `STREAM_LENS_MAX_SEGMENT_BYTES` | `20000000` | Cap por resposta de segmento. |
+| `STREAM_LENS_MAX_PLAYLISTS` | `0` | Teto opcional de playlists HLS; `0` segue todas as declaradas. |
+| `STREAM_LENS_ALLOW_LOOPBACK` | desabilitado | Permite loopback apenas em dev/testes locais. |
 
 ### Mock (`mock/`)
 

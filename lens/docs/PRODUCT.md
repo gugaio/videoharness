@@ -25,7 +25,9 @@ O diferencial inicial é a experiência visual (progressive disclosure), não te
 ## Escopo do MVP (v0.1)
 
 - Combinações obrigatórias: **HLS+MPEG-TS, HLS+fMP4/CMAF, DASH+fMP4**.
-- Captura de janela limitada (default conservador; máximo inicial 60s).
+- Captura de janela limitada (default de 10s; no mínimo dois segmentos de mídia
+  por representação declarada quando há dois ou mais capturáveis, mesmo quando estende a
+  janela; máximo de 60s).
 - Snapshot canônico versionado com TTL, sem banco de dados (repositório temporário em filesystem).
 - API HTTP + CLI sobre o mesmo core; serviço headless (a UI React do MVP foi removida — ADR-0005 — e a experiência visual migrou para os clientes do snapshot, ex.: orquestrador do Video Harness).
 - Catálogo de skills para agentes como artefato de primeira classe.

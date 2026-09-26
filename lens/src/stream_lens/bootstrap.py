@@ -9,9 +9,9 @@ Configuração por variáveis de ambiente:
   STREAM_LENS_MAX_CONCURRENCY — jobs simultâneos (default 4)
   STREAM_LENS_PURGE_INTERVAL_SECONDS — intervalo da limpeza por TTL (default 60)
   STREAM_LENS_WINDOW_SECONDS     — janela de captura (default 10; teto 60)
-  STREAM_LENS_MAX_TOTAL_BYTES    — orçamento total de captura (default 500000000)
+  STREAM_LENS_MAX_TOTAL_BYTES    — orçamento base; a reserva mínima pode elevá-lo (default 500000000)
   STREAM_LENS_MAX_SEGMENT_BYTES  — cap por segmento, default 20000000
-  STREAM_LENS_MAX_PLAYLISTS      — rendições HLS seguidas a partir do master (default 8)
+  STREAM_LENS_MAX_PLAYLISTS      — teto opcional de playlists HLS (default 0 = todas)
 """
 
 from __future__ import annotations
@@ -132,7 +132,7 @@ def build_container(
         window_seconds=window,
         max_total_bytes=int(os.environ.get("STREAM_LENS_MAX_TOTAL_BYTES", "500000000")),
         max_segment_bytes=int(os.environ.get("STREAM_LENS_MAX_SEGMENT_BYTES", "20000000")),
-        max_playlists_followed=int(os.environ.get("STREAM_LENS_MAX_PLAYLISTS", "8")),
+        max_playlists_followed=int(os.environ.get("STREAM_LENS_MAX_PLAYLISTS", "0")),
     )
     segment_fetcher = DispatchingSegmentFetcher(
         fixture_fetcher=LocalFixtureSegmentFetcher(

@@ -28,9 +28,9 @@ HLS master/media playlists + DASH MPD (modos de endereçamento do ADR) em parida
 
 ## Fase 4 — Captura limitada e timeline de segmentos — **concluída** ✅
 
-Seleção determinística de janela (VOD/live); limites configuráveis (default conservador, máx 60s); resolução de init/media segments, byte ranges, parts; captura das 3 combinações; hashes, tamanho, status HTTP, duração declarada, timestamps; timeline normalizada; representação de gaps/discontinuities/ausências (sem diagnóstico); progresso; parciais identificados; arquivos isolados por inspeção.
+Seleção determinística de janela (VOD/live), com no mínimo 2 segmentos de mídia por representação que tenha 2 ou mais capturáveis na inspeção padrão; limites configuráveis (default 10s, máx 60s); resolução de init/media segments, byte ranges, parts; captura das 3 combinações; hashes, tamanho, status HTTP, duração declarada, timestamps; timeline normalizada; representação de gaps/discontinuities/ausências (sem diagnóstico); progresso; parciais identificados; arquivos isolados por inspeção.
 
-**Gate**: ✅ as 3 combinações (HLS TS, HLS fMP4, DASH) percorrem o mesmo fluxo com bytes reais capturados; ✅ timeline comparativa por representação no snapshot e na UI; ✅ testes offline (fixtures sintéticas TS/fMP4); ✅ limites impedem download ilimitado (janela 10s default com teto 60s, cap por segmento, orçamento total, máx de rendições seguidas — todos por env); ✅ falha de segmento ≠ inspeção completa (`partial` com erro por segmento).
+**Gate**: ✅ as 3 combinações (HLS TS, HLS fMP4, DASH) percorrem o mesmo fluxo com bytes reais capturados; ✅ timeline comparativa por representação no snapshot e na UI; ✅ testes offline (fixtures sintéticas TS/fMP4); ✅ limites explícitos (janela com teto 60s, cap por segmento, orçamento base com reserva para a cobertura mínima, teto HLS opcional por env); ✅ falha de segmento ≠ inspeção completa (`partial` com erro por segmento).
 
 ## Fase 5 — Inspeção de containers e primeira UX diferenciadora — **concluída** ✅
 
