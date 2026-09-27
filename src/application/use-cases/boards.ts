@@ -31,7 +31,14 @@ function metrics(sessions: BoardSession[], slas: BoardSlas) {
     const sla = slas[metric]; if (!sla) continue;
     const samples = values(sessions,metric);
     const value = samples.length ? samples.reduce((sum,sample) => sum+sample,0)/samples.length : null;
-    result[metric] = { value, status: value === null ? "unknown" : value >= sla.critical ? "bad" : value >= sla.warning ? "warning" : "good", unit: metric === "join_time_ms" ? "ms" : "ratio", sample_count: samples.length, violations: samples.filter(sample => sample >= sla.critical).length, sla };
+    const distribution = { good: 0, warning: 0, bad: 0, unknown: sessions.length - samples.length };
+    for (const sample of samples) {
+      const status = metric === "startup_error_rate"
+        ? (sample === 1 ? "bad" : "good")
+        : sample >= sla.critical ? "bad" : sample >= sla.warning ? "warning" : "good";
+      distribution[status]++;
+    }
+    result[metric] = { distribution, value, status: value === null ? "unknown" : value >= sla.critical ? "bad" : value >= sla.warning ? "warning" : "good", unit: metric === "join_time_ms" ? "ms" : "ratio", sample_count: samples.length, violations: samples.filter(sample => sample >= sla.critical).length, sla };
   }
   return result;
 }
@@ -70,6 +77,7 @@ export function getBoardView(repository: BoardRepository, ownerId: string, id: s
 }
 export const boardSchemaDescription = {
   version: 1, units: {startup_error_rate:"0..1, failed starts / all sessions",buffer_ratio:"0..1, arithmetic mean of successful session ratios; not time weighted",join_time_ms:"milliseconds, arithmetic mean over successful sessions"},
+  session_distribution: "Each metric includes distribution counts good/warning/bad/unknown. Startup: successful/failed starts, no warning band per session. Buffer/join: classify each successful session against its SLA; failed startups are unknown. Counts sum to volume. Aggregate status still uses the aggregate value.",
   limits: BOARD_LIMITS, sla_ranges:"value < warning: good; warning <= value < critical: warning; value >= critical: bad; no successful samples: unknown. Critical violations count samples >= critical.",
   identity:"owner is derived from authentication, never user_id. Device is identified by (user_id,device.id). Session ID is upserted within a board. Sessions outside the board focus may be stored but are excluded from its view.",
   create_example:{name:"User 42 streaming",focus:{type:"user",user_id:"user-42"},slas:{startup_error_rate:{warning:0.01,critical:0.05},buffer_ratio:{warning:0.02,critical:0.05},join_time_ms:{warning:2000,critical:5000}}},

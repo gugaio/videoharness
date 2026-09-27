@@ -8,7 +8,7 @@ export type QualityMetric = 'startup_error_rate' | 'buffer_ratio' | 'join_time_m
 export type QualityStatus = 'good' | 'warning' | 'bad' | 'unknown';
 // UI presentation types. Live boards receive deterministic aggregates from the app.
 // Static demo payloads stay isolated from the session ingestion API.
-export type SuppliedMetric = { value: number | null; status: QualityStatus; coverage?: string; unit?: "ratio" | "ms"; sample_count?: number; violations?: number; sla?: { warning: number; critical: number } };
+export type SuppliedMetric = { distribution?: Record<QualityStatus, number>; value: number | null; status: QualityStatus; coverage?: string; unit?: "ratio" | "ms"; sample_count?: number; violations?: number; sla?: { warning: number; critical: number } };
 export type Metrics = Partial<Record<QualityMetric, SuppliedMetric>>;
 export type BoardFilter = { dimension: "user" | "isp" | "pop" | "media"; entity: string } | { dimension: "device"; entity: string; user_id: string };
 export type BoardNode = { id: string; dimension: Dimension; label: string; volume: number; metrics: Metrics; model?: string; filter?: BoardFilter; nextViewId?: string };

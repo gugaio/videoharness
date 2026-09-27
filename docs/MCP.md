@@ -207,3 +207,13 @@ default 20) e `next_offset`. Resultados MCP preservam o teto global de 256 KiB.
 Os dados são persistidos em SQLite (`VH_DATABASE_PATH`) e compartilhados entre
 REST/MCP. Excluir um board pela UI/REST exclui suas sessões e libera quotas.
 IDs não tornam dados públicos: o link só abre para o owner autenticado.
+
+
+As métricas das views de Boards incluem `distribution` com contagens
+`good`, `warning`, `bad` e `unknown`, cuja soma é o volume do nó/conexão.
+O gráfico divide cada conexão em faixas proporcionais a essas contagens.
+Startup distingue sessões iniciadas (verde) e falhas (vermelho); buffer ratio
+e join time classificam cada sessão pelos limites do SLA, com falhas de startup
+em cinza por ausência de métrica. O status agregado continua calculado pela
+taxa/média e pode diferir da distribuição individual. Demos legadas sem essas
+contagens mantêm a cor agregada e informam distribuição indisponível.

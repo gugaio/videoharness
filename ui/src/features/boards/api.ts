@@ -11,7 +11,7 @@ export const RecordSchema=z.object({id:z.string(),name:z.string(),focus,slas,ses
 const filter=z.discriminatedUnion('dimension',[
  z.object({dimension:z.literal('user'),entity}),z.object({dimension:z.literal('device'),entity,user_id:entity}),z.object({dimension:z.literal('isp'),entity}),z.object({dimension:z.literal('pop'),entity}),z.object({dimension:z.literal('media'),entity}),
 ]);
-const metric=z.object({value:z.number().finite().nullable(),status:z.enum(['good','warning','bad','unknown']),unit:z.enum(['ratio','ms']),sample_count:z.number().int().min(0),violations:z.number().int().min(0),sla:band});
+const metric=z.object({distribution:z.object({good:z.number().int().min(0),warning:z.number().int().min(0),bad:z.number().int().min(0),unknown:z.number().int().min(0)}).optional(),value:z.number().finite().nullable(),status:z.enum(['good','warning','bad','unknown']),unit:z.enum(['ratio','ms']),sample_count:z.number().int().min(0),violations:z.number().int().min(0),sla:band});
 const metrics=z.object({startup_error_rate:metric.optional(),buffer_ratio:metric.optional(),join_time_ms:metric.optional()});
 const dimension=z.enum(['user','device','isp','pop','media']);
 export const ViewSchema=z.object({id:z.string(),sessionCount:z.number().int().min(0),board:RecordSchema,filters:z.array(filter),columns:z.array(dimension),metrics,nodes:z.array(z.object({id:z.string(),dimension,label:z.string(),volume:z.number().int().min(0),metrics,model:z.string().optional(),filter:filter.optional()})),links:z.array(z.object({id:z.string(),source:z.string(),target:z.string(),volume:z.number().int().min(0),metrics}))});

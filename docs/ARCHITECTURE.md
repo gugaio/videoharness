@@ -175,6 +175,15 @@ mídias; ISP → POPs → mídias; POP → ISPs → mídias. Filtros não expand
 exponem outra entidade. Não há LLM, acesso a engines ou fetch de mídia nessa
 agregação. IDs e labels são dados de apresentação, não URLs executadas.
 
+As métricas das views de Boards incluem `distribution` com contagens
+`good`, `warning`, `bad` e `unknown`, cuja soma é o volume do nó/conexão.
+O gráfico divide cada conexão em faixas proporcionais a essas contagens.
+Startup distingue sessões iniciadas (verde) e falhas (vermelho); buffer ratio
+e join time classificam cada sessão pelos limites do SLA, com falhas de startup
+em cinza por ausência de métrica. O status agregado continua calculado pela
+taxa/média e pode diferir da distribuição individual. Demos legadas sem essas
+contagens mantêm a cor agregada e informam distribuição indisponível.
+
 UI `/dashboard/boards` lista paginada e cria boards reais com SLAs explícitos;
 `/dashboard/boards/:id` apresenta o agregado do backend. Query cache é separado
 por userId; Clerk JWT segue o client existente. Respostas são validadas com Zod.
@@ -235,7 +244,7 @@ view e exigem nova inspeção; samples/PES estruturais permanecem independentes.
 
 | ID | Decisão |
 |---|---|
-| AD-0018 | Agentes enviam sessões validadas e SLAs explícitos por board. App persiste com ownership e quotas e produz agregados determinísticos; REST/MCP compartilham casos de uso e UI apresenta as views calculadas. Startup rate usa todas as tentativas, buffer/join médias de sucessos. Substitui o contrato de payloads prontos da AD-0017, preservado apenas nos demos locais. |
+| AD-0018 | Agentes enviam sessões validadas e SLAs explícitos por board. App persiste com ownership e quotas e produz agregados determinísticos; REST/MCP compartilham casos de uso e UI apresenta as views calculadas. Startup rate usa todas as tentativas, buffer/join médias de sucessos. Cada métrica expõe também contagens por qualidade individual para faixas proporcionais nas conexões. Substitui o contrato de payloads prontos da AD-0017, preservado apenas nos demos locais. |
 | AD-0017 | Superada pela AD-0018 para boards reais. No protótipo inicial, Boards apresentam payloads prontos do produtor: nós, conexões, volumes, métricas/status e recortes com transições explícitas. A UI não agrega sessões nem calcula qualidade; fixtures estáticas simulam o payload futuro do agente. Configurações ficam no localStorage por repositório substituível. Ingestão REST/MCP, ownership e persistência de servidor não estão implementados. |
 | AD-0014 | MCP é adapter de entrada do app, compartilhando casos de uso de inspeção com REST. Usuários geram tokens pessoais pela UI autenticada; agentes usam Bearer com owner derivado do token, sem OAuth MCP. Segredos aleatórios de 256 bits são exibidos uma vez e persistidos apenas como SHA-256. Endpoint sempre exige token, inclusive em dev. Nenhuma mudança nas engines ou implementação de LLM. |
 | AD-0015 | Investigação incremental mantém o snapshot baseline imutável. VH reserva bytes transacionalmente por investigação e por dono, usa idempotência em SQLite e atribui cada captura a um ID de evidência. Lens resolve referências no manifesto atual e aplica caps durante o streaming. A URL de origem é reapresentada por chamada e nunca persistida em claro. O MCP oferece ferramentas de cobertura, timeline, segmentos/janelas e evidência; não executa LLM. |

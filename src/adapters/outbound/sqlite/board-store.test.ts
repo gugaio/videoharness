@@ -47,4 +47,23 @@ describe("Board persistence and deterministic aggregation",()=>{
   }finally{store.close();}
  });
 
+ it("preserves mixed session quality on each link and recomputes it after filtering",()=>{
+  const store=new BoardStore(":memory:");
+  try {
+   const board=store.create("owner",input);
+   store.ingest("owner",board.id,[session,
+    {...session,session_id:"warning",buffer_ratio:0.02,join_time_ms:2000},
+    {...session,session_id:"bad",buffer_ratio:0.05,join_time_ms:5000},
+    {session_id:"failed",user_id:"u",device:{id:"tv"},isp:"isp",pop:"pop",media_id:"other",startup_error:true}]);
+   const view=getBoardView(store,"owner",board.id,{filters:[]});
+   const userLink=view.links.find(link=>view.nodes.find(node=>node.id===link.source)?.dimension==="user")!;
+   expect(userLink.metrics.startup_error_rate?.distribution).toEqual({good:3,warning:0,bad:1,unknown:0});
+   expect(userLink.metrics.buffer_ratio?.distribution).toEqual({good:1,warning:1,bad:1,unknown:1});
+   expect(userLink.metrics.join_time_ms?.distribution).toEqual({good:1,warning:1,bad:1,unknown:1});
+   for(const item of [...view.nodes,...view.links])for(const metric of Object.values(item.metrics))expect(Object.values(metric.distribution).reduce((a,b)=>a+b,0)).toBe(item.volume);
+   const filtered=getBoardView(store,"owner",board.id,{filters:[{dimension:"media",entity:"other"}]});
+   expect(filtered.metrics.buffer_ratio?.distribution).toEqual({good:0,warning:0,bad:0,unknown:1});
+  } finally {store.close();}
+ });
+
 });
