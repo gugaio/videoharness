@@ -2246,40 +2246,6 @@ a {
   .streams-delete { margin-left: 0; }
 }
 
-.streams-mode {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
-  gap: 0.6rem;
-  margin-top: 1rem;
-}
-
-.streams-mode button {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.8rem 0.9rem;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: #fff;
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-}
-
-.streams-mode button span {
-  color: var(--muted);
-  font-size: 0.75rem;
-}
-
-.streams-mode-active {
-  border-color: var(--blue);
-  box-shadow: inset 0 0 0 1px var(--blue);
-}
-
-.streams-mode-active strong {
-  color: var(--blue);
-}
-
 .streams-proxy-preset {
   display: flex;
   flex-direction: column;

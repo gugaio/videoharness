@@ -7,7 +7,11 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import HomePage from "./pages/HomePage";
 import DashboardLayout from "./pages/DashboardLayout";
 import InspectPage, { InspectionDetailPage } from "./pages/InspectPage";
-import StreamsPage, { StreamDashboardPage, StreamPlayerPage } from "./pages/StreamsPage";
+import CloneStreamsPage, {
+  ProxyStreamsPage,
+  StreamDashboardPage,
+  StreamPlayerPage,
+} from "./pages/StreamsPage";
 import InvestigationsPage from "./pages/InvestigationsPage";
 import McpPage from "./pages/McpPage";
 
@@ -20,7 +24,9 @@ function AppRoutes() {
           <Route index element={<Navigate to="inspect" replace />} />
           <Route path="inspect" element={<InspectPage />} />
           <Route path="inspect/:inspectionId" element={<InspectionDetailPage />} />
-          <Route path="streams" element={<StreamsPage />} />
+          <Route path="streams" element={<Navigate to="clones" replace />} />
+          <Route path="streams/clones" element={<CloneStreamsPage />} />
+          <Route path="streams/proxy" element={<ProxyStreamsPage />} />
           <Route path="streams/:streamId" element={<StreamDashboardPage />} />
           <Route path="streams/:streamId/player" element={<StreamPlayerPage />} />
           <Route path="investigations" element={<InvestigationsPage />} />

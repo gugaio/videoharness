@@ -34,10 +34,7 @@ function errorMessage(error: unknown): string {
   return error instanceof ApiError ? error.message : "erro desconhecido";
 }
 
-export default function StreamsPage() {
-  const [mode, setMode] = useState<"clone" | "proxy">("clone");
-  const [proxyFilter, setProxyFilter] = useState<{ source: string; preset: string } | null>(null);
-  const [player, setPlayer] = useState<PlayerTarget | null>(null);
+export default function CloneStreamsPage() {
   const workspace = useQuery({ queryKey: ["workspace"], queryFn: getWorkspace });
   const streams = useQuery({
     queryKey: ["streams"],
@@ -54,79 +51,70 @@ export default function StreamsPage() {
     <section className="panel">
       <header className="streams-header">
         <div>
-          <h2>Streams</h2>
+          <h2>Clones</h2>
           <p className="panel-hint">
-            Clone ou proxie streams no Stream Mock. O orquestrador só injeta o
-            dono; clones ficam no armazenamento do mock e o proxy não grava nada.
+            Crie cópias locais de streams para reproduzir mesmo se a origem cair.
+            Os arquivos e a configuração ficam no Stream Mock.
           </p>
         </div>
         {workspace.data && <WorkspaceSummary workspace={workspace.data} />}
       </header>
 
-      <div className="streams-mode" role="tablist" aria-label="Modo do Stream Mock">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === "clone"}
-          className={mode === "clone" ? "streams-mode-active" : ""}
-          onClick={() => setMode("clone")}
-        >
-          <strong>Clonar</strong>
-          <span>Cópia local que reproduz mesmo se a origem cair.</span>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === "proxy"}
-          className={mode === "proxy" ? "streams-mode-active" : ""}
-          onClick={() => setMode("proxy")}
-        >
-          <strong>Proxy sem clonar</strong>
-          <span>Repassa a origem ao vivo, sem gravar nada, limitado a 300 s.</span>
-        </button>
-      </div>
+      <CreateCloneForm
+        onCreated={() => {
+          void streams.refetch();
+          void workspace.refetch();
+        }}
+      />
 
-      {mode === "clone" ? (
-        <>
-          <CreateCloneForm
-            onCreated={() => {
-              void streams.refetch();
-              void workspace.refetch();
-            }}
-          />
-
-          {streams.isPending && <p className="state">Carregando streams…</p>}
-          {streams.isError && (
-            <p role="alert" className="state-error">
-              Falha ao carregar streams: {errorMessage(streams.error)}
-            </p>
-          )}
-          {!streams.isPending && !streams.isError && clones.length === 0 && (
-            <p className="panel-hint">Nenhum clone ainda. Crie o primeiro acima.</p>
-          )}
-          {clones.length > 0 && (
-            <div className="streams-list">
-              {clones.map((stream) => (
-                <CloneRow key={stream.id} stream={stream} />
-              ))}
-            </div>
-          )}
-        </>
-      ) : (
-        <>
-          <ProxyPlaybackForm
-            slug={workspace.data?.slug}
-            onGenerated={(input) => setProxyFilter({ source: input.url, preset: input.preset })}
-            onPlay={(input) =>
-              setPlayer({ source: input.url, preset: input.preset, format: input.format })
-            }
-          />
-          <MockActivityPanel
-            mode="proxy"
-            {...(proxyFilter ? { source: proxyFilter.source, preset: proxyFilter.preset } : {})}
-          />
-        </>
+      {streams.isPending && <p className="state">Carregando clones…</p>}
+      {streams.isError && (
+        <p role="alert" className="state-error">
+          Falha ao carregar clones: {errorMessage(streams.error)}
+        </p>
       )}
+      {!streams.isPending && !streams.isError && clones.length === 0 && (
+        <p className="panel-hint">Nenhum clone ainda. Crie o primeiro acima.</p>
+      )}
+      {clones.length > 0 && (
+        <div className="streams-list">
+          {clones.map((stream) => (
+            <CloneRow key={stream.id} stream={stream} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function ProxyStreamsPage() {
+  const [proxyFilter, setProxyFilter] = useState<{ source: string; preset: string } | null>(null);
+  const [player, setPlayer] = useState<PlayerTarget | null>(null);
+  const workspace = useQuery({ queryKey: ["workspace"], queryFn: getWorkspace });
+
+  return (
+    <section className="panel">
+      <header className="streams-header">
+        <div>
+          <h2>Proxy</h2>
+          <p className="panel-hint">
+            Repassa a origem ao vivo sem gravar arquivos. A URL gerada é uma
+            capability do Stream Mock e fica limitada a 300 segundos.
+          </p>
+        </div>
+      </header>
+
+      <ProxyPlaybackForm
+        slug={workspace.data?.slug}
+        onGenerated={(input) => setProxyFilter({ source: input.url, preset: input.preset })}
+        onPlay={(input) =>
+          setPlayer({ source: input.url, preset: input.preset, format: input.format })
+        }
+      />
+      <MockActivityPanel
+        mode="proxy"
+        {...(proxyFilter ? { source: proxyFilter.source, preset: proxyFilter.preset } : {})}
+      />
 
       {player && (
         <section className="pb-lab">
@@ -519,13 +507,13 @@ export function StreamDashboardPage() {
     <section className="panel stream-dashboard">
       <header className="stream-dashboard-header">
         <div>
-          <Link className="stream-back" to="/dashboard/streams">← Streams</Link>
+          <Link className="stream-back" to="/dashboard/streams/clones">← Clones</Link>
           <h2>{clone.label || "Dashboard do clone"}</h2>
           <p className="panel-hint">Acompanhe a configuração e os requests recentes deste clone.</p>
         </div>
         <CloneDeleteButton
           stream={clone}
-          onDeleted={() => navigate("/dashboard/streams", { replace: true })}
+          onDeleted={() => navigate("/dashboard/streams/clones", { replace: true })}
         />
       </header>
       <CloneOverview stream={clone} />
