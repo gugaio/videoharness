@@ -286,6 +286,12 @@ segmento, ao fetcher; isso permite consumir um limite explícito exato sem
 rejeitar a última mídia pela reserva artificial de metade do saldo. A captura
 suplementar verifica expiração com o mesmo `Clock` injetado na criação da
 inspeção, removendo a divergência entre relógio congelado e relógio de parede.
-`python3 -m compileall` validado; pytest não pôde ser executado neste host, pois
-Python 3.14 não tem pip, ensurepip nem pytest instalados. Os testes do CI que cobrem esses dois casos permanecem a validação funcional
-necessária.
+`python3 -m compileall` e a suíte completa passam (168 passed, 4 skipped).
+Ruff e mypy completos ainda apontam problemas preexistentes fora das linhas desta
+correção; Ruff nos arquivos alterados passa. A execução do caso de CLI com URL
+remota requer rede liberada, conforme o teste já existente.
+
+
+A validação seguinte no CI revelou outro erro no mesmo fluxo: `UnifiedManifest`
+guarda `protocol` como string. A resposta de cobertura e a evidência suplementar
+agora serializam esse campo diretamente, sem acessar `.value`.

@@ -105,6 +105,7 @@ class TestCreateInspectionAsync:
             json={"source_url": "fixture://hls-ts/master.m3u8"},
         )
         assert coverage.status_code == 200
+        assert coverage.json()["protocol"] == "HLS"
         candidates = [item for item in coverage.json()["coverage"] if not item["is_init"]]
         assert candidates
         selected = candidates[-1]
@@ -136,6 +137,7 @@ class TestCreateInspectionAsync:
             f"/api/v1/inspections/{inspection_id}/captures/{capture_id}/evidence"
         )
         assert evidence.status_code == 200
+        assert evidence.json()["source"]["protocol"] == "HLS"
         assert len(evidence.json()["segments"]) == 1
         assert evidence.json()["segments"][0]["segment_ref"] == selected["segment_ref"]
         baseline_after = (await client.get(f"/api/v1/inspections/{inspection_id}/snapshot")).json()

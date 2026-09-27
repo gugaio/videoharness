@@ -14,8 +14,8 @@ Política de janela:
 
 from __future__ import annotations
 
-import re
 import hashlib
+import re
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -393,7 +393,12 @@ class SegmentCaptureService:
                     if start is not None
                     else None
                 )
-                include = item_end is not None and start < end and item_end > selection.start_seconds
+                include = (
+                    item_end is not None
+                    and start is not None
+                    and start < end
+                    and item_end > selection.start_seconds
+                )
             else:
                 include = False
             if include and (not representations or item.rep_id in representations):
@@ -403,7 +408,8 @@ class SegmentCaptureService:
             found = {item.segment_ref for item in selected_media}
             if requested - found:
                 plan.warnings.append(
-                    f"{len(requested - found)} referências não estão disponíveis nesta leitura do manifesto"
+                    f"{len(requested - found)} referências não estão disponíveis "
+                    "nesta leitura do manifesto"
                 )
         if not selected_media:
             plan.warnings.append("nenhum segmento correspondeu à seleção solicitada")
@@ -635,7 +641,11 @@ class SegmentCaptureService:
                 entries.append(
                     TimelineEntry(
                         index=planned.index,
-                        start_seconds=planned.timeline_start_seconds if planned.timeline_start_seconds is not None else (start if duration is not None else None),
+                        start_seconds=(
+                            planned.timeline_start_seconds
+                            if planned.timeline_start_seconds is not None
+                            else (start if duration is not None else None)
+                        ),
                         duration_seconds=duration,
                         status=status,
                         segment_sequence=planned.segment_sequence,

@@ -9,7 +9,8 @@ Configuração por variáveis de ambiente:
   STREAM_LENS_MAX_CONCURRENCY — jobs simultâneos (default 4)
   STREAM_LENS_PURGE_INTERVAL_SECONDS — intervalo da limpeza por TTL (default 60)
   STREAM_LENS_WINDOW_SECONDS     — janela de captura (default 10; teto 60)
-  STREAM_LENS_MAX_TOTAL_BYTES    — orçamento base; a reserva mínima pode elevá-lo (default 500000000)
+  STREAM_LENS_MAX_TOTAL_BYTES    — orçamento base; a reserva mínima pode
+                                  elevá-lo (default 500000000)
   STREAM_LENS_MAX_SEGMENT_BYTES  — cap por segmento, default 20000000
   STREAM_LENS_MAX_PLAYLISTS      — teto opcional de playlists HLS (default 0 = todas)
 """
@@ -48,7 +49,6 @@ from stream_lens.adapters.outbound.filesystem.supplemental_capture_repository im
 from stream_lens.adapters.outbound.jobs.in_process_job_queue import InProcessJobQueue
 from stream_lens.adapters.outbound.providers import SystemClock, UuidIdGenerator
 from stream_lens.application.capture_service import SegmentCaptureService
-from stream_lens.application.supplemental_capture import SupplementalCaptureService
 from stream_lens.application.container_analyzer import (
     SniffingContainerAnalyzer,
 )
@@ -59,6 +59,7 @@ from stream_lens.application.ports.manifest_fetcher import ManifestFetcher
 from stream_lens.application.ports.manifest_inspector import ManifestInspector
 from stream_lens.application.ports.providers import Clock, IdGenerator
 from stream_lens.application.ports.repositories import InspectionRepository
+from stream_lens.application.supplemental_capture import SupplementalCaptureService
 from stream_lens.application.use_cases.create_inspection import CreateInspection
 from stream_lens.application.use_cases.run_inspection import RunInspection
 from stream_lens.domain.value_objects.segments import MAX_WINDOW_SECONDS, CaptureLimits

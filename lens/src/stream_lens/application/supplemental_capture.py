@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 from pathlib import Path
 
@@ -24,8 +25,8 @@ from stream_lens.application.ports.supplemental_captures import (
 )
 from stream_lens.application.use_cases.create_inspection import InspectionError
 from stream_lens.domain.entities.inspection import InspectionStatus
-from stream_lens.domain.services.url_validation import InvalidManifestUrl, validate_manifest_url
 from stream_lens.domain.services.redaction import redact_url
+from stream_lens.domain.services.url_validation import InvalidManifestUrl, validate_manifest_url
 
 
 class CaptureConflict(Exception):
@@ -72,13 +73,16 @@ class SupplementalCaptureService:
         except InspectionError:
             raise
         except Exception as exc:
-            raise InspectionError("coverage", f"não foi possível resolver cobertura: {type(exc).__name__}") from exc
+            raise InspectionError(
+                "coverage",
+                f"não foi possível resolver cobertura: {type(exc).__name__}",
+            ) from exc
         limit = 2_000
         items = plan.coverage
         return {
             "inspection_id": inspection_id,
             "observed_at": self._clock.now().isoformat(),
-            "protocol": media.protocol.value,
+            "protocol": media.protocol,
             "is_live": media.is_live,
             "coverage": [
                 {
@@ -229,7 +233,7 @@ class SupplementalCaptureService:
                             "captured_at": self._clock.now().isoformat(),
                             "source": {
                                 "display_url": redact_url(source_url),
-                                "protocol": media.protocol.value,
+                                "protocol": media.protocol,
                                 "is_live": media.is_live,
                             },
                             "segments": [captured_to_dict(item) for item in captured],
@@ -247,7 +251,9 @@ class SupplementalCaptureService:
                         "status": "failed",
                         "finished_at": self._clock.now().isoformat(),
                         "bytes_received": received,
-                        "consumption_known": bool(record.get("consumption_known", not capture_started)),
+                        "consumption_known": bool(
+                            record.get("consumption_known", not capture_started)
+                        ),
                         "error": f"capture_failed: {type(exc).__name__}",
                     }
                 )
@@ -267,10 +273,8 @@ class SupplementalCaptureService:
             init_path = init_files.get(item.rep_id)
             init_data = None
             if init_path and not item.is_init:
-                try:
+                with contextlib.suppress(OSError):
                     init_data = (self._workspace / store_id / init_path).read_bytes()
-                except OSError:
-                    pass
             analysis = self._containers.analyze(path.read_bytes(), item.is_init, init_data)
             from stream_lens.domain.value_objects.containers import SegmentContainer
 
