@@ -7,7 +7,7 @@ import { AuthContext } from "./auth-context";
  */
 export function DevAuthProvider({ children }: { children: ReactNode }) {
   return (
-    <AuthContext.Provider value={{ isLoaded: true, isSignedIn: true }}>
+    <AuthContext.Provider value={{ userId: "dev-user", isLoaded: true, isSignedIn: true }}>
       <div className="dev-banner" role="note">
         Modo dev: autenticação desativada (sem VITE_CLERK_PUBLISHABLE_KEY).
       </div>

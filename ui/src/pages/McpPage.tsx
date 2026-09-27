@@ -57,7 +57,7 @@ export default function McpPage() {
     <div className="mcp-page">
       <section className="panel">
         <h2>Conecte seu agente</h2>
-        <p>Use o MCP para criar inspeções, abrir investigações a partir de um baseline e solicitar capturas seletivas com orçamento.</p>
+        <p>Use o MCP para criar inspeções, abrir investigações e enviar sessões a boards com SLAs. O agente pode descobrir o contrato com get_board_schema.</p>
         <p>Configure seu cliente com transporte <strong>Streamable HTTP</strong> e autenticação por token Bearer.</p>
         <label htmlFor="mcp-endpoint">URL do servidor</label>
         <div className="mcp-copy-row">
@@ -65,7 +65,7 @@ export default function McpPage() {
           <button type="button" onClick={() => void copy(endpoint)}>Copiar URL</button>
         </div>
         <p>Header de autenticação: <code>Authorization: Bearer SEU_TOKEN</code></p>
-        <p className="panel-hint">O cliente precisa aceitar um token configurado manualmente. O token dá acesso às suas inspeções e às evidências adicionais que você solicitar.</p>
+        <p className="panel-hint">O cliente precisa aceitar um token configurado manualmente. O token dá acesso às suas inspeções, evidências e boards, incluindo criação e envio de sessões.</p>
       </section>
 
       {error && <p role="alert" className="state-error">{error}</p>}

@@ -2,6 +2,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { SessionControls } from "../auth/AuthControls";
 
 const NAV_ITEMS = [
+  { to: "/dashboard/boards", label: "Boards", hint: "Monitorar a saúde do streaming por SLA" },
   { to: "/dashboard/inspect", label: "Inspect", hint: "Inspecionar um stream (Stream Lens)" },
   { to: "/dashboard/streams/proxy", label: "Proxy", hint: "Reproduzir uma origem sem criar um clone" },
   { to: "/dashboard/streams/clones", label: "Clone", hint: "Criar e gerenciar clones no Stream Mock" },

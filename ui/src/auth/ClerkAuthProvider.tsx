@@ -4,9 +4,9 @@ import { CLERK_PUBLISHABLE_KEY } from "./auth";
 import { AuthContext } from "./auth-context";
 
 function ClerkAuthBridge({ children }: { children: ReactNode }) {
-  const { isLoaded, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn, userId } = useAuth();
   return (
-    <AuthContext.Provider value={{ isLoaded, isSignedIn: isSignedIn ?? false }}>
+    <AuthContext.Provider value={{ userId: userId ?? null, isLoaded, isSignedIn: isSignedIn ?? false }}>
       {children}
     </AuthContext.Provider>
   );

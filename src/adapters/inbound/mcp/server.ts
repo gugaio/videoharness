@@ -1,3 +1,5 @@
+import { registerBoardTools } from "./boards.js";
+import { BoardError, type BoardRepository } from "../../../application/ports/board-repository.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -28,6 +30,7 @@ import {
 import { InvestigationBudgetError, InvestigationIdempotencyError } from "../../../application/ports/investigation-repository.js";
 
 type Deps = {
+  boards: BoardRepository;
   engine: IncrementalInspectionEngine;
   repository: InspectionRepository;
   tokens: McpTokenRepository;
@@ -40,11 +43,13 @@ async function result(run: () => Promise<Record<string, unknown>> | Record<strin
     const data = await run();
     const text = JSON.stringify(data);
     if (Buffer.byteLength(text) > 256 * 1024) {
-      return { isError: true, content: [{ type: "text", text: "result_too_large: request fewer snapshot sections or a smaller history page; use the dashboard for the complete snapshot." }] };
+      return { isError: true, content: [{ type: "text", text: "result_too_large: request fewer snapshot sections or a smaller page; use the dashboard for complete data." }] };
     }
     return { structuredContent: data, content: [{ type: "text", text }] };
   } catch (error) {
-    const message = error instanceof InspectionNotFoundError ? "inspection_not_found"
+    const message = error instanceof BoardError ? error.code
+      : error instanceof z.ZodError ? `invalid_board_request: ${error.issues.map(issue => issue.message).join("; ")}`
+      : error instanceof InspectionNotFoundError ? "inspection_not_found"
       : error instanceof InvestigationNotFoundError ? "investigation_not_found"
       : error instanceof InvestigationBudgetError ? error.message
       : error instanceof InvestigationIdempotencyError ? error.message
@@ -197,6 +202,7 @@ function createServer(deps: Deps, ownerId: string) {
     }
     return { ...response, evidence: selected };
   }));
+  registerBoardTools(server, deps.boards, ownerId, result);
   return server;
 }
 

@@ -81,7 +81,7 @@ function freshToken(): Promise<string | null> {
   return tokenRefresh;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (tokenGetter) {
     const token = await tokenGetter();

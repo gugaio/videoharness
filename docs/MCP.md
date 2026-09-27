@@ -70,3 +70,140 @@ controle de streams, probe/decode_test ou execução autônoma de LLM.
 Use HTTPS em produção e mantenha Clerk configurado para proteger a geração de
 tokens. O SDK MCP v1 está integrado na fronteira Fastify; REST e MCP compartilham
 os casos de uso e a verificação de ownership de inspeções.
+
+## Boards de saúde por SLA
+
+O agente envia **sessões**, não grafos nem métricas agregadas. O orquestrador
+valida, persiste e calcula as views determinísticas. O board pertence ao owner
+do token; `user_id` é o usuário monitorado e não define ownership. A UI apresenta
+os resultados em `/dashboard/boards/:id`, com atualização automática. Demos
+locais em `/dashboard/boards/demos` são isoladas e não recebem esses dados.
+
+| Tool | Função |
+|---|---|
+| `get_board_schema` | Descobrir unidades, limites, identidade de device e exemplos válidos completos |
+| `create_board` | Criar board com nome, foco fixo e SLAs explícitos; retorna `id` e `view_path` |
+| `list_boards` | Listar boards do owner com contagem de sessões, `offset`/`limit` |
+| `get_board` | Consultar foco e SLAs, sem devolver todas as sessões |
+| `ingest_board_sessions` | Enviar lote atômico de sessões; upsert por `(board_id, session_id)` |
+| `list_board_sessions` | Consultar sessões em páginas de até 50 |
+| `get_board_view` | Obter grafo e indicadores determinísticos; filtros AND mantêm o foco original |
+
+### Contrato e unidades
+
+Cada sessão tem `session_id`, `user_id`, `device: {id, model?}`, `isp`, `pop`,
+`media_id` e `startup_error`. Os IDs/campos de entidade têm até 128 caracteres.
+Identidade de um device = **par `(user_id, device.id)`**: o mesmo `device.id` em
+outro usuário é outro device. O foco de device usa
+`{type:"device", user_id:"user-42", device_id:"tv"}`; seu filtro usa
+`{dimension:"device", user_id:"user-42", entity:"tv"}`.
+
+- `startup_error: true`: `join_time_ms` e `buffer_ratio` são **proibidos**,
+  inclusive null. Uma tentativa que falhou não tem essas medidas.
+- `startup_error: false`: ambas as medidas são **obrigatórias**.
+  `join_time_ms` é finito, ≥0 e ≤86.400.000 ms. `buffer_ratio` é finito em **0–1**:
+  0.012 significa 1,2%. Seu significado é tempo em buffering dividido pelo tempo
+  total observado da reprodução, incluindo buffering; o agente fornece o ratio.
+- Reenviar o mesmo `session_id` substitui a sessão inteira, sem duplicar.
+  IDs repetidos dentro do mesmo lote são rejeitados. Qualquer sessão inválida
+  rejeita o lote completo, sem gravação parcial.
+- Sessões de outras entidades podem estar no board, mas ficam fora da view se
+  não corresponderem ao foco fixo. Não há janela de tempo nesta etapa.
+
+Novos boards exigem os três SLAs: `startup_error_rate`, `buffer_ratio` e
+`join_time_ms`, cada um com sua view. Boards legados sem SLA de join time
+continuam legíveis com as views disponíveis. Cada SLA exige limites **explícitos**
+`{warning, critical}`, com `0 ≤ warning < critical`. Taxas/ratios limitam-se a
+0–1; join time usa ms até 86.400.000. Não existem defaults no backend.
+
+Para cada recorte, nó e conexão:
+
+- Startup rate = falhas de startup / **todas** as sessões do grupo.
+- Buffer ratio = média aritmética dos ratios das sessões de **sucesso**.
+  Não é ponderada por duração: o contrato não fornece durações.
+- Join time = média aritmética de `join_time_ms` das sessões de **sucesso**.
+- `value < warning`: saudável; `warning ≤ value < critical`: atenção;
+  `value ≥ critical`: crítico. Sem amostras de sucesso: `value:null`, sem dados
+  para buffer/join time; falhas nunca viram zeros nessas métricas.
+- `sample_count` informa o denominador. `violations` informa amostras no limite
+  crítico ou acima; para startup rate, é o número de falhas. A cor avalia o
+  **agregado**, portanto um grupo saudável ainda pode conter falhas individuais;
+  o tooltip mostra o número de falhas/violações para não escondê-las.
+
+### Fluxo copiável para um agente
+
+1. Chame `get_board_schema` para conferir o contrato.
+2. Chame `create_board` com estes argumentos:
+
+```json
+{
+  "name": "Usuário 42 · saúde",
+  "focus": {"type": "user", "user_id": "user-42"},
+  "slas": {
+    "startup_error_rate": {"warning": 0.01, "critical": 0.05},
+    "buffer_ratio": {"warning": 0.02, "critical": 0.05},
+    "join_time_ms": {"warning": 2000, "critical": 5000}
+  }
+}
+```
+
+3. Use o `id` retornado em `ingest_board_sessions`:
+
+```json
+{
+  "board_id": "ID_RETORNADO",
+  "sessions": [
+    {
+      "session_id": "s-1", "user_id": "user-42",
+      "device": {"id": "tv", "model": "Samsung Tizen"},
+      "isp": "Vivo", "pop": "GRU", "media_id": "match-123",
+      "startup_error": false, "join_time_ms": 1800, "buffer_ratio": 0.012
+    },
+    {
+      "session_id": "s-2", "user_id": "user-42",
+      "device": {"id": "phone", "model": "iPhone"},
+      "isp": "Claro", "pop": "GRU", "media_id": "match-123",
+      "startup_error": true
+    }
+  ]
+}
+```
+
+4. Consulte `get_board_view`:
+
+```json
+{"board_id":"ID_RETORNADO","filters":[{"dimension":"device","entity":"tv","user_id":"user-42"}]}
+```
+
+5. Entregue ao usuário o link `view_path` retornado pela criação, prefixado pelo
+   domínio público do VH. Ex.: `https://seu-dominio/dashboard/boards/ID_RETORNADO`.
+   `view_path` é relativo porque o app não infere domínio por headers do agente.
+
+Focos e camadas: usuário → devices → ISPs → POPs → mídias;
+device → ISPs → POPs → mídias; ISP → POPs → mídias; POP → ISPs → mídias.
+Até quatro filtros, um por dimensão, restringem o recorte e nunca expandem para
+outra entidade do foco. Clique na UI solicita novo agregado ao backend. Cada
+camada mostra até oito entidades e “Outros”, agrupando **as mesmas sessões** nos
+nós e links sem perder volume; “Outros” não é filtrável.
+
+### REST, limites e autenticação
+
+REST usa os mesmos casos de uso: `GET /v1/boards/schema`, `POST/GET /v1/boards`,
+`GET/DELETE /v1/boards/:id`, `POST/GET /v1/boards/:id/sessions` e
+`POST /v1/boards/:id/view`. O browser usa o prefixo `/api` e a sessão Clerk;
+REST não aceita token MCP como sessão humana. MCP sempre exige token pessoal,
+inclusive em dev. Sem Clerk no modo dev, REST usa `dev-user` conforme o fallback
+existente. Um ID de outro owner responde como inexistente.
+
+Limites fixos: 100 boards por owner, 10.000 sessões por board, 50.000 sessões
+armazenadas por owner, 50 sessões por lote e **32 KiB de corpo** (incluindo o
+JSON-RPC no MCP). Ambos os limites de lote/corpo se aplicam; IDs longos podem
+fazer um lote de 50 exceder 32 KiB. Prefira lotes de 10–20 e reduza-os em caso de
+413. Corpo inválido retorna 400 no REST ou erro de tool; quota retorna 429 no
+REST ou erro de tool, sem gravar o lote. Substituições existentes continuam
+permitidas quando a quota está cheia. Paginação tem `offset`, `limit` (1–50,
+default 20) e `next_offset`. Resultados MCP preservam o teto global de 256 KiB.
+
+Os dados são persistidos em SQLite (`VH_DATABASE_PATH`) e compartilhados entre
+REST/MCP. Excluir um board pela UI/REST exclui suas sessões e libera quotas.
+IDs não tornam dados públicos: o link só abre para o owner autenticado.

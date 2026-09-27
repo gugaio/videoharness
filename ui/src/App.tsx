@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AUTH_ENABLED } from "./auth/auth";
 import { AuthTokenBridge } from "./auth/AuthTokenBridge";
@@ -13,7 +14,12 @@ import CloneStreamsPage, {
   StreamPlayerPage,
 } from "./pages/StreamsPage";
 import InvestigationsPage from "./pages/InvestigationsPage";
+const BoardsPage = lazy(() => import("./features/boards/BoardsPage"));
+const BoardDetailPage = lazy(() => import("./features/boards/BoardsPage").then(module => ({ default: module.BoardDetailPage })));
 import McpPage from "./pages/McpPage";
+
+const DemoBoardsPage = lazy(() => import("./features/boards/DemoBoardsPage"));
+const DemoBoardDetailPage = lazy(() => import("./features/boards/DemoBoardsPage").then(module => ({ default: module.DemoBoardDetailPage })));
 
 function AppRoutes() {
   return (
@@ -30,6 +36,10 @@ function AppRoutes() {
           <Route path="streams/:streamId" element={<StreamDashboardPage />} />
           <Route path="streams/:streamId/player" element={<StreamPlayerPage />} />
           <Route path="investigations" element={<InvestigationsPage />} />
+          <Route path="boards" element={<Suspense fallback={<p>Carregando boards…</p>}><BoardsPage /></Suspense>} />
+          <Route path="boards/demos" element={<Suspense fallback={<p>Carregando demos…</p>}><DemoBoardsPage /></Suspense>} />
+          <Route path="boards/demos/:boardId" element={<Suspense fallback={<p>Carregando demo…</p>}><DemoBoardDetailPage /></Suspense>} />
+          <Route path="boards/:boardId" element={<Suspense fallback={<p>Carregando board…</p>}><BoardDetailPage /></Suspense>} />
           <Route path="mcp" element={<McpPage />} />
         </Route>
       </Route>

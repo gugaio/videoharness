@@ -1,3 +1,6 @@
+import { BoardStore } from "../adapters/outbound/sqlite/board-store.js";
+import type { BoardRepository } from "../application/ports/board-repository.js";
+import { registerBoardRoutes } from "../adapters/inbound/http/routes/boards.js";
 import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
 import type { IncrementalInspectionEngine, InspectionEngine } from "../application/ports/inspection-engine.js";
@@ -24,6 +27,7 @@ export type AppDeps = {
   inspectionRepository?: InspectionRepository & Partial<Pick<InspectionHistoryStore, "close">>;
   streamMock?: StreamMockEngine;
   mcpTokens?: McpTokenRepository & { close?: () => void };
+  boards?: BoardRepository & { close?: () => void };
   investigations?: InvestigationRepository & { close?: () => void };
 };
 
@@ -36,6 +40,7 @@ export function buildApp(config: AppConfig, deps: AppDeps = {}): FastifyInstance
   const auth = createAuthHook(config);
   const mcpTokens = deps.mcpTokens ?? new McpTokenStore(config.databasePath ?? ":memory:");
   const investigations = deps.investigations ?? new InvestigationStore(config.databasePath ?? ":memory:");
+  const boards = deps.boards ?? new BoardStore(config.databasePath ?? ":memory:");
   const incrementalEngine = inspectionEngine as IncrementalInspectionEngine;
 
   registerAuthErrorHandler(app);
@@ -57,12 +62,15 @@ export function buildApp(config: AppConfig, deps: AppDeps = {}): FastifyInstance
   registerStreamRoutes(app, { engine: streamMock, auth });
   registerPlaybackRoutes(app, { engine: streamMock, auth });
   registerMcpTokenRoutes(app, { auth, tokens: mcpTokens });
+  registerBoardRoutes(app, { auth, boards });
   registerMcpRoutes(app, {
+    boards,
     engine: incrementalEngine,
     repository: inspectionRepository,
     tokens: mcpTokens,
     investigations,
   });
+  app.addHook("onClose", () => boards.close?.());
   app.addHook("onClose", () => mcpTokens.close?.());
   app.addHook("onClose", () => inspectionRepository.close?.());
   app.addHook("onClose", () => investigations.close?.());

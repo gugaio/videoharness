@@ -143,6 +143,55 @@ Implementado:
   dedicado fica para quando o pacote o publicar (não duplicamos código da
   engine no VH).
 
+### Boards — sessões e SLAs
+
+Agentes criam boards com foco fixo e faixas de SLA explícitas, depois enviam
+sessões por REST ou MCP. Ambos usam os mesmos casos de uso (`boards.ts`) e o
+repositório `BoardRepository`; `BoardStore` persiste `boards`/`board_sessions` no
+SQLite de `VH_DATABASE_PATH`. Owner vem do Clerk/token MCP e é distinto do
+`user_id` monitorado. Leitura, ingestão, exclusão e agregação verificam ownership.
+Upsert por `(board_id, session_id)` substitui o registro inteiro em transação
+all-or-nothing. Quotas: 100 boards/owner, 10.000 sessões/board, 50.000/owner,
+50 sessões/lote e corpo de 32 KiB. Páginas têm até 50 itens; nenhuma listagem de
+boards inclui sessões completas. O contrato copiável e tools estão em
+[docs/MCP.md](MCP.md#boards-de-saúde-por-sla).
+
+Cada sessão informa IDs de sessão/usuário/device/ISP/POP/mídia e erro de startup.
+Device é identificado pelo par `(user_id, device.id)`, também no foco/filtro.
+Startup bem-sucedido exige `join_time_ms` e `buffer_ratio` (0–1); falha proíbe
+ambos. O app agrega startup rate sobre todas as sessões, buffer ratio e join
+time como médias aritméticas sobre sucessos. Não há duração para ponderar
+buffer ratio. SLA tem `warning < critical`, valores e unidades explícitos;
+classificação é saudável abaixo de warning, atenção de warning até critical,
+crítico a partir de critical. Sem amostras resulta em sem dados. Resultados
+incluem amostras e contagem no limite crítico; a cor representa o agregado e
+pode coexistir com falhas individuais, mostradas em tooltip.
+
+`getBoardView` filtra sessões pelo foco + filtros AND, calcula nós/conexões das
+mesmas sessões e limita cada camada a oito entidades + Outros. Esse agrupamento
+mapeia os mesmos IDs nos nós e links, conservando volume. Outros não é filtrável.
+Camadas fixas: usuário → devices → ISPs → POPs → mídias; device → ISPs → POPs →
+mídias; ISP → POPs → mídias; POP → ISPs → mídias. Filtros não expandem o foco nem
+exponem outra entidade. Não há LLM, acesso a engines ou fetch de mídia nessa
+agregação. IDs e labels são dados de apresentação, não URLs executadas.
+
+UI `/dashboard/boards` lista paginada e cria boards reais com SLAs explícitos;
+`/dashboard/boards/:id` apresenta o agregado do backend. Query cache é separado
+por userId; Clerk JWT segue o client existente. Respostas são validadas com Zod.
+Listagem atualiza a cada 15 s e detalhe a cada 5 s; erro da API não vira dado
+mock. O único controle de visualização no detalhe escolhe a view por SLA:
+startup error rate, buffer ratio e join time, todos obrigatórios na criação.
+Boards legados sem SLA de join time permanecem legíveis com duas views. Não há controles
+de configuração, janela temporal ou timestamps na experiência de detalhe.
+Clique em nó solicita um recorte ao backend; trilha permite voltar/limpar.
+Grafo calcula apenas geometria SVG e formata unidades na UI, sem recomputar os
+fatos. Labels/modelos de device ficam visíveis na camada.
+
+Demos em `/dashboard/boards/demos[/:id]` usam fixtures estáticas e localStorage
+separados das APIs. O antigo protótipo de payloads prontos é preservado apenas
+para demonstração (AD-0017 superada pela AD-0018). Não migra automaticamente
+configurações locais para boards reais. Nenhuma engine foi alterada.
+
 Limitações da primeira fatia da Fase 4:
 
 - Capturas pedem no máximo 16 segmentos e 25 MB por chamada, com teto de 100 MB
@@ -186,6 +235,8 @@ view e exigem nova inspeção; samples/PES estruturais permanecem independentes.
 
 | ID | Decisão |
 |---|---|
+| AD-0018 | Agentes enviam sessões validadas e SLAs explícitos por board. App persiste com ownership e quotas e produz agregados determinísticos; REST/MCP compartilham casos de uso e UI apresenta as views calculadas. Startup rate usa todas as tentativas, buffer/join médias de sucessos. Substitui o contrato de payloads prontos da AD-0017, preservado apenas nos demos locais. |
+| AD-0017 | Superada pela AD-0018 para boards reais. No protótipo inicial, Boards apresentam payloads prontos do produtor: nós, conexões, volumes, métricas/status e recortes com transições explícitas. A UI não agrega sessões nem calcula qualidade; fixtures estáticas simulam o payload futuro do agente. Configurações ficam no localStorage por repositório substituível. Ingestão REST/MCP, ownership e persistência de servidor não estão implementados. |
 | AD-0014 | MCP é adapter de entrada do app, compartilhando casos de uso de inspeção com REST. Usuários geram tokens pessoais pela UI autenticada; agentes usam Bearer com owner derivado do token, sem OAuth MCP. Segredos aleatórios de 256 bits são exibidos uma vez e persistidos apenas como SHA-256. Endpoint sempre exige token, inclusive em dev. Nenhuma mudança nas engines ou implementação de LLM. |
 | AD-0015 | Investigação incremental mantém o snapshot baseline imutável. VH reserva bytes transacionalmente por investigação e por dono, usa idempotência em SQLite e atribui cada captura a um ID de evidência. Lens resolve referências no manifesto atual e aplica caps durante o streaming. A URL de origem é reapresentada por chamada e nunca persistida em claro. O MCP oferece ferramentas de cobertura, timeline, segmentos/janelas e evidência; não executa LLM. |
 | AD-0016 | A inspeção padrão da Lens captura pelo menos dois segmentos de mídia em cada representação declarada de áudio, legenda e vídeo que tenha dois ou mais segmentos capturáveis. Esses itens têm prioridade sobre o restante da janela; o orçamento efetivo reserva bytes para eles e init segments, podendo superar o orçamento base. O limite por segmento permanece, e um teto positivo de playlists HLS é override operacional. |

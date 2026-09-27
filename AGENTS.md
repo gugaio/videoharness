@@ -82,6 +82,12 @@ sendo contratos HTTP.
    pedir segmentos por referência ou janela, com reserva idempotente de bytes e
    evidência atribuída. `probe`, `decode_test`, budgets de tempo/concurrency mais
    amplos e execução autônoma de LLM continuam pendentes.
+   Boards em `/dashboard/boards[/:boardId]`: agentes enviam sessões por REST/MCP
+   com IDs estáveis (upsert) e SLAs explícitos por board. App valida/persiste em
+   SQLite com ownership e quotas, agrega grafo por SLA e filtros determinísticos;
+   UI apresenta startup error rate, buffer ratio e join time (três SLAs obrigatórios em novos boards), sem
+   configuração/período no detalhe. Demos locais em `/dashboard/boards/demos`
+   permanecem isoladas da ingestão real.
 6. **Fase 5 — Experiments**: clone do mock + network shaper no orquestrador;
    data plane serve somente recurso registrado.
 
