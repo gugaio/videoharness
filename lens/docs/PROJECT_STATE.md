@@ -277,3 +277,15 @@ implícito e `S@r`, e `Representation/BaseURL` direto é capturável como segmen
 
 **DRM 2** (mediante aprovação): inspecionar `sinf`/`schm`/`schi`/`tenc`/`pssh` nos
 init segments fMP4 e comparar esquema, KID, IV e pattern encryption com o MPD.
+
+
+## Correção para falhas do CI (2026-09-27)
+
+A captura passa o saldo real do orçamento agregado, limitado pelo cap por
+segmento, ao fetcher; isso permite consumir um limite explícito exato sem
+rejeitar a última mídia pela reserva artificial de metade do saldo. A captura
+suplementar verifica expiração com o mesmo `Clock` injetado na criação da
+inspeção, removendo a divergência entre relógio congelado e relógio de parede.
+`python3 -m compileall` validado; pytest não pôde ser executado neste host, pois
+Python 3.14 não tem pip, ensurepip nem pytest instalados. Os testes do CI que cobrem esses dois casos permanecem a validação funcional
+necessária.

@@ -505,7 +505,7 @@ class SegmentCaptureService:
                 planned,
                 position,
                 workspace,
-                budget - min(64 * 1024, budget // 2),
+                min(self._limits.max_segment_bytes, budget),
             )
             results.append(captured)
             budget -= captured.bytes_received

@@ -26,6 +26,9 @@ snapshot baseline.
   necessário para reservar o cap máximo por segmento para a cobertura mínima e
   os init segments planejados. Um `STREAM_LENS_MAX_TOTAL_BYTES` explicitamente
   configurado abaixo de 500 MB permanece um teto operacional rígido.
+- Cada tentativa recebe o menor valor entre o saldo agregado e o cap por segmento.
+  O fetch não reduz artificialmente o saldo restante: um segmento que cabe no
+  orçamento agregado disponível pode ser capturado integralmente.
 - O cap padrão de 20 MB por resposta de segmento permanece. Segmentos
   indisponíveis, maiores que o cap ou sem bytes analisáveis continuam sendo
   registrados como falha; a política garante a tentativa e a prioridade de

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from datetime import UTC, datetime
 from pathlib import Path
 
 from stream_lens.adapters.outbound.filesystem.container_serialization import (
@@ -18,6 +17,7 @@ from stream_lens.application.capture_plan import CaptureSelection
 from stream_lens.application.capture_service import SegmentCaptureService
 from stream_lens.application.ports.manifest_fetcher import ManifestFetcher
 from stream_lens.application.ports.manifest_inspector import ManifestInspector
+from stream_lens.application.ports.providers import Clock
 from stream_lens.application.ports.repositories import InspectionRepository
 from stream_lens.application.ports.supplemental_captures import (
     SupplementalCaptureRepository,
@@ -42,6 +42,7 @@ class SupplementalCaptureService:
         capture_service: SegmentCaptureService,
         workspace: Path,
         container_analyzer,
+        clock: Clock,
         *,
         max_concurrency: int = 2,
         max_segments: int = 16,
@@ -53,6 +54,7 @@ class SupplementalCaptureService:
         self._capture = capture_service
         self._workspace = workspace
         self._containers = container_analyzer
+        self._clock = clock
         self._semaphore = asyncio.Semaphore(max_concurrency)
         self._max_segments = max_segments
         self._tasks: set[asyncio.Task] = set()
@@ -75,7 +77,7 @@ class SupplementalCaptureService:
         items = plan.coverage
         return {
             "inspection_id": inspection_id,
-            "observed_at": datetime.now(UTC).isoformat(),
+            "observed_at": self._clock.now().isoformat(),
             "protocol": media.protocol.value,
             "is_live": media.is_live,
             "coverage": [
@@ -122,7 +124,7 @@ class SupplementalCaptureService:
             "inspection_id": inspection_id,
             "capture_id": capture_id,
             "status": "queued",
-            "created_at": datetime.now(UTC).isoformat(),
+            "created_at": self._clock.now().isoformat(),
             "requested_bytes": max_bytes,
             "bytes_received": 0,
             "consumption_known": False,
@@ -149,7 +151,7 @@ class SupplementalCaptureService:
         inspection = self._inspections.get(inspection_id)
         if inspection is None:
             raise LookupError("inspeção não encontrada")
-        if inspection.is_expired(datetime.now(UTC)):
+        if inspection.is_expired(self._clock.now()):
             raise TimeoutError("inspeção expirada")
         if inspection.status not in {InspectionStatus.COMPLETED, InspectionStatus.PARTIAL}:
             raise ValueError("inspeção ainda não terminou")
@@ -176,7 +178,7 @@ class SupplementalCaptureService:
             if record is None:
                 return
             record["status"] = "running"
-            record["started_at"] = datetime.now(UTC).isoformat()
+            record["started_at"] = self._clock.now().isoformat()
             self._captures.save(inspection_id, capture_id, record)
             store_id = f"{inspection_id}/captures/{capture_id}"
             capture_started = False
@@ -216,7 +218,7 @@ class SupplementalCaptureService:
                 record.update(
                     {
                         "status": "partial" if plan.warnings or failed else "completed",
-                        "finished_at": datetime.now(UTC).isoformat(),
+                        "finished_at": self._clock.now().isoformat(),
                         "bytes_received": received,
                         "consumption_known": True,
                         "segments_planned": len(plan.planned),
@@ -224,7 +226,7 @@ class SupplementalCaptureService:
                         "segments_failed": failed,
                         "warnings": plan.warnings,
                         "evidence": {
-                            "captured_at": datetime.now(UTC).isoformat(),
+                            "captured_at": self._clock.now().isoformat(),
                             "source": {
                                 "display_url": redact_url(source_url),
                                 "protocol": media.protocol.value,
@@ -243,7 +245,7 @@ class SupplementalCaptureService:
                 record.update(
                     {
                         "status": "failed",
-                        "finished_at": datetime.now(UTC).isoformat(),
+                        "finished_at": self._clock.now().isoformat(),
                         "bytes_received": received,
                         "consumption_known": bool(record.get("consumption_known", not capture_started)),
                         "error": f"capture_failed: {type(exc).__name__}",

@@ -176,6 +176,7 @@ def build_container(
         capture_service=capture_service,
         workspace=workspace,
         container_analyzer=container_analyzer,
+        clock=clock,
         max_concurrency=max(1, min(concurrency, 2)),
     )
 

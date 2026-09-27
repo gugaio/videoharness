@@ -28,6 +28,8 @@ parsing, safe fetch, limites ou análise determinística da Lens.
   `<workspace>/<inspection>/captures/<capture_id>/`, herdam o TTL do baseline e
   nunca alteram o snapshot canônico. Reinício marca trabalhos ativos como
   falhos com consumo desconhecido.
+- A verificação do TTL da inspeção base usa o mesmo `Clock` injetado na criação;
+  relógios de teste e ambientes operacionais compartilham a mesma referência temporal.
 - As rotas não implementam autenticação. Lens segue serviço interno; autenticação,
   ownership, orçamento agregado e reconciliação de consumo são responsabilidade
   do Video Harness.
