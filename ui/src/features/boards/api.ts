@@ -6,7 +6,7 @@ const focus = z.discriminatedUnion('type',[
   z.object({type:z.literal('isp'),isp:entity}),z.object({type:z.literal('pop'),pop:entity}),
 ]);
 const band = z.object({warning:z.number().finite().min(0),critical:z.number().finite().min(0)});
-const slas = z.object({startup_error_rate:band,buffer_ratio:band,join_time_ms:band.optional()});
+const slas = z.object({startup_error_rate:band,buffer_ratio:band,join_time_ms:band.optional(),join_over_sla_pct:band.optional()});
 const sessionBaseRecord={id:z.string(),name:z.string(),focus,slas,created_at:z.string(),view_path:z.string()};
 export const SessionRecordSchema=z.object({...sessionBaseRecord,board_type:z.literal('sessions').default('sessions'),session_count:z.number().int().min(0),bucket_count:z.number().int().min(0).default(0)});
 export const AggregateDimensionSchema=z.enum(['pop','isp','state','media_id','device_type']);
@@ -44,7 +44,7 @@ export type ServerBoard=z.infer<typeof RecordSchema>;
 export type ServerView=z.infer<typeof ViewSchema>;
 export type CreateServerBoard={name:string;focus:z.infer<typeof focus>;slas:{startup_error_rate:{warning:number;critical:number};buffer_ratio:{warning:number;critical:number};join_time_ms:{warning:number;critical:number}}};
 export type AggregateDimension=z.infer<typeof AggregateDimensionSchema>;
-export type AggregateMetric='startup_error_rate'|'buffer_ratio'|'join_time_ms_avg';
+export type AggregateMetric='startup_error_rate'|'buffer_ratio'|'join_time_ms_avg'|'join_over_sla_pct';
 export type AggregateView=z.infer<typeof AggregateViewSchema>;
 export type CreateAggregateBoard=Pick<z.infer<typeof AggregateRecordSchema>,'name'|'focus'|'board_type'|'primary_dimension'|'granularity'|'window'|'source'> & {slas:{startup_error_rate:{warning:number;critical:number};buffer_ratio:{warning:number;critical:number};join_time_ms:{warning:number;critical:number};join_over_sla_pct?:{warning:number;critical:number}};secondary_dimension?:AggregateDimension;linked_sessions_board_id?:string};
 export async function listServerBoards(offset:number) {return PageSchema.parse(await request<unknown>(`/api/v1/boards?offset=${offset}&limit=20`));}

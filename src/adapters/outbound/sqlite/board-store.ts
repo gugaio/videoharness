@@ -3,9 +3,9 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { BoardError, type BoardRepository, type StoredMetricContribution, type MetricIngestResult } from "../../../application/ports/board-repository.js";
-import { BOARD_LIMITS, StoredBoardDefinitionSchema, BoardSessionSchema, type BoardRecord, type BoardSession, type CreateBoardInput } from "../../../domain/boards.js";
-import { AggregateBoardDefinitionSchema, AggregateGranularitySchema, BoardBaselineBucketSchema, BoardMetricBucketSchema, COARSENING_ORDER, GRANULARITY_MS, type BoardBaselineBucket, type PatchAggregateBoard } from "../../../domain/board-metrics.js";
+import { BoardError, type BoardRepository, type MetricDeleteResult, type MetricIngestResult, type ResetBoardResult, type SessionDeleteResult, type StoredMetricContribution } from "../../../application/ports/board-repository.js";
+import { BOARD_LIMITS, StoredBoardDefinitionSchema, BoardSessionSchema, type BoardRecord, type BoardSession, type CreateBoardInput, type DeleteBoardSessionsInput } from "../../../domain/boards.js";
+import { AggregateBoardDefinitionSchema, AggregateGranularitySchema, BoardBaselineBucketSchema, BoardMetricBucketSchema, COARSENING_ORDER, GRANULARITY_MS, deriveStateFromPop, type AggregateDimension, type BoardBaselineBucket, type DeleteBoardMetricsInput, type PatchAggregateBoard } from "../../../domain/board-metrics.js";
 
 type Row = { id: string; name: string; focus: string; slas: string; created_at: string; board_type: string; aggregate_definition: string | null; effective_granularity: string | null; session_count: number; bucket_count: number };
 const selectBoard = `SELECT b.*,
@@ -141,27 +141,31 @@ export class BoardStore implements BoardRepository {
       // Materialize the bounded cell index. Metrics are calculated from the
       // original contributions so sparse metric denominators and retries survive
       // coarsening without composing percentiles or accumulating rounding error.
-      const anchor = Date.parse(board.window.from);
-      const countAt = this.db.prepare(`SELECT COUNT(*) AS count FROM (
-        SELECT series,dimension_key,CAST((ts_ms-?)/? AS INTEGER) AS slot FROM board_metric_contributions
-        WHERE board_id=? GROUP BY series,dimension_key,slot)`);
-      let effective = board.effective_granularity;
-      let count = (countAt.get(anchor, GRANULARITY_MS[effective], id) as { count: number }).count;
-      for (const candidate of COARSENING_ORDER) {
-        if (count <= BOARD_LIMITS.metric_buckets_per_board) break;
-        if (GRANULARITY_MS[candidate] <= GRANULARITY_MS[effective]) continue;
-        effective = candidate;
-        count = (countAt.get(anchor, GRANULARITY_MS[effective], id) as { count: number }).count;
-      }
-      if (count > BOARD_LIMITS.metric_buckets_per_board) throw new BoardError("board_metric_limit", 429);
-      this.db.prepare("DELETE FROM board_metric_cells WHERE board_id=?").run(id);
-      this.db.prepare(`INSERT INTO board_metric_cells (board_id,series,dimension_key,ts_ms)
-        SELECT board_id,series,dimension_key,? + CAST((ts_ms-?)/? AS INTEGER)*? FROM board_metric_contributions
-        WHERE board_id=? GROUP BY board_id,series,dimension_key,CAST((ts_ms-?)/? AS INTEGER)`)
-        .run(anchor, anchor, GRANULARITY_MS[effective], GRANULARITY_MS[effective], id, anchor, GRANULARITY_MS[effective]);
-      this.db.prepare("UPDATE boards SET effective_granularity=? WHERE id=?").run(effective, id);
-      return { inserted, updated: contributions.length - inserted, rejected: 0, effective_granularity: effective, coarsened: effective !== board.granularity, bucket_count: count };
+      const materialized = this.materialize(ownerId, board);
+      return { inserted, updated: contributions.length - inserted, rejected: 0, effective_granularity: materialized.effective_granularity, coarsened: materialized.effective_granularity !== board.granularity, bucket_count: materialized.count };
     });
+  }
+  private materialize(ownerId: string, board: Extract<BoardRecord, { board_type: "aggregate" }>): { effective_granularity: Extract<BoardRecord, { board_type: "aggregate" }>["granularity"]; count: number } {
+    const anchor = Date.parse(board.window.from);
+    const countAt = this.db.prepare(`SELECT COUNT(*) AS count FROM (
+      SELECT series,dimension_key,CAST((ts_ms-?)/? AS INTEGER) AS slot FROM board_metric_contributions
+      WHERE board_id=? GROUP BY series,dimension_key,slot)`);
+    let effective = board.effective_granularity;
+    let count = (countAt.get(anchor, GRANULARITY_MS[effective], board.id) as { count: number }).count;
+    for (const candidate of COARSENING_ORDER) {
+      if (count <= BOARD_LIMITS.metric_buckets_per_board) break;
+      if (GRANULARITY_MS[candidate] <= GRANULARITY_MS[effective]) continue;
+      effective = candidate;
+      count = (countAt.get(anchor, GRANULARITY_MS[effective], board.id) as { count: number }).count;
+    }
+    if (count > BOARD_LIMITS.metric_buckets_per_board) throw new BoardError("board_metric_limit", 429);
+    this.db.prepare("DELETE FROM board_metric_cells WHERE board_id=?").run(board.id);
+    this.db.prepare(`INSERT INTO board_metric_cells (board_id,series,dimension_key,ts_ms)
+      SELECT board_id,series,dimension_key,? + CAST((ts_ms-?)/? AS INTEGER)*? FROM board_metric_contributions
+      WHERE board_id=? GROUP BY board_id,series,dimension_key,CAST((ts_ms-?)/? AS INTEGER)`)
+      .run(anchor, anchor, GRANULARITY_MS[effective], GRANULARITY_MS[effective], board.id, anchor, GRANULARITY_MS[effective]);
+    this.db.prepare("UPDATE boards SET effective_granularity=? WHERE id=?").run(effective, board.id);
+    return { effective_granularity: effective, count };
   }
   allMetricBuckets(ownerId: string, id: string) {
     if (this.owned(ownerId, id).board_type !== "aggregate") throw new BoardError("invalid_board_type", 400);
@@ -175,6 +179,69 @@ export class BoardStore implements BoardRepository {
       }
     }
     return { buckets, baseline };
+  }
+  deleteSessions(ownerId: string, id: string, input: DeleteBoardSessionsInput): SessionDeleteResult {
+    return this.transaction(() => {
+      const board = this.owned(ownerId, id);
+      if (board.board_type !== "sessions") throw new BoardError("invalid_board_type", 400);
+      const remove = this.db.prepare("DELETE FROM board_sessions WHERE board_id=? AND session_id=?");
+      let deleted = 0;
+      if (input.session_ids) {
+        for (const sessionId of input.session_ids) deleted += Number(remove.run(id, sessionId).changes);
+      } else if (input.time_window) {
+        const from = Date.parse(input.time_window.from), to = Date.parse(input.time_window.to);
+        const rows = this.db.prepare("SELECT session_id,payload FROM board_sessions WHERE board_id=?").all(id) as { session_id: string; payload: string }[];
+        for (const row of rows) {
+          const session = BoardSessionSchema.parse(JSON.parse(row.payload));
+          if (session.started_at === undefined) continue;
+          const started = Date.parse(session.started_at);
+          if (started >= from && started < to) deleted += Number(remove.run(id, row.session_id).changes);
+        }
+      } else throw new BoardError("invalid_board_selection", 400);
+      return { deleted, remaining: board.session_count - deleted };
+    });
+  }
+  private entityDimensionFor(payload: string, dimension: AggregateDimension): string | undefined {
+    const { state_origin: _stateOrigin, ...rest } = z.object({ state_origin: z.enum(["explicit", "derived"]).optional() }).passthrough().parse(JSON.parse(payload));
+    const bucket = BoardMetricBucketSchema.parse(rest);
+    if (dimension === "state") return bucket.dimension.state?.toUpperCase() ?? (bucket.dimension.pop ? deriveStateFromPop(bucket.dimension.pop) : undefined);
+    return bucket.dimension[dimension];
+  }
+  deleteMetrics(ownerId: string, id: string, input: DeleteBoardMetricsInput): MetricDeleteResult {
+    return this.transaction(() => {
+      const board = this.owned(ownerId, id);
+      if (board.board_type !== "aggregate") throw new BoardError("invalid_board_type", 400);
+      const rows = this.db.prepare("SELECT series,dimension_key,ts,ts_ms,payload FROM board_metric_contributions WHERE board_id=?").all(id) as { series: string; dimension_key: string; ts: string; ts_ms: number; payload: string }[];
+      const remove = this.db.prepare("DELETE FROM board_metric_contributions WHERE board_id=? AND series=? AND dimension_key=? AND ts=?");
+      const from = input.time_window ? Date.parse(input.time_window.from) : undefined;
+      const to = input.time_window ? Date.parse(input.time_window.to) : undefined;
+      const entity = input.entity?.toUpperCase();
+      let deleted = 0, deletedBaseline = 0;
+      for (const row of rows) {
+        if (input.dimension) {
+          if (row.series !== "entity" || input.entity === undefined) continue;
+          const matches = this.entityDimensionFor(row.payload, input.dimension) === (input.dimension === "state" ? entity : input.entity);
+          if (!matches) continue;
+        }
+        if (from !== undefined && to !== undefined && (row.ts_ms < from || row.ts_ms >= to)) continue;
+        const removed = Number(remove.run(id, row.series, row.dimension_key, row.ts).changes);
+        if (row.series === "baseline") deletedBaseline += removed; else deleted += removed;
+      }
+      const materialized = this.materialize(ownerId, board);
+      return { deleted, deleted_baseline: deletedBaseline, remaining: rows.length - deleted - deletedBaseline, bucket_count: materialized.count };
+    });
+  }
+  resetBoard(ownerId: string, id: string): ResetBoardResult {
+    return this.transaction(() => {
+      const board = this.owned(ownerId, id);
+      if (board.board_type === "sessions") {
+        const deleted = Number(this.db.prepare("DELETE FROM board_sessions WHERE board_id=?").run(id).changes);
+        return { board_type: "sessions", deleted_sessions: deleted, deleted_contributions: 0 };
+      }
+      const deleted = Number(this.db.prepare("DELETE FROM board_metric_contributions WHERE board_id=?").run(id).changes);
+      this.materialize(ownerId, board);
+      return { board_type: "aggregate", deleted_sessions: 0, deleted_contributions: deleted };
+    });
   }
   delete(ownerId: string, id: string): boolean {
     return this.transaction(() => {

@@ -59,8 +59,8 @@ controle de streams, probe/decode_test ou execução autônoma de LLM.
 - A Lens fornece no máximo 2.000 referências por leitura de cobertura; o MCP
   pagina em grupos de até 100. Evidência adicional fica arquivada no VH depois
   de observada em estado terminal.
-- Corpo MCP limitado a 32 KiB, exceto `ingest_board_metrics` (256 KiB incluindo
-  o envelope JSON-RPC); resultado da tool limitado a 256 KiB. Resultados
+- Corpo MCP limitado a 32 KiB, exceto `ingest_board_metrics` e
+  `ingest_board_sessions` (256 KiB incluindo o envelope JSON-RPC); resultado da tool limitado a 256 KiB. Resultados
   maiores retornam erro explícito: selecione menos seções ou uma página menor;
   para seções individualmente grandes, use o snapshot completo no dashboard.
 - Sem sessão MCP ou SSE persistente: chamadas POST retornam JSON; GET/DELETE
@@ -88,16 +88,22 @@ locais em `/dashboard/boards/demos` são isoladas e não recebem esses dados.
 | `create_board` | Criar board com nome, foco fixo e SLAs explícitos; retorna `id` e `view_path` |
 | `list_boards` | Listar boards do owner com contagem de sessões, `offset`/`limit` |
 | `get_board` | Consultar foco e SLAs, sem devolver todas as sessões |
-| `ingest_board_sessions` | Enviar lote atômico de sessões; upsert por `(board_id, session_id)` |
+| `ingest_board_sessions` | Enviar lote atômico de até 500 sessões; upsert por `(board_id, session_id)`; `started_at` obrigatório |
 | `list_board_sessions` | Consultar sessões em páginas de até 50 |
-| `get_board_view` | Obter grafo e indicadores determinísticos; filtros AND mantêm o foco original |
+| `get_board_view` | Obter grafo (sessions) ou heatmap/ranking/baseline/série (aggregate); filtros AND; `metric`/`limit` só paginam/selecionam no aggregate |
 | `ingest_board_metrics` | Enviar buckets e baseline de um board aggregate, com resultado por item |
 | `patch_board` | Atualizar nome, SLAs ou vínculo de evidência permitido pelo tipo de board |
+| `delete_board_sessions` | Apagar sessões por `session_ids` ou `time_window`; retorna apagados/restantes |
+| `delete_board_metrics` | Apagar contribuições do aggregate por janela e/ou dimensão+entidade |
+| `reset_board` | Esvaziar todos os dados do board sem apagar sua definição |
 
 ### Contrato e unidades
 
 Cada sessão tem `session_id`, `user_id`, `device: {id, model?}`, `isp`, `pop`,
-`media_id` e `startup_error`. Os IDs/campos de entidade têm até 128 caracteres.
+`media_id`, `started_at` (ISO 8601 com offset, obrigatório no ingest) e
+`startup_error`. Os IDs/campos de entidade têm até 128 caracteres. Sessões
+gravadas antes de `started_at` existir continuam legíveis, mas ficam fora de
+qualquer recorte temporal (`excluded_missing_timestamp_count` informa quantas).
 Identidade de um device = **par `(user_id, device.id)`**: o mesmo `device.id` em
 outro usuário é outro device. O foco de device usa
 `{type:"device", user_id:"user-42", device_id:"tv"}`; seu filtro usa
@@ -111,7 +117,10 @@ outro usuário é outro device. O foco de device usa
   total observado da reprodução, incluindo buffering; o agente fornece o ratio.
 - Reenviar o mesmo `session_id` substitui a sessão inteira, sem duplicar.
   IDs repetidos dentro do mesmo lote são rejeitados. Qualquer sessão inválida
-  rejeita o lote completo, sem gravação parcial.
+  (incluindo `started_at` ausente) rejeita o lote completo, sem gravação parcial.
+  Lotes aceitam 1..500 sessões; o teto por board é 10.000 e por owner 50.000.
+- Para remover dados ruins sem recriar o board, use `delete_board_sessions`
+  (por `session_ids` ou `time_window`) ou `reset_board` para esvaziar o board.
 - Sessões de outras entidades podem estar no board, mas ficam fora da view se
   não corresponderem ao foco fixo. Não há janela de tempo nesta etapa.
 
@@ -162,12 +171,14 @@ Para cada recorte, nó e conexão:
       "session_id": "s-1", "user_id": "user-42",
       "device": {"id": "tv", "model": "Samsung Tizen"},
       "isp": "Vivo", "pop": "GRU", "media_id": "match-123",
+      "started_at": "2026-09-24T21:00:00Z",
       "startup_error": false, "join_time_ms": 1800, "buffer_ratio": 0.012
     },
     {
       "session_id": "s-2", "user_id": "user-42",
       "device": {"id": "phone", "model": "iPhone"},
       "isp": "Claro", "pop": "GRU", "media_id": "match-123",
+      "started_at": "2026-09-24T21:02:00Z",
       "startup_error": true
     }
   ]
@@ -194,17 +205,18 @@ nós e links sem perder volume; “Outros” não é filtrável.
 ### REST, limites e autenticação
 
 REST usa os mesmos casos de uso: `GET /v1/boards/schema`, `POST/GET /v1/boards`,
-`GET/DELETE /v1/boards/:id`, `POST/GET /v1/boards/:id/sessions` e
-`POST /v1/boards/:id/view`. O browser usa o prefixo `/api` e a sessão Clerk;
+`GET/DELETE /v1/boards/:id`, `POST/GET /v1/boards/:id/sessions`,
+`POST /v1/boards/:id/sessions/delete`, `POST /v1/boards/:id/metrics/delete`,
+`POST /v1/boards/:id/reset` e `POST /v1/boards/:id/view`. O browser usa o prefixo `/api` e a sessão Clerk;
 REST não aceita token MCP como sessão humana. MCP sempre exige token pessoal,
 inclusive em dev. Sem Clerk no modo dev, REST usa `dev-user` conforme o fallback
 existente. Um ID de outro owner responde como inexistente.
 
 Limites fixos: 100 boards por owner, 10.000 sessões por board, 50.000 sessões
-armazenadas por owner, 50 sessões por lote e **32 KiB de corpo** (incluindo o
-JSON-RPC no MCP). Ambos os limites de lote/corpo se aplicam; IDs longos podem
-fazer um lote de 50 exceder 32 KiB. Prefira lotes de 10–20 e reduza-os em caso de
-413. Corpo inválido retorna 400 no REST ou erro de tool; quota retorna 429 no
+armazenadas por owner, 500 sessões por lote e 256 KiB de corpo para os ingests
+(`ingest_board_sessions`/`ingest_board_metrics`, incluindo o JSON-RPC no MCP);
+as demais tools mantêm 32 KiB. Ambos os limites de lote/corpo se aplicam. Corpo
+inválido retorna 400 no REST ou erro de tool; quota retorna 429 no
 REST ou erro de tool, sem gravar o lote. Substituições existentes continuam
 permitidas quando a quota está cheia. Paginação tem `offset`, `limit` (1–50,
 default 20) e `next_offset`. Resultados MCP preservam o teto global de 256 KiB.

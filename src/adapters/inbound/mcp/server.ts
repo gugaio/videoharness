@@ -243,11 +243,11 @@ export function registerMcpRoutes(app: FastifyInstance, deps: Deps) {
     },
     handler: async (request, reply) => {
       if (request.method !== "POST") return reply.header("Allow", "POST").code(405).send({ error: "method_not_allowed" });
-      const metricsCall = z.object({
+      const bulkCall = z.object({
         method: z.literal("tools/call"),
-        params: z.object({ name: z.literal("ingest_board_metrics") }),
+        params: z.object({ name: z.enum(["ingest_board_metrics", "ingest_board_sessions"]) }),
       }).safeParse(request.body).success;
-      if (!metricsCall && (bodySizes.get(request) ?? 0) > 32 * 1024) {
+      if (!bulkCall && (bodySizes.get(request) ?? 0) > 32 * 1024) {
         return reply.code(413).send({ error: "mcp_body_too_large", limit_bytes: 32 * 1024 });
       }
       const ownerId = request.vhOwnerId;

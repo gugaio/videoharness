@@ -1,7 +1,7 @@
-import type { AggregateBoardRecord, BoardRecord, BoardSession, CreateBoardInput } from "../../domain/boards.js";
-import type { BoardBaselineBucket, BoardMetricBucket, PatchAggregateBoard } from "../../domain/board-metrics.js";
+import type { AggregateBoardRecord, BoardRecord, BoardSession, CreateBoardInput, DeleteBoardSessionsInput } from "../../domain/boards.js";
+import type { BoardBaselineBucket, BoardMetricBucket, DeleteBoardMetricsInput, PatchAggregateBoard } from "../../domain/board-metrics.js";
 export class BoardError extends Error {
-  constructor(readonly code: "board_not_found" | "board_limit" | "board_session_limit" | "board_owner_session_limit" | "board_metric_limit" | "board_owner_metric_limit" | "board_metrics_body_too_large" | "invalid_board_filter" | "invalid_board_type" | "invalid_board_patch" | "linked_board_not_found", readonly status: number) { super(code); }
+  constructor(readonly code: "board_not_found" | "board_limit" | "board_session_limit" | "board_owner_session_limit" | "board_metric_limit" | "board_owner_metric_limit" | "board_metrics_body_too_large" | "invalid_board_filter" | "invalid_board_type" | "invalid_board_patch" | "invalid_board_selection" | "linked_board_not_found", readonly status: number) { super(code); }
 }
 export type StoredMetricContribution = BoardMetricBucket & { dimension_key: string; state_origin?: "explicit" | "derived" };
 export type MetricIngestResult = {
@@ -12,6 +12,9 @@ export type MetricIngestResult = {
   coarsened: boolean;
   bucket_count: number;
 };
+export type SessionDeleteResult = { deleted: number; remaining: number };
+export type MetricDeleteResult = { deleted: number; deleted_baseline: number; remaining: number; bucket_count: number };
+export type ResetBoardResult = { board_type: "sessions" | "aggregate"; deleted_sessions: number; deleted_contributions: number };
 export interface BoardRepository {
   create(ownerId: string, input: CreateBoardInput): BoardRecord;
   get(ownerId: string, boardId: string): BoardRecord | undefined;
@@ -22,5 +25,8 @@ export interface BoardRepository {
   patch(ownerId: string, boardId: string, input: PatchAggregateBoard): BoardRecord;
   ingestMetrics(ownerId: string, boardId: string, buckets: StoredMetricContribution[], baseline: BoardBaselineBucket[]): MetricIngestResult;
   allMetricBuckets(ownerId: string, boardId: string): { buckets: StoredMetricContribution[]; baseline: BoardBaselineBucket[] };
+  deleteSessions(ownerId: string, boardId: string, input: DeleteBoardSessionsInput): SessionDeleteResult;
+  deleteMetrics(ownerId: string, boardId: string, input: DeleteBoardMetricsInput): MetricDeleteResult;
+  resetBoard(ownerId: string, boardId: string): ResetBoardResult;
   delete(ownerId: string, boardId: string): boolean;
 }

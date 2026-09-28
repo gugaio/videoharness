@@ -91,9 +91,13 @@ sendo contratos HTTP.
    Boards `aggregate` adicionam ingestão de buckets pré-agregados com volume,
    proveniência/amostragem, baseline independente e rollups ponderados. UI oferece
    heatmap, ranking de impacto estimado e séries temporais; vínculo explícito com
-   board de sessões permite investigar dimensão/janela usando `started_at` opcional.
-   Contribuições idempotentes e materializações com resolução adaptativa têm quotas
-   próprias (AD-0019). Não há connector NPAW automático nem sessões sintetizadas.
+   board de sessões permite investigar dimensão/janela usando `started_at`
+   (obrigatório em ingests novos, opcional na leitura legada). Join time aceita
+   média ou soma+contagem exata; `join_over_sla_pct` é métrica de view. Sessões
+   aceitam 500/call, `get_board_view` compartilha envelope e há delete/reset sem
+   apagar definições (AD-0020). Contribuições idempotentes e materializações com
+   resolução adaptativa têm quotas próprias (AD-0019). Não há connector NPAW
+   automático nem sessões sintetizadas.
 6. **Fase 5 — Experiments**: clone do mock + network shaper no orquestrador;
    data plane serve somente recurso registrado.
 

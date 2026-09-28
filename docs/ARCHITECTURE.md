@@ -212,8 +212,18 @@ sessões existentes. O contrato e exemplos estão em [BOARD_METRICS.md](BOARD_ME
 A chave de ingestão combina board, dimensões configuradas e início de bucket
 normalizado em UTC. O upsert substitui a contribuição inteira. Baseline do focus
 é uma série independente: em contagem `touch`, somar POPs não produz plays
-distintos do ISP. Rollups de taxas/médias são ponderados por volume disponível
-para cada métrica. Percentis fornecidos não são combinados entre buckets.
+distintos do ISP. Rollups de taxas usam volume; a média de join usa
+`soma/contagem` quando a fonte decompõe (exata) e recai em volume apenas quando
+só há média por bucket. Percentis fornecidos não são combinados entre buckets.
+`join_over_sla_pct` é métrica de view com banda opcional: sem banda, exibida
+como `unknown`.
+
+Sessões aceitam lotes de até 500 por chamada (256 KiB nos ingests) e exigem
+`started_at`; linhas legadas sem timestamp continuam legíveis, fora de recortes
+temporais. Há remoção por `session_id`/janela, por janela/dimensão no aggregate
+e reset que esvazia o board sem apagar a definição. `get_board_view` usa envelope
+compartilhado: sessions devolvem o grafo completo e ignoram `metric`/`limit`,
+exclusivos do aggregate.
 
 Contribuições originais e índice de células materializadas têm quotas separadas.
 As métricas da view são calculadas das contribuições, preservando o denominador
@@ -272,6 +282,7 @@ view e exigem nova inspeção; samples/PES estruturais permanecem independentes.
 
 | ID | Decisão |
 |---|---|
+| AD-0020 | Revisão do contrato de boards (AD-0018/AD-0019): join time do aggregate aceita `join_time_ms` (alias) e `join_time_ms_sum` + `join_time_ms_count` (composição exata; peso = contagem, não volume); `join_over_sla_pct` vira métrica de view com banda opcional. Sessões aceitam 500/call com `started_at` obrigatório no ingest e leitura legada preservada. `get_board_view` compartilha envelope e sessions ignoram `metric`/`limit`. Remoção por id/janela/dimensão e reset esvaziam dados sem apagar definições. |
 | AD-0019 | Boards `aggregate` são aditivos aos boards `sessions`: recebem buckets com volume obrigatório, proveniência e amostragem explícitas. Baseline do focus é independente de rollups `touch`; percentis não são compostos. Contribuições idempotentes e materializações com resolução adaptativa têm quotas separadas. A ponte para sessões usa vínculo do mesmo owner, dimensões e janela temporal; não fabrica evidência nem extrai dados da fonte automaticamente. |
 | AD-0018 | Agentes enviam sessões validadas e SLAs explícitos por board. App persiste com ownership e quotas e produz agregados determinísticos; REST/MCP compartilham casos de uso e UI apresenta as views calculadas. Startup rate usa todas as tentativas, buffer/join médias de sucessos. Cada métrica expõe também contagens por qualidade individual para faixas proporcionais nas conexões. Substitui o contrato de payloads prontos da AD-0017, preservado apenas nos demos locais. |
 | AD-0017 | Superada pela AD-0018 para boards reais. No protótipo inicial, Boards apresentam payloads prontos do produtor: nós, conexões, volumes, métricas/status e recortes com transições explícitas. A UI não agrega sessões nem calcula qualidade; fixtures estáticas simulam o payload futuro do agente. Configurações ficam no localStorage por repositório substituível. Ingestão REST/MCP, ownership e persistência de servidor não estão implementados. |

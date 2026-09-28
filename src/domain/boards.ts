@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AggregateBoardDefinitionSchema, type AggregateBoardDefinition, type BoardAggregateView } from "./board-metrics.js";
+import { AggregateBoardDefinitionSchema, AggregateDimensionSchema, AggregateMetricSchema, type AggregateBoardDefinition, type BoardAggregateView } from "./board-metrics.js";
 
 export const BoardIdSchema = z.string().min(1).max(128);
 const EntitySchema = z.string().trim().min(1).max(128);
@@ -17,12 +17,18 @@ export const CreateSessionBoardSchema = StoredBoardDefinitionSchema.extend({ sla
 export const CreateAggregateBoardSchema = AggregateBoardDefinitionSchema;
 export const CreateBoardSchema = z.union([CreateAggregateBoardSchema, CreateSessionBoardSchema]);
 export const CreateAnyBoardSchema = CreateBoardSchema;
-const sessionBase = { session_id: EntitySchema, user_id: EntitySchema, device: z.object({ id: EntitySchema, model: EntitySchema.optional() }).strict(), isp: EntitySchema, pop: EntitySchema, media_id: EntitySchema, device_type: EntitySchema.optional(), started_at: z.string().datetime({ offset: true }).optional() };
+const sessionCore = { session_id: EntitySchema, user_id: EntitySchema, device: z.object({ id: EntitySchema, model: EntitySchema.optional() }).strict(), isp: EntitySchema, pop: EntitySchema, media_id: EntitySchema, device_type: EntitySchema.optional() };
+// Stored sessions keep started_at optional so rows written before temporal
+// evidence existed remain readable. Ingest requires it explicitly.
 export const BoardSessionSchema = z.discriminatedUnion("startup_error", [
-  z.object({ ...sessionBase, startup_error: z.literal(true) }).strict(),
-  z.object({ ...sessionBase, startup_error: z.literal(false), join_time_ms: z.number().finite().min(0).max(86_400_000), buffer_ratio: z.number().finite().min(0).max(1) }).strict(),
+  z.object({ ...sessionCore, started_at: z.string().datetime({ offset: true }).optional(), startup_error: z.literal(true) }).strict(),
+  z.object({ ...sessionCore, started_at: z.string().datetime({ offset: true }).optional(), startup_error: z.literal(false), join_time_ms: z.number().finite().min(0).max(86_400_000), buffer_ratio: z.number().finite().min(0).max(1) }).strict(),
 ]);
-export const IngestBoardSessionsSchema = z.object({ sessions: z.array(BoardSessionSchema).min(1).max(50) }).strict().refine(s => new Set(s.sessions.map(item => item.session_id)).size === s.sessions.length, "session_id must be unique within a batch");
+const IngestBoardSessionSchema = z.discriminatedUnion("startup_error", [
+  z.object({ ...sessionCore, started_at: z.string().datetime({ offset: true }), startup_error: z.literal(true) }).strict(),
+  z.object({ ...sessionCore, started_at: z.string().datetime({ offset: true }), startup_error: z.literal(false), join_time_ms: z.number().finite().min(0).max(86_400_000), buffer_ratio: z.number().finite().min(0).max(1) }).strict(),
+]);
+export const IngestBoardSessionsSchema = z.object({ sessions: z.array(IngestBoardSessionSchema).min(1).max(500) }).strict().refine(s => new Set(s.sessions.map(item => item.session_id)).size === s.sessions.length, "session_id must be unique within a batch");
 export const BoardFilterSchema = z.discriminatedUnion("dimension", [
   z.object({ dimension: z.literal("user"), entity: EntitySchema }).strict(),
   z.object({ dimension: z.literal("device"), entity: EntitySchema, user_id: EntitySchema }).strict(),
@@ -32,11 +38,30 @@ export const BoardFilterSchema = z.discriminatedUnion("dimension", [
   z.object({ dimension: z.literal("state"), entity: EntitySchema }).strict(),
   z.object({ dimension: z.literal("device_type"), entity: EntitySchema }).strict(),
 ]);
-export const BoardViewRequestSchema = z.object({
-  filters: z.array(BoardFilterSchema).max(4).default([]),
-  time_window: z.object({ from: z.string().datetime({ offset: true }), to: z.string().datetime({ offset: true }) }).strict().refine(w => Date.parse(w.from) < Date.parse(w.to), "time_window.from must be before time_window.to").optional(),
-  quality: z.enum(["startup_error", "warning_buffer", "critical_buffer", "warning_join", "critical_join", "any_sla_violation"]).optional(),
-}).strict().refine(s => new Set(s.filters.map(f => f.dimension)).size === s.filters.length, "one filter per dimension");
+const oneFilterPerDimension = (value: { filters: Array<{ dimension: string }> }) => new Set(value.filters.map(filter => filter.dimension)).size === value.filters.length;
+const elementWindowSchema = z.object({ from: z.string().datetime({ offset: true }), to: z.string().datetime({ offset: true }) }).strict().refine(w => Date.parse(w.from) < Date.parse(w.to), "time_window.from must be before time_window.to");
+const qualityFilterSchema = z.enum(["startup_error", "warning_buffer", "critical_buffer", "warning_join", "critical_join", "any_sla_violation"]);
+const sessionViewFields = { filters: z.array(BoardFilterSchema).max(4).default([]), time_window: elementWindowSchema.optional(), quality: qualityFilterSchema.optional() };
+export const BoardViewRequestSchema = z.object(sessionViewFields).strict().refine(oneFilterPerDimension, "one filter per dimension");
+// A single MCP tool schema is shared by both board types. Sessions accept the
+// aggregate-only parameters declared there and ignore them (metric/dimension
+// and pagination only apply to aggregate heatmaps). This keeps the advertised
+// contract and the runtime behavior aligned instead of rejecting valid calls.
+export const SessionBoardViewRequestSchema = z.object({
+  ...sessionViewFields,
+  metric: AggregateMetricSchema.optional(),
+  dimension: AggregateDimensionSchema.optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+  offset: z.number().int().min(0).max(25_000).optional(),
+  time_offset: z.number().int().min(0).max(25_000).optional(),
+  time_limit: z.number().int().min(1).max(720).optional(),
+}).strict().refine(oneFilterPerDimension, "one filter per dimension");
+export const DeleteBoardSessionsObjectSchema = z.object({
+  session_ids: z.array(EntitySchema).min(1).max(500).optional(),
+  time_window: elementWindowSchema.optional(),
+}).strict();
+export const DeleteBoardSessionsSchema = DeleteBoardSessionsObjectSchema.refine(value => (value.session_ids !== undefined) !== (value.time_window !== undefined), "provide exactly one of session_ids or time_window");
+export type DeleteBoardSessionsInput = z.infer<typeof DeleteBoardSessionsSchema>;
 export const BoardPageSchema = z.object({ offset: z.number().int().min(0).max(50_000).default(0), limit: z.number().int().min(1).max(50).default(20) }).strict();
 export type CreateBoardInput = z.infer<typeof CreateBoardSchema>;
 export type BoardSession = z.infer<typeof BoardSessionSchema>;
@@ -52,4 +77,4 @@ export type BoardLink = { id: string; source: string; target: string; volume: nu
 export type BoardViewRequest = z.infer<typeof BoardViewRequestSchema>;
 export type SessionBoardView = { board_type: "sessions"; id: string; sessionCount: number; metrics: Partial<Record<BoardMetricName, BoardMetric>>; nodes: BoardNode[]; links: BoardLink[]; filters: BoardFilter[]; columns: BoardFilter["dimension"][]; board: SessionBoardRecord; excluded_missing_timestamp_count: number };
 export type BoardView = SessionBoardView | BoardAggregateView;
-export const BOARD_LIMITS = { boards_per_owner: 100, sessions_per_board: 10_000, sessions_per_owner: 50_000, sessions_per_batch: 50, body_bytes: 32_768, metric_batch_buckets: 500, metric_body_bytes: 262_144, metric_buckets_per_board: 25_000, metric_contributions_per_board: 100_000, metric_buckets_per_owner: 250_000, nodes_per_column: 8, filters: 4 } as const;
+export const BOARD_LIMITS = { boards_per_owner: 100, sessions_per_board: 10_000, sessions_per_owner: 50_000, sessions_per_batch: 500, body_bytes: 32_768, session_body_bytes: 262_144, metric_batch_buckets: 500, metric_body_bytes: 262_144, metric_buckets_per_board: 25_000, metric_contributions_per_board: 100_000, metric_buckets_per_owner: 250_000, nodes_per_column: 8, filters: 4 } as const;

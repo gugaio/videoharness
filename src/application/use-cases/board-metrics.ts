@@ -4,7 +4,7 @@ import { BoardError, type BoardRepository, type StoredMetricContribution } from 
 import { BOARD_LIMITS, type AggregateBoardRecord, type BoardRecord } from "../../domain/boards.js";
 import {
   AggregateDimensions, BoardAggregateViewRequestSchema, BoardBaselineBucketSchema, BoardMetricBucketSchema,
-  BoardMetricsIngestSchema, GRANULARITY_MS, canonicalDimensionKey, deriveStateFromPop, validBucketTime,
+  BoardMetricsIngestSchema, DeleteBoardMetricsSchema, GRANULARITY_MS, canonicalDimensionKey, deriveStateFromPop, validBucketTime,
   type AggregateDimension, type AggregateGranularity, type BoardAggregateCell, type BoardBaselineBucket,
   type BoardMetricBucket, type BoardAggregateView,
 } from "../../domain/board-metrics.js";
@@ -91,7 +91,9 @@ function itemError(item: "bucket" | "baseline", index: number, error: { issues: 
   return { item, index, reason: issue ? `${issue.path.join(".")}: ${issue.message}` : "invalid item" };
 }
 
-type MetricName = "startup_error_rate" | "buffer_ratio" | "join_time_ms_avg";
+type MetricName = "startup_error_rate" | "buffer_ratio" | "join_time_ms_avg" | "join_over_sla_pct";
+const MetricNames: readonly MetricName[] = ["startup_error_rate", "buffer_ratio", "join_time_ms_avg", "join_over_sla_pct"];
+type MetricBand = { warning: number; critical: number };
 type Accumulator = {
   volume: number;
   sums: Record<MetricName, number>;
@@ -99,21 +101,30 @@ type Accumulator = {
   sourceRows: number;
   percentiles: { p50: number | null; p95: number | null; p99: number | null };
 };
-const metricFields: Record<MetricName, "startup_error_rate" | "buffer_ratio" | "join_time_ms_avg"> = {
-  startup_error_rate: "startup_error_rate", buffer_ratio: "buffer_ratio", join_time_ms_avg: "join_time_ms_avg",
-};
-function freshAccumulator(): Accumulator { return { volume: 0, sums: { startup_error_rate: 0, buffer_ratio: 0, join_time_ms_avg: 0 }, weights: { startup_error_rate: 0, buffer_ratio: 0, join_time_ms_avg: 0 }, sourceRows: 0, percentiles: { p50: null, p95: null, p99: null } }; }
+function freshAccumulator(): Accumulator { return { volume: 0, sums: { startup_error_rate: 0, buffer_ratio: 0, join_time_ms_avg: 0, join_over_sla_pct: 0 }, weights: { startup_error_rate: 0, buffer_ratio: 0, join_time_ms_avg: 0, join_over_sla_pct: 0 }, sourceRows: 0, percentiles: { p50: null, p95: null, p99: null } }; }
 function anchorTime(timestamp: string, origin: string, granularity: AggregateGranularity): string {
   const step = GRANULARITY_MS[granularity];
   const delta = Date.parse(timestamp) - Date.parse(origin);
   return new Date(Date.parse(origin) + Math.floor(delta / step) * step).toISOString();
 }
+// The weight used to average a metric: supplied join_time_ms_count when the
+// source decomposes join time, otherwise the bucket volume. Rates are weighted
+// by volume; a join mean is only correct when weighted by the joins sampled.
+function metricSample(item: BoardMetricBucket | BoardBaselineBucket, metric: MetricName): { value: number; weight: number } | undefined {
+  if (metric === "join_time_ms_avg") {
+    if (item.join_time_ms_sum !== undefined && item.join_time_ms_count !== undefined) return item.join_time_ms_count > 0 ? { value: item.join_time_ms_sum / item.join_time_ms_count, weight: item.join_time_ms_count } : undefined;
+    const average = item.join_time_ms_avg ?? item.join_time_ms;
+    return average !== undefined && item.volume > 0 ? { value: average, weight: item.volume } : undefined;
+  }
+  const value = item[metric];
+  return value !== undefined && item.volume > 0 ? { value, weight: item.volume } : undefined;
+}
 function addMetricValues(target: Accumulator, item: BoardMetricBucket | BoardBaselineBucket): void {
   target.volume += item.volume;
-  for (const metric of Object.keys(metricFields) as MetricName[]) {
-    const field = metricFields[metric];
-    const value = item[field];
-    if (value !== undefined && item.volume > 0) { target.sums[metric] += value * item.volume; target.weights[metric] += item.volume; }
+  for (const metric of MetricNames) {
+    const sample = metricSample(item, metric);
+    if (!sample) continue;
+    target.sums[metric] += sample.value * sample.weight; target.weights[metric] += sample.weight;
   }
   const p50 = item.join_time_ms_p50 ?? null, p95 = item.join_time_ms_p95 ?? null, p99 = item.join_time_ms_p99 ?? null;
   if (target.sourceRows === 0) target.percentiles = { p50, p95, p99 };
@@ -134,10 +145,16 @@ function entityFor(item: StoredMetricContribution, dimension: AggregateDimension
 function matchesAggregateFilters(item: StoredMetricContribution, filters: Array<{ dimension: AggregateDimension; entity: string }>): boolean {
   return filters.every(filter => entityFor(item, filter.dimension) === (filter.dimension === "state" ? filter.entity.toUpperCase() : filter.entity));
 }
-function sla(board: AggregateBoardRecord, metric: MetricName) { return metric === "join_time_ms_avg" ? board.slas.join_time_ms : board.slas[metric]; }
-function statusFor(value: number | null, warning: number, critical: number): "good" | "warning" | "bad" | "unknown" {
-  if (value === null) return "unknown";
-  return value >= critical ? "bad" : value >= warning ? "warning" : "good";
+// join_over_sla_pct has an optional SLA band; without it the metric is shown but
+// stays unknown instead of being silently classified against another band.
+function bandFor(board: AggregateBoardRecord, metric: MetricName): MetricBand | undefined {
+  if (metric === "join_time_ms_avg") return board.slas.join_time_ms;
+  if (metric === "join_over_sla_pct") return board.slas.join_over_sla_pct;
+  return board.slas[metric];
+}
+function statusFor(value: number | null, band: MetricBand | undefined): "good" | "warning" | "bad" | "unknown" {
+  if (value === null || band === undefined) return "unknown";
+  return value >= band.critical ? "bad" : value >= band.warning ? "warning" : "good";
 }
 function hashView(boardId: string, request: unknown): string { return createHash("sha256").update(JSON.stringify({ boardId, request })).digest("hex").slice(0, 16); }
 
@@ -155,7 +172,7 @@ export function getAggregateBoardView(repository: BoardRepository, ownerId: stri
   const { buckets: rawBuckets, baseline: rawBaseline } = repository.allMetricBuckets(ownerId, id);
   const filtered = rawBuckets.filter(bucket => matchesAggregateFilters(bucket, request.filters) && Date.parse(bucket.ts) >= Date.parse(selectedWindow.from) && Date.parse(bucket.ts) < Date.parse(selectedWindow.to));
   const metric = request.metric;
-  const band = sla(board, metric);
+  const band = bandFor(board, metric);
   const from = board.window.from;
   const step = GRANULARITY_MS[board.effective_granularity];
 
@@ -169,8 +186,8 @@ export function getAggregateBoardView(repository: BoardRepository, ownerId: stri
     if (sourceOrigin && group.state_origin !== sourceOrigin) group.state_origin = "mixed";
     const point = group.byTime.get(ts) ?? freshAccumulator();
     addMetricValues(point, item); addMetricValues(group.total, item);
-    const rawMetric = item[metricFields[metric]];
-    if (rawMetric !== undefined && item.volume > 0) group.impact_score += item.volume * Math.max(0, rawMetric - band.warning);
+    const sample = metricSample(item, metric);
+    if (sample && band && sample.value > band.warning) group.impact_score += sample.weight * (sample.value - band.warning);
     group.byTime.set(ts, point); entities.set(entity, group);
   }
   const entityRows = [...entities.entries()].map(([entity, group]) => ({
@@ -199,12 +216,12 @@ export function getAggregateBoardView(repository: BoardRepository, ownerId: stri
   const basePage = pageTimes.map(ts => {
     const aggregate = baselineByTime.get(ts);
     const value = aggregate ? valueOf(aggregate, metric) : null;
-    return { ts, value, volume: aggregate?.volume ?? 0, metric_coverage: metricCoverage(aggregate, metric), status: statusFor(value, band.warning, band.critical) };
+    return { ts, value, volume: aggregate?.volume ?? 0, metric_coverage: metricCoverage(aggregate, metric), status: statusFor(value, band) };
   });
   const series = pageTimes.map(ts => {
     const aggregate = seriesByTime.get(ts);
     const value = aggregate ? valueOf(aggregate, metric) : null;
-    return { ts, value, volume: aggregate?.volume ?? 0, metric_coverage: metricCoverage(aggregate, metric), status: statusFor(value, band.warning, band.critical) };
+    return { ts, value, volume: aggregate?.volume ?? 0, metric_coverage: metricCoverage(aggregate, metric), status: statusFor(value, band) };
   });
   const heatmapEntities = pageEntities.map(row => ({
     dim_key: row.dim_key, label: row.label, volume: row.volume, ...(row.group.state_origin ? { state_origin: row.group.state_origin } : {}),
@@ -214,7 +231,7 @@ export function getAggregateBoardView(repository: BoardRepository, ownerId: stri
       const base = baselineByTime.get(ts);
       const baselineValue = base ? valueOf(base, metric) : null;
       return {
-        ts, status: statusFor(value, band.warning, band.critical), value,
+        ts, status: statusFor(value, band), value,
         volume: aggregate?.volume ?? 0,
         metric_coverage: metricCoverage(aggregate, metric),
         p50: metric === "join_time_ms_avg" && aggregate?.sourceRows === 1 ? aggregate.percentiles.p50 : null,
@@ -228,7 +245,7 @@ export function getAggregateBoardView(repository: BoardRepository, ownerId: stri
   const rankingRows = [...entityRows].sort((a, b) => b.impact_score - a.impact_score || b.volume - a.volume || a.dim_key.localeCompare(b.dim_key));
   const ranking = rankingRows.slice(0, request.limit).map(row => ({
     dim_key: row.dim_key, label: row.label, volume: row.volume, value: row.value,
-    status: statusFor(row.value, band.warning, band.critical),
+    status: statusFor(row.value, band),
     impact_score: row.impact_score,
     impact_unit: metric === "join_time_ms_avg" ? "play·ms" : "play-equivalents",
   }));
@@ -266,4 +283,13 @@ export function getAggregateBoardView(repository: BoardRepository, ownerId: stri
     },
     ranking, ranking_total: rankingRows.length, baseline: basePage, series, annotations, filters: request.filters,
   };
+}
+
+export type BoardMetricDeleteResponse = { deleted: number; deleted_baseline: number; remaining: number; bucket_count: number };
+export function deleteBoardMetrics(repository: BoardRepository, ownerId: string, id: string, input: unknown): BoardMetricDeleteResponse {
+  const board = repository.get(ownerId, id);
+  if (!board) throw new BoardError("board_not_found", 404);
+  if (board.board_type !== "aggregate") throw new BoardError("invalid_board_type", 400);
+  const parsed = DeleteBoardMetricsSchema.parse(input);
+  return repository.deleteMetrics(ownerId, id, parsed);
 }

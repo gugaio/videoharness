@@ -6,7 +6,7 @@ import { BoardStore } from "./board-store.js";
 import { getBoardView, ingestBoardSessions } from "../../../application/use-cases/boards.js";
 import type { BoardSession, CreateBoardInput, SessionBoardView } from "../../../domain/boards.js";
 const input:CreateBoardInput={name:"SLA",focus:{type:"user",user_id:"u"},slas:{startup_error_rate:{warning:0.01,critical:0.05},buffer_ratio:{warning:0.02,critical:0.05},join_time_ms:{warning:2000,critical:5000}}};
-const session:BoardSession={session_id:"s",user_id:"u",device:{id:"tv"},isp:"isp",pop:"pop",media_id:"media",startup_error:false,join_time_ms:1000,buffer_ratio:0.01};
+const session:BoardSession={session_id:"s",user_id:"u",device:{id:"tv"},isp:"isp",pop:"pop",media_id:"media",started_at:"2026-09-24T18:00:00-03:00",startup_error:false,join_time_ms:1000,buffer_ratio:0.01};
 function sessionView(store:BoardStore,owner:string,id:string,input:unknown):SessionBoardView{const view=getBoardView(store,owner,id,input);if(view.board_type!=="sessions")throw new Error("expected sessions view");return view;}
 describe("Board persistence and deterministic aggregation",()=>{
  it("persists upserts and avoids device identity collisions across users",()=>{
@@ -15,8 +15,15 @@ describe("Board persistence and deterministic aggregation",()=>{
    expect(store.get("other",board.id)).toBeUndefined();expect(sessionView(store,"owner",board.id,{filters:[]}).sessionCount).toBe(1);
    ingestBoardSessions(store,"owner",board.id,{sessions:[{...session,buffer_ratio:0.05}]});const view=sessionView(store,"owner",board.id,{filters:[]});expect(view.metrics.buffer_ratio?.status).toBe("bad");expect(store.get("owner",board.id)?.session_count).toBe(2);
   }finally{store.close();rmSync(dir,{recursive:true,force:true});}
- });
- it("conserves volumes through Others and keeps worst-case MCP output bounded",()=>{
+  });
+  it("keeps legacy sessions without started_at readable and counts them out of temporal cuts",()=>{
+   const store=new BoardStore(":memory:");try{const board=store.create("owner",{...input,focus:{type:"isp",isp:"isp"}});
+    store.ingest("owner",board.id,[{...session,isp:"isp"},{session_id:"legacy",user_id:"u",device:{id:"tv"},isp:"isp",pop:"pop",media_id:"media",startup_error:true}]);
+    const view=sessionView(store,"owner",board.id,{filters:[],time_window:{from:"2026-09-24T18:00:00-03:00",to:"2026-09-24T18:05:00-03:00"}});
+    expect(view.sessionCount).toBe(1);expect(view.excluded_missing_timestamp_count).toBe(1);
+   }finally{store.close();}
+  });
+  it("conserves volumes through Others and keeps worst-case MCP output bounded",()=>{
   const store=new BoardStore(":memory:");try{const board=store.create("owner",input);const sessions:BoardSession[]=[];
    for(let d=0;d<9;d++)for(let i=0;i<9;i++)for(let p=0;p<9;p++)for(let m=0;m<9;m++)sessions.push({...session,session_id:`${d}-${i}-${p}-${m}`,device:{id:`d${d}${'x'.repeat(120)}`},isp:`i${i}${'x'.repeat(120)}`,pop:`p${p}${'x'.repeat(120)}`,media_id:`m${m}${'x'.repeat(120)}`,buffer_ratio:0.01234567890123456});
    store.ingest("owner",board.id,sessions);const view=sessionView(store,"owner",board.id,{filters:[]});expect(view.sessionCount).toBe(6561);expect(view.nodes.filter(node=>node.label==="Outros")).toHaveLength(4);

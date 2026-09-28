@@ -63,32 +63,51 @@ export type AggregateBoardDefinition = z.infer<typeof AggregateBoardDefinitionSc
 const MetricFields = {
   startup_error_rate: z.number().finite().min(0).max(1).optional(),
   buffer_ratio: z.number().finite().min(0).max(1).optional(),
+  // join_time_ms is an alias of join_time_ms_avg: the source mean for the bucket.
+  join_time_ms: z.number().finite().min(0).max(86_400_000).optional(),
   join_time_ms_avg: z.number().finite().min(0).max(86_400_000).optional(),
+  // Exact composition: when both are supplied the rollup uses sum/count instead
+  // of volume-weighting the mean, which is only correct when every play joined.
+  join_time_ms_sum: z.number().finite().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+  join_time_ms_count: z.number().int().safe().min(0).optional(),
   join_time_ms_p50: z.number().finite().min(0).max(86_400_000).optional(),
   join_time_ms_p95: z.number().finite().min(0).max(86_400_000).optional(),
   join_time_ms_p99: z.number().finite().min(0).max(86_400_000).optional(),
   join_over_sla_pct: z.number().finite().min(0).max(1).optional(),
 };
+type MetricCarrier = {
+  volume: number;
+  startup_error_rate?: number | undefined;
+  buffer_ratio?: number | undefined;
+  join_time_ms?: number | undefined;
+  join_time_ms_avg?: number | undefined;
+  join_time_ms_sum?: number | undefined;
+  join_time_ms_count?: number | undefined;
+  join_time_ms_p50?: number | undefined;
+  join_time_ms_p95?: number | undefined;
+  join_time_ms_p99?: number | undefined;
+  join_over_sla_pct?: number | undefined;
+};
+function refineMetricFields(bucket: MetricCarrier, ctx: z.RefinementCtx): void {
+  if (bucket.join_time_ms !== undefined && bucket.join_time_ms_avg !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["join_time_ms"], message: "provide only one of join_time_ms or join_time_ms_avg" });
+  if ((bucket.join_time_ms_sum === undefined) !== (bucket.join_time_ms_count === undefined)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["join_time_ms_sum"], message: "join_time_ms_sum and join_time_ms_count must be provided together" });
+  if (bucket.join_time_ms_sum !== undefined && bucket.join_time_ms_count === 0 && bucket.join_time_ms_sum !== 0) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["join_time_ms_sum"], message: "zero join_time_ms_count requires zero join_time_ms_sum" });
+  if (bucket.join_time_ms_p50 !== undefined && bucket.join_time_ms_p95 !== undefined && bucket.join_time_ms_p50 > bucket.join_time_ms_p95) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["join_time_ms_p95"], message: "p95 must be >= p50" });
+  if (bucket.join_time_ms_p95 !== undefined && bucket.join_time_ms_p99 !== undefined && bucket.join_time_ms_p95 > bucket.join_time_ms_p99) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["join_time_ms_p99"], message: "p99 must be >= p95" });
+  if (bucket.join_time_ms_p50 !== undefined && bucket.join_time_ms_p99 !== undefined && bucket.join_time_ms_p50 > bucket.join_time_ms_p99) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["join_time_ms_p99"], message: "p99 must be >= p50" });
+  if (bucket.volume === 0 && (bucket.startup_error_rate !== undefined || bucket.buffer_ratio !== undefined || bucket.join_time_ms !== undefined || bucket.join_time_ms_avg !== undefined || bucket.join_time_ms_sum !== undefined || bucket.join_over_sla_pct !== undefined)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "zero-volume buckets cannot carry rates or averages" });
+}
 export const BoardMetricBucketSchema = z.object({
   dimension: z.record(z.string(), EntitySchema),
   ts: IsoInstantSchema,
   volume: z.number().int().safe().min(0),
   ...MetricFields,
-}).strict().superRefine((bucket, ctx) => {
-  if (bucket.join_time_ms_p50 !== undefined && bucket.join_time_ms_p95 !== undefined && bucket.join_time_ms_p50 > bucket.join_time_ms_p95) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["join_time_ms_p95"], message: "p95 must be >= p50" });
-  if (bucket.join_time_ms_p95 !== undefined && bucket.join_time_ms_p99 !== undefined && bucket.join_time_ms_p95 > bucket.join_time_ms_p99) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["join_time_ms_p99"], message: "p99 must be >= p95" });
-  if (bucket.join_time_ms_p50 !== undefined && bucket.join_time_ms_p99 !== undefined && bucket.join_time_ms_p50 > bucket.join_time_ms_p99) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["join_time_ms_p99"], message: "p99 must be >= p50" });
-  if (bucket.volume === 0 && (bucket.startup_error_rate !== undefined || bucket.buffer_ratio !== undefined || bucket.join_time_ms_avg !== undefined || bucket.join_over_sla_pct !== undefined)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "zero-volume buckets cannot carry rates or averages" });
-});
+}).strict().superRefine(refineMetricFields);
 export const BoardBaselineBucketSchema = z.object({
   ts: IsoInstantSchema,
   volume: z.number().int().safe().min(0),
   ...MetricFields,
-}).strict().superRefine((bucket, ctx) => {
-  if (bucket.join_time_ms_p50 !== undefined && bucket.join_time_ms_p95 !== undefined && bucket.join_time_ms_p50 > bucket.join_time_ms_p95) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["join_time_ms_p95"], message: "p95 must be >= p50" });
-  if (bucket.join_time_ms_p95 !== undefined && bucket.join_time_ms_p99 !== undefined && bucket.join_time_ms_p95 > bucket.join_time_ms_p99) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["join_time_ms_p99"], message: "p99 must be >= p95" });
-  if (bucket.volume === 0 && (bucket.startup_error_rate !== undefined || bucket.buffer_ratio !== undefined || bucket.join_time_ms_avg !== undefined || bucket.join_over_sla_pct !== undefined)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "zero-volume buckets cannot carry rates or averages" });
-});
+}).strict().superRefine(refineMetricFields);
 export const BoardMetricsIngestSchema = z.object({
   // Keep item parsing outside the envelope so a caller can report errors per item.
   buckets: z.array(z.unknown()).max(500),
@@ -97,7 +116,7 @@ export const BoardMetricsIngestSchema = z.object({
 export type BoardMetricBucket = z.infer<typeof BoardMetricBucketSchema>;
 export type BoardBaselineBucket = z.infer<typeof BoardBaselineBucketSchema>;
 export const AggregateFilterSchema = z.object({ dimension: AggregateDimensionSchema, entity: EntitySchema }).strict();
-export const AggregateMetricSchema = z.enum(["startup_error_rate", "buffer_ratio", "join_time_ms_avg"]);
+export const AggregateMetricSchema = z.enum(["startup_error_rate", "buffer_ratio", "join_time_ms_avg", "join_over_sla_pct"]);
 export const BoardAggregateViewRequestSchema = z.object({
   dimension: AggregateDimensionSchema.optional(),
   metric: AggregateMetricSchema.default("buffer_ratio"),
@@ -115,6 +134,15 @@ export const PatchAggregateBoardSchema = z.object({
   linked_sessions_board_id: z.string().min(1).max(128).nullable().optional(),
 }).strict().refine(value => Object.keys(value).length > 0, "at least one patch field is required");
 export type PatchAggregateBoard = z.infer<typeof PatchAggregateBoardSchema>;
+export const DeleteBoardMetricsObjectSchema = z.object({
+  dimension: AggregateDimensionSchema.optional(),
+  entity: EntitySchema.optional(),
+  time_window: AggregateWindowSchema.optional(),
+}).strict();
+export const DeleteBoardMetricsSchema = DeleteBoardMetricsObjectSchema
+  .refine(value => value.dimension !== undefined || value.time_window !== undefined, "provide dimension or time_window")
+  .refine(value => (value.dimension === undefined) === (value.entity === undefined), "dimension and entity must be supplied together");
+export type DeleteBoardMetricsInput = z.infer<typeof DeleteBoardMetricsSchema>;
 
 export type BoardAggregateCell = { ts: string; status: "good" | "warning" | "bad" | "unknown"; value: number | null; volume: number; metric_coverage: number; p50: number | null; p95: number | null; p99: number | null; baseline_value: number | null; baseline_delta: number | null };
 export type BoardAggregateEntity = { dim_key: string; label: string; volume: number; state_origin?: "explicit" | "derived" | "mixed"; cells: BoardAggregateCell[] };

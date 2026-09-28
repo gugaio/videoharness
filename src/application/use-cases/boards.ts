@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { BoardError, type BoardRepository } from "../ports/board-repository.js";
-import { BOARD_LIMITS, CreateBoardSchema, IngestBoardSessionsSchema, BoardViewRequestSchema, type BoardFilter, type BoardMetric, type BoardMetricName, type BoardRecord, type BoardSession, type BoardSlas, type BoardView, type BoardNode, type SessionBoardRecord } from "../../domain/boards.js";
+import { BOARD_LIMITS, CreateBoardSchema, DeleteBoardSessionsSchema, IngestBoardSessionsSchema, SessionBoardViewRequestSchema, type BoardFilter, type BoardMetric, type BoardMetricName, type BoardRecord, type BoardSession, type BoardSlas, type BoardView, type BoardViewRequest, type BoardNode, type SessionBoardRecord } from "../../domain/boards.js";
 import { deriveStateFromPop, PatchAggregateBoardSchema } from "../../domain/board-metrics.js";
 import { getAggregateBoardView } from "./board-metrics.js";
 
@@ -18,6 +18,15 @@ export function ingestBoardSessions(repository: BoardRepository, ownerId: string
   const board=getBoard(repository,ownerId,id);
   if (board.board_type !== "sessions") throw new BoardError("invalid_board_type",400);
   return repository.ingest(ownerId,id,IngestBoardSessionsSchema.parse(input).sessions);
+}
+export function deleteBoardSessions(repository: BoardRepository, ownerId: string, id: string, input: unknown) {
+  const board=getBoard(repository,ownerId,id);
+  if (board.board_type !== "sessions") throw new BoardError("invalid_board_type",400);
+  return repository.deleteSessions(ownerId,id,DeleteBoardSessionsSchema.parse(input));
+}
+export function resetBoard(repository: BoardRepository, ownerId: string, id: string) {
+  getBoard(repository,ownerId,id);
+  return repository.resetBoard(ownerId,id);
 }
 const columns: Record<SessionBoardRecord["focus"]["type"], BoardFilter["dimension"][]> = { user: ["user","device","isp","pop","media"], device: ["device","isp","pop","media"], isp: ["isp","pop","media"], pop: ["pop","isp","media"] };
 function matches(session: BoardSession, filter: BoardFilter): boolean {
@@ -66,13 +75,13 @@ export function getBoardView(repository: BoardRepository, ownerId: string, id: s
   return getSessionBoardView(repository,ownerId,id,board,input);
 }
 function getSessionBoardView(repository:BoardRepository,ownerId:string,id:string,board:SessionBoardRecord,input:unknown):Extract<BoardView,{board_type:"sessions"}>{
-  const { filters } = BoardViewRequestSchema.parse(input);
+  const { filters } = SessionBoardViewRequestSchema.parse(input);
   const boardColumns = columns[board.focus.type];
   const supplemental: BoardFilter["dimension"][] = ["state","device_type"];
   if (filters.some(filter => !boardColumns.includes(filter.dimension) && !supplemental.includes(filter.dimension))) throw new BoardError("invalid_board_filter",400);
   const allSessions=repository.allSessions(ownerId,id);
   let sessions = allSessions.filter(session => matches(session,rootFilter(board)) && filters.every(filter => matches(session,filter)));
-  const { time_window, quality } = BoardViewRequestSchema.parse(input);
+  const { time_window, quality } = SessionBoardViewRequestSchema.parse(input);
   let excludedMissingTimestamp=0;
   if (time_window) { excludedMissingTimestamp=sessions.filter(session=>session.started_at===undefined).length;sessions=sessions.filter(session=>session.started_at!==undefined && Date.parse(session.started_at)>=Date.parse(time_window.from) && Date.parse(session.started_at)<Date.parse(time_window.to)); }
   if (quality) sessions=sessions.filter(session=>matchesQuality(session,quality,board));
@@ -103,7 +112,7 @@ function getSessionBoardView(repository:BoardRepository,ownerId:string,id:string
   }
   return { board_type:"sessions", id: createHash("sha256").update(JSON.stringify({filters,time_window,quality})).digest("hex").slice(0,16), board, filters, columns: boardColumns, sessionCount: sessions.length, excluded_missing_timestamp_count:excludedMissingTimestamp, metrics: metrics(sessions,board.slas), nodes, links: [...edges.entries()].map(([id,edge]) => ({id,source:edge.source,target:edge.target,volume:edge.sessions.length,metrics:metrics(edge.sessions,board.slas)})) };
 }
-function matchesQuality(session:BoardSession,quality:NonNullable<ReturnType<typeof BoardViewRequestSchema.parse>["quality"]>,board:SessionBoardRecord):boolean{
+function matchesQuality(session:BoardSession,quality:NonNullable<BoardViewRequest["quality"]>,board:SessionBoardRecord):boolean{
  if(quality==="startup_error")return session.startup_error;
  if(session.startup_error)return quality==="any_sla_violation";
  const bufferWarning=session.buffer_ratio>=board.slas.buffer_ratio.warning;
@@ -121,7 +130,7 @@ export const boardSchemaDescription = {
   limits: BOARD_LIMITS, sla_ranges:"value < warning: good; warning <= value < critical: warning; value >= critical: bad; no successful samples: unknown. Critical violations count samples >= critical.",
   identity:"owner is derived from authentication, never user_id. Device is identified by (user_id,device.id). Session ID is upserted within a board. Sessions outside the board focus may be stored but are excluded from its view.",
   create_example:{name:"User 42 streaming",focus:{type:"user",user_id:"user-42"},slas:{startup_error_rate:{warning:0.01,critical:0.05},buffer_ratio:{warning:0.02,critical:0.05},join_time_ms:{warning:2000,critical:5000}}},
-  ingest_example:{sessions:[{session_id:"s-1",user_id:"user-42",device:{id:"tv-living-room",model:"Samsung Tizen"},isp:"Vivo",pop:"GRU",media_id:"match-123",startup_error:false,join_time_ms:1800,buffer_ratio:0.012},{session_id:"s-2",user_id:"user-42",device:{id:"phone",model:"iPhone"},isp:"Claro",pop:"GRU",media_id:"match-123",startup_error:true}]},
+  ingest_example:{sessions:[{session_id:"s-1",user_id:"user-42",device:{id:"tv-living-room",model:"Samsung Tizen"},isp:"Vivo",pop:"GRU",media_id:"match-123",started_at:"2026-09-24T21:00:00Z",startup_error:false,join_time_ms:1800,buffer_ratio:0.012},{session_id:"s-2",user_id:"user-42",device:{id:"phone",model:"iPhone"},isp:"Claro",pop:"GRU",media_id:"match-123",started_at:"2026-09-24T21:02:00Z",startup_error:true}]},
   device_focus_example:{type:"device",user_id:"user-42",device_id:"tv-living-room"},device_filter_example:{dimension:"device",entity:"tv-living-room",user_id:"user-42"},
-  aggregate:{version:1,board_type:"aggregate",units:{rates:"0..1 supplied by source",join_time_ms:"milliseconds supplied by source",volume:"required non-negative integer weight"},defaults:{buffer_ratio:{warning:0.005,critical:0.01},join_time_ms:{warning:8000,critical:15000}},limits:{batch_buckets:BOARD_LIMITS.metric_batch_buckets,batch_bytes:BOARD_LIMITS.metric_body_bytes,materialized_per_board:BOARD_LIMITS.metric_buckets_per_board,contributions_per_board:BOARD_LIMITS.metric_contributions_per_board},counting_touch:"POP rows count touches and are not additive to distinct focus totals; baseline must be ingested separately.",percentiles:"Only source-provided per-bucket percentiles are shown; percentiles are not rolled up or averaged.",example:{board_type:"aggregate",name:"Vivo ISP",focus:{type:"isp",isp:"Vivo"},granularity:"5m",window:{from:"2026-09-24T21:00:00-03:00",to:"2026-09-25T00:00:00-03:00"},primary_dimension:"pop",secondary_dimension:"media_id",slas:{startup_error_rate:{warning:0.01,critical:0.05},buffer_ratio:{warning:0.005,critical:0.01},join_time_ms:{warning:8000,critical:15000}},source:{system:"npaw",query:"select views, bufferRatio, join_over_sla_metric ... group by extraparam15",sampling:{method:"none",coverage:1},counting:"touch"}}},
+  aggregate:{version:1,board_type:"aggregate",units:{rates:"0..1 supplied by source",join_time_ms:"milliseconds supplied by source",volume:"required non-negative integer weight"},view_metrics:["startup_error_rate","buffer_ratio","join_time_ms_avg","join_over_sla_pct"],join_time_fields:"join_time_ms aliases join_time_ms_avg; join_time_ms_sum + join_time_ms_count compose the mean exactly (weight = count) instead of volume-weighting it",defaults:{buffer_ratio:{warning:0.005,critical:0.01},join_time_ms:{warning:8000,critical:15000}},limits:{batch_buckets:BOARD_LIMITS.metric_batch_buckets,batch_bytes:BOARD_LIMITS.metric_body_bytes,materialized_per_board:BOARD_LIMITS.metric_buckets_per_board,contributions_per_board:BOARD_LIMITS.metric_contributions_per_board},counting_touch:"POP rows count touches and are not additive to distinct focus totals; baseline must be ingested separately.",percentiles:"Only source-provided per-bucket percentiles are shown; percentiles are not rolled up or averaged.",example:{board_type:"aggregate",name:"Vivo ISP",focus:{type:"isp",isp:"Vivo"},granularity:"5m",window:{from:"2026-09-24T21:00:00-03:00",to:"2026-09-25T00:00:00-03:00"},primary_dimension:"pop",secondary_dimension:"media_id",slas:{startup_error_rate:{warning:0.01,critical:0.05},buffer_ratio:{warning:0.005,critical:0.01},join_time_ms:{warning:8000,critical:15000}},source:{system:"npaw",query:"select views, bufferRatio, join_over_sla_metric ... group by extraparam15",sampling:{method:"none",coverage:1},counting:"touch"}}},
 };

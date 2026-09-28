@@ -2,8 +2,8 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { AuthHook } from "../auth.js";
 import { BoardError, type BoardRepository } from "../../../../application/ports/board-repository.js";
-import { createBoard, getBoard, getBoardView, ingestBoardSessions, patchBoard, boardSchemaDescription } from "../../../../application/use-cases/boards.js";
-import { ingestBoardMetrics } from "../../../../application/use-cases/board-metrics.js";
+import { createBoard, deleteBoardSessions, getBoard, getBoardView, ingestBoardSessions, patchBoard, resetBoard, boardSchemaDescription } from "../../../../application/use-cases/boards.js";
+import { deleteBoardMetrics, ingestBoardMetrics } from "../../../../application/use-cases/board-metrics.js";
 import { BoardPageSchema, BOARD_LIMITS } from "../../../../domain/boards.js";
 const QueryPage = z.object({offset:z.coerce.number().int().min(0).max(50_000).default(0),limit:z.coerce.number().int().min(1).max(50).default(20)}).strict();
 export function registerBoardRoutes(app: FastifyInstance, deps: { auth: AuthHook; boards: BoardRepository }) {
@@ -21,8 +21,11 @@ export function registerBoardRoutes(app: FastifyInstance, deps: { auth: AuthHook
   app.get<{Params:{boardId:string}}>("/v1/boards/:boardId",options,(request,reply)=>run(reply,()=>getBoard(deps.boards,request.vhOwnerId,request.params.boardId)));
   app.patch<{Params:{boardId:string}}>("/v1/boards/:boardId",options,(request,reply)=>run(reply,()=>patchBoard(deps.boards,request.vhOwnerId,request.params.boardId,request.body)));
   app.post<{Params:{boardId:string}}>("/v1/boards/:boardId/metrics",{...options,bodyLimit:256*1024},(request,reply)=>run(reply,()=>ingestBoardMetrics(deps.boards,request.vhOwnerId,request.params.boardId,request.body)));
-  app.post<{Params:{boardId:string}}>("/v1/boards/:boardId/sessions",options,(request,reply)=>run(reply,()=>ingestBoardSessions(deps.boards,request.vhOwnerId,request.params.boardId,request.body)));
+  app.post<{Params:{boardId:string}}>("/v1/boards/:boardId/metrics/delete",{...options,bodyLimit:256*1024},(request,reply)=>run(reply,()=>deleteBoardMetrics(deps.boards,request.vhOwnerId,request.params.boardId,request.body)));
+  app.post<{Params:{boardId:string}}>("/v1/boards/:boardId/sessions",{...options,bodyLimit:BOARD_LIMITS.session_body_bytes},(request,reply)=>run(reply,()=>ingestBoardSessions(deps.boards,request.vhOwnerId,request.params.boardId,request.body)));
   app.get<{Params:{boardId:string}}>("/v1/boards/:boardId/sessions",options,(request,reply)=>run(reply,()=>{getBoard(deps.boards,request.vhOwnerId,request.params.boardId);const page=QueryPage.parse(request.query);return deps.boards.sessions(request.vhOwnerId,request.params.boardId,page.offset,page.limit);}));
+  app.post<{Params:{boardId:string}}>("/v1/boards/:boardId/sessions/delete",options,(request,reply)=>run(reply,()=>deleteBoardSessions(deps.boards,request.vhOwnerId,request.params.boardId,request.body)));
+  app.post<{Params:{boardId:string}}>("/v1/boards/:boardId/reset",options,(request,reply)=>run(reply,()=>resetBoard(deps.boards,request.vhOwnerId,request.params.boardId)));
   app.post<{Params:{boardId:string}}>("/v1/boards/:boardId/view",options,(request,reply)=>run(reply,()=>getBoardView(deps.boards,request.vhOwnerId,request.params.boardId,request.body)));
   app.delete<{Params:{boardId:string}}>("/v1/boards/:boardId",options,(request,reply)=>run(reply,()=>{if(!deps.boards.delete(request.vhOwnerId,request.params.boardId))throw new BoardError("board_not_found",404);return {ok:true};}));
 }

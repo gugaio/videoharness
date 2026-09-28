@@ -6,7 +6,7 @@ import { metricLabels, qualityColors, qualityLabels, type QualityStatus } from '
 import './aggregate.css';
 
 const dimensions: Record<AggregateDimension,string> = {pop:'POP',isp:'ISP',state:'Estado / UF',media_id:'Mídia',device_type:'Tipo de device'};
-const metrics: Record<AggregateMetric,string> = {startup_error_rate:metricLabels.startup_error_rate,buffer_ratio:metricLabels.buffer_ratio,join_time_ms_avg:'Join time médio'};
+const metrics: Record<AggregateMetric,string> = {startup_error_rate:metricLabels.startup_error_rate,buffer_ratio:metricLabels.buffer_ratio,join_time_ms_avg:'Join time médio',join_over_sla_pct:'Joins acima do SLA'};
 const statusLabel=(status:QualityStatus)=>qualityLabels[status];
 const errorText=(error:unknown)=>error instanceof Error?error.message:'Não foi possível carregar os dados.';
 const toLocalValue=(date:Date)=>{const local=new Date(date.getTime()-date.getTimezoneOffset()*60000);return local.toISOString().slice(0,16);};
@@ -15,13 +15,13 @@ const floorDate=(date:Date,granularity:string)=>new Date(Math.floor(date.getTime
 const formatCount=(value:number)=>new Intl.NumberFormat('pt-BR',{maximumFractionDigits:0}).format(value);
 const formatValue=(metric:AggregateMetric,value:number|null|undefined)=>value==null?'Sem dados':metric==='join_time_ms_avg'?`${new Intl.NumberFormat('pt-BR',{maximumFractionDigits:0}).format(value)} ms`:`${(value*100).toFixed(2)}%`;
 const formatTime=(value:string,granularity:string)=>{const date=new Date(value);return new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit',...(durationFor(granularity)>=86_400_000?{day:'2-digit',month:'2-digit'}:{})}).format(date);};
-const metricBand=(view:AggregateView,metric:AggregateMetric)=>metric==='join_time_ms_avg'?view.board.slas.join_time_ms:view.board.slas[metric];
+const metricBand=(view:AggregateView,metric:AggregateMetric)=>metric==='join_time_ms_avg'?view.board.slas.join_time_ms:metric==='join_over_sla_pct'?view.board.slas.join_over_sla_pct:view.board.slas[metric];
 
 export function AggregateCreateForm({boards,onCancel,onCreated}:{boards:ServerBoard[];onCancel:()=>void;onCreated:(path:string)=>void}) {
  const now=floorDate(new Date(),'5m'),sixHoursAgo=new Date(now.getTime()-6*60*60*1000);
  const [name,setName]=useState(''),[focusType,setFocusType]=useState<AggregateDimension>('isp'),[focusValue,setFocusValue]=useState(''),[primary,setPrimary]=useState<AggregateDimension>('pop'),[secondary,setSecondary]=useState<AggregateDimension|''>('media_id'),[granularity,setGranularity]=useState('5m'),[from,setFrom]=useState(toLocalValue(sixHoursAgo)),[to,setTo]=useState(toLocalValue(now));
  const [system,setSystem]=useState('npaw'),[sourceQuery,setSourceQuery]=useState(''),[samplingMethod,setSamplingMethod]=useState<'none'|'random'|'stratified'|'systematic'|'unknown'>('none'),[coverage,setCoverage]=useState('1'),[counting,setCounting]=useState<'touch'|'unique'>('touch'),[sessionsBoard,setSessionsBoard]=useState('');
- const [startupWarning,setStartupWarning]=useState('0.02'),[startupCritical,setStartupCritical]=useState('0.05'),[bufferWarning,setBufferWarning]=useState('0.005'),[bufferCritical,setBufferCritical]=useState('0.01'),[joinWarning,setJoinWarning]=useState('8000'),[joinCritical,setJoinCritical]=useState('15000');
+  const [startupWarning,setStartupWarning]=useState('0.02'),[startupCritical,setStartupCritical]=useState('0.05'),[bufferWarning,setBufferWarning]=useState('0.005'),[bufferCritical,setBufferCritical]=useState('0.01'),[joinWarning,setJoinWarning]=useState('8000'),[joinCritical,setJoinCritical]=useState('15000'),[joinOverWarning,setJoinOverWarning]=useState(''),[joinOverCritical,setJoinOverCritical]=useState('');
  const [saving,setSaving]=useState(false),[error,setError]=useState('');
  const sessionsBoards=boards.filter(board=>board.board_type==='sessions');
  async function submit(){
@@ -30,7 +30,7 @@ export function AggregateCreateForm({boards,onCancel,onCreated}:{boards:ServerBo
   if(!Number.isFinite(fromMs)||!Number.isFinite(toMs)||fromMs>=toMs){setError('Informe uma janela válida, com início anterior ao fim.');return;}
   if(fromMs%step!==0||toMs%step!==0){setError(`Alinhe início e fim aos intervalos de ${granularity}.`);return;}
   const focus:CreateAggregateBoard['focus']=focusType==='isp'?{type:'isp',isp:focusValue.trim()}:focusType==='pop'?{type:'pop',pop:focusValue.trim()}:focusType==='state'?{type:'state',state:focusValue.trim()}:focusType==='media_id'?{type:'media_id',media_id:focusValue.trim()}:{type:'device_type',device_type:focusValue.trim()};
-  const body:CreateAggregateBoard={board_type:'aggregate',name:name.trim(),focus,primary_dimension:primary,...(secondary?{secondary_dimension:secondary}:{}),granularity,window:{from:new Date(from).toISOString(),to:new Date(to).toISOString()},slas:{startup_error_rate:{warning:Number(startupWarning),critical:Number(startupCritical)},buffer_ratio:{warning:Number(bufferWarning),critical:Number(bufferCritical)},join_time_ms:{warning:Number(joinWarning),critical:Number(joinCritical)}},source:{system:system.trim(),query:sourceQuery.trim(),sampling:{method:samplingMethod.trim(),coverage:Number(coverage)},counting},...(sessionsBoard?{linked_sessions_board_id:sessionsBoard}:{})};
+   const body:CreateAggregateBoard={board_type:'aggregate',name:name.trim(),focus,primary_dimension:primary,...(secondary?{secondary_dimension:secondary}:{}),granularity,window:{from:new Date(from).toISOString(),to:new Date(to).toISOString()},slas:{startup_error_rate:{warning:Number(startupWarning),critical:Number(startupCritical)},buffer_ratio:{warning:Number(bufferWarning),critical:Number(bufferCritical)},join_time_ms:{warning:Number(joinWarning),critical:Number(joinCritical)},...(joinOverWarning.trim()!==''&&joinOverCritical.trim()!==''?{join_over_sla_pct:{warning:Number(joinOverWarning),critical:Number(joinOverCritical)}}:{})},source:{system:system.trim(),query:sourceQuery.trim(),sampling:{method:samplingMethod.trim(),coverage:Number(coverage)},counting},...(sessionsBoard?{linked_sessions_board_id:sessionsBoard}:{})};
   setSaving(true);setError('');try{const board=await createAggregateBoard(body);onCreated(board.view_path);}catch(cause){setError(errorText(cause));}finally{setSaving(false);}
  }
  return <form className="boards-create" onSubmit={event=>{event.preventDefault();void submit();}}>
@@ -52,9 +52,11 @@ export function AggregateCreateForm({boards,onCancel,onCreated}:{boards:ServerBo
    <label>Contagem de plays<select value={counting} onChange={event=>setCounting(event.target.value as 'touch'|'unique')}><option value="touch">Touch: conta cada POP tocado</option><option value="unique">Único: plays distintos</option></select></label>
    <label>Board de sessões para evidência<select value={sessionsBoard} onChange={event=>setSessionsBoard(event.target.value)}><option value="">Sem vínculo</option>{sessionsBoards.map(board=><option key={board.id} value={board.id}>{board.name}</option>)}</select></label>
   </div><p>Com touch, um play pode aparecer em mais de um POP. Os totais por POP podem superar o total do ISP.</p><p>Inícios e fins precisam estar alinhados à granularidade escolhida.</p></div>
-  <div className="aggregate-create-section"><h3>SLAs</h3><p>Taxas usam 0–1 (0,02 = 2%); join time usa milissegundos.</p><div className="boards-sla-form">
-   {[["Erro de startup · atenção",startupWarning,setStartupWarning,'ratio'],["Erro de startup · crítico",startupCritical,setStartupCritical,'ratio'],["Buffer ratio · atenção",bufferWarning,setBufferWarning,'ratio'],["Buffer ratio · crítico",bufferCritical,setBufferCritical,'ratio'],["Join time · atenção (ms)",joinWarning,setJoinWarning,'ms'],["Join time · crítico (ms)",joinCritical,setJoinCritical,'ms']].map(([label,value,setter,unit])=><label key={String(label)}>{String(label)}<input required type="number" min="0" max={unit==='ratio'?'1':'86400000'} step="any" value={String(value)} onChange={event=>(setter as (value:string)=>void)(event.target.value)}/></label>)}
-  </div></div>
+   <div className="aggregate-create-section"><h3>SLAs</h3><p>Taxas usam 0–1 (0,02 = 2%); join time usa milissegundos. Joins acima do SLA são opcionais e habilitam a métrica correspondente na view.</p><div className="boards-sla-form">
+    {[["Erro de startup · atenção",startupWarning,setStartupWarning,'ratio'],["Erro de startup · crítico",startupCritical,setStartupCritical,'ratio'],["Buffer ratio · atenção",bufferWarning,setBufferWarning,'ratio'],["Buffer ratio · crítico",bufferCritical,setBufferCritical,'ratio'],["Join time · atenção (ms)",joinWarning,setJoinWarning,'ms'],["Join time · crítico (ms)",joinCritical,setJoinCritical,'ms']].map(([label,value,setter,unit])=><label key={String(label)}>{String(label)}<input required type="number" min="0" max={unit==='ratio'?'1':'86400000'} step="any" value={String(value)} onChange={event=>(setter as (value:string)=>void)(event.target.value)}/></label>)}
+    <label>Joins &gt; SLA · atenção (0–1)<input type="number" min="0" max="1" step="any" value={joinOverWarning} placeholder="Opcional" onChange={event=>setJoinOverWarning(event.target.value)}/></label>
+    <label>Joins &gt; SLA · crítico (0–1)<input type="number" min="0" max="1" step="any" value={joinOverCritical} placeholder="Opcional" onChange={event=>setJoinOverCritical(event.target.value)}/></label>
+   </div></div>
   {error&&<p role="alert">{error}</p>}<button disabled={saving} className="boards-primary">{saving?'Criando…':'Criar board agregado'}</button>
  </form>;
 }
@@ -62,7 +64,7 @@ export function AggregateCreateForm({boards,onCancel,onCreated}:{boards:ServerBo
 export function AggregateBoardDetail({board,userId}:{board:Extract<ServerBoard,{board_type:'aggregate'}>;userId:string|null}) {
  const dimensionOptions=useMemo(()=>Array.from(new Set<AggregateDimension>([board.primary_dimension,...(board.secondary_dimension?[board.secondary_dimension]:[]),...(board.primary_dimension==='pop'||board.secondary_dimension==='pop'?['state' as const]:[])])),[board.primary_dimension,board.secondary_dimension]);
  const [dimension,setDimension]=useState<AggregateDimension>(board.primary_dimension),[metric,setMetric]=useState<AggregateMetric>('buffer_ratio'),[offset,setOffset]=useState(0),[timeOffset,setTimeOffset]=useState(0),[selected,setSelected]=useState<{key:string;ts:string}|null>(null),[filterDimension,setFilterDimension]=useState<AggregateDimension>(board.secondary_dimension??board.primary_dimension),[filterEntity,setFilterEntity]=useState('');
- const allowedMetrics=(['startup_error_rate','buffer_ratio','join_time_ms_avg'] as const).filter(name=>name==='join_time_ms_avg'?!!board.slas.join_time_ms:!!board.slas[name]);
+  const allowedMetrics=(['startup_error_rate','buffer_ratio','join_time_ms_avg','join_over_sla_pct'] as const).filter(name=>name==='join_time_ms_avg'?!!board.slas.join_time_ms:name==='join_over_sla_pct'?!!board.slas.join_over_sla_pct:!!board.slas[name]);
  const activeMetric=allowedMetrics.includes(metric)?metric:(allowedMetrics[0]??'startup_error_rate');
  const activeFilters=filterEntity.trim()?[{dimension:filterDimension,entity:filterEntity.trim()}]:[];
  const mainOptions={dimension,metric:activeMetric,filters:activeFilters,offset,limit:10,time_offset:timeOffset,time_limit:36};
@@ -79,11 +81,12 @@ export function AggregateBoardDetail({board,userId}:{board:Extract<ServerBoard,{
  const heatmapPages=!!view?.heatmap.next_offset;
  const hasMoreTime=view?.heatmap.next_time_offset!==null&&view?.heatmap.next_time_offset!==undefined;
  const filterOptions=filterDimension===dimension?view?.heatmap.entities:filterOptionsQuery.data?.heatmap.entities;
- function qualityFor(status:QualityStatus):'startup_error'|'warning_buffer'|'critical_buffer'|'warning_join'|'critical_join'|'any_sla_violation' {
-  if(activeMetric==='startup_error_rate')return 'startup_error';
-  if(activeMetric==='buffer_ratio')return status==='bad'?'critical_buffer':'warning_buffer';
-  return status==='bad'?'critical_join':'warning_join';
- }
+  function qualityFor(status:QualityStatus):'startup_error'|'warning_buffer'|'critical_buffer'|'warning_join'|'critical_join'|'any_sla_violation' {
+   if(activeMetric==='startup_error_rate')return 'startup_error';
+   if(activeMetric==='buffer_ratio')return status==='bad'?'critical_buffer':'warning_buffer';
+   if(activeMetric==='join_over_sla_pct')return status==='bad'?'critical_join':'warning_join';
+   return status==='bad'?'critical_join':'warning_join';
+  }
  function drilldownHref(entity:{dim_key:string;label:string},ts:string,status:QualityStatus){
   if(!board.linked_sessions_board_id||status==='unknown'||status==='good')return undefined;
   const rowDimension=view?.heatmap.dimension??dimension;

@@ -6,7 +6,7 @@ const apps: FastifyInstance[]=[];
 afterEach(async()=>{await Promise.all(apps.splice(0).map(app=>app.close()));});
 function setup(){const app=buildApp({host:"127.0.0.1",port:0,lensUrl:"http://lens",mockUrl:"http://mock",mockPublicUrl:"http://mock",serviceToken:"test-service",clerkSecretKey:"test"});apps.push(app);return app;}
 const input={name:"User SLA",focus:{type:"user",user_id:"viewer"},slas:{startup_error_rate:{warning:0.1,critical:0.5},buffer_ratio:{warning:0.02,critical:0.1},join_time_ms:{warning:2000,critical:5000}}};
-const success={session_id:"s1",user_id:"viewer",device:{id:"tv",model:"Tizen"},isp:"ISP1",pop:"POP1",media_id:"media",startup_error:false,join_time_ms:1000,buffer_ratio:0.01};
+const success={session_id:"s1",user_id:"viewer",device:{id:"tv",model:"Tizen"},isp:"ISP1",pop:"POP1",media_id:"media",started_at:"2026-09-24T18:00:00-03:00",startup_error:false,join_time_ms:1000,buffer_ratio:0.01};
 function rpc(app:FastifyInstance,secret:string,name:string,args:object){return app.inject({method:"POST",url:"/mcp",headers:{authorization:`Bearer ${secret}`,accept:"application/json, text/event-stream","mcp-protocol-version":"2025-06-18"},payload:{jsonrpc:"2.0",id:1,method:"tools/call",params:{name,arguments:args}}});}
 describe("Boards HTTP/MCP integration",()=>{
  it("requires auth, isolates owner and shares board data across MCP and UI HTTP",async()=>{
@@ -15,7 +15,7 @@ describe("Boards HTTP/MCP integration",()=>{
   expect((await app.inject({method:"POST",url:"/mcp",payload:{}})).statusCode).toBe(401);
   const schema=await rpc(app,token.secret,"get_board_schema",{});expect(schema.json().result.structuredContent.units.buffer_ratio).toContain("not time weighted");
   const created=await rpc(app,token.secret,"create_board",input);const board=created.json().result.structuredContent;expect(board.view_path).toBe(`/dashboard/boards/${board.id}`);
-  const failed={session_id:"s2",user_id:"viewer",device:{id:"phone"},isp:"ISP2",pop:"POP1",media_id:"media",startup_error:true};
+  const failed={session_id:"s2",user_id:"viewer",device:{id:"phone"},isp:"ISP2",pop:"POP1",media_id:"media",started_at:"2026-09-24T18:01:00-03:00",startup_error:true};
   const ingested=await rpc(app,token.secret,"ingest_board_sessions",{board_id:board.id,sessions:[success,failed]});expect(ingested.json().result.structuredContent).toEqual({inserted:2,updated:0,total:2});
   const listed=await app.inject({url:"/v1/boards",headers:{authorization:"Bearer a"}});expect(listed.json().boards[0].session_count).toBe(2);expect(listed.headers['cache-control']).toBe('no-store');
   expect((await app.inject({url:`/v1/boards/${board.id}`,headers:{authorization:"Bearer b"}})).statusCode).toBe(404);
@@ -43,7 +43,7 @@ describe("Boards HTTP/MCP integration",()=>{
   expect((await app.inject({method:"POST",url:"/v1/boards",headers,payload:{...input,focus:{type:"device",device_id:"tv"}}})).statusCode).toBe(400);
   expect((await app.inject({method:"POST",url:"/v1/boards",headers,payload:{...input,slas:{startup_error_rate:{warning:0.2,critical:0.1},buffer_ratio:{warning:0.1,critical:0.2}}}})).statusCode).toBe(400);
   expect((await app.inject({method:"POST",url:`/v1/boards/${board.id}/sessions`,headers,payload:{sessions:[success,success]}})).statusCode).toBe(400);
-  const tooLarge=await app.inject({method:"POST",url:`/v1/boards/${board.id}/sessions`,headers:{...headers,"content-type":"application/json"},payload:JSON.stringify({sessions:[],padding:"x".repeat(33*1024)})});expect(tooLarge.statusCode).toBe(413);
+  const tooLarge=await app.inject({method:"POST",url:`/v1/boards/${board.id}/sessions`,headers:{...headers,"content-type":"application/json"},payload:JSON.stringify({sessions:[success],padding:"x".repeat(257*1024)})});expect(tooLarge.statusCode).toBe(413);
  });
 });
 
@@ -124,7 +124,7 @@ describe("Aggregate boards REST/MCP",()=>{
   const rows=[
    {...success,session_id:"in",isp:"Vivo",pop:"edge-vivo-vm-sp",started_at:metricBucket.ts,buffer_ratio:0.2},
    {...success,session_id:"boundary",isp:"Vivo",pop:"edge-vivo-vm-sp",started_at:"2026-09-24T18:05:00-03:00",buffer_ratio:0.2},
-   {...success,session_id:"untimed",isp:"Vivo",pop:"edge-vivo-vm-sp",buffer_ratio:0.2},
+   {...success,session_id:"out-of-window",isp:"Vivo",pop:"edge-vivo-vm-sp",started_at:"2026-09-24T19:00:00-03:00",buffer_ratio:0.2},
    {...success,session_id:"healthy",isp:"Vivo",pop:"edge-vivo-vm-sp",started_at:metricBucket.ts},
   ];
   expect((await app.inject({method:"POST",url:`/v1/boards/${sessions.id}/sessions`,headers,payload:{sessions:rows}})).statusCode).toBe(200);
@@ -132,6 +132,46 @@ describe("Aggregate boards REST/MCP",()=>{
   const linked=await app.inject({method:"PATCH",url:`/v1/boards/${board.id}`,headers,payload:{linked_sessions_board_id:sessions.id}});
   expect(linked.statusCode).toBe(200);expect(linked.json().linked_sessions_board_id).toBe(sessions.id);
   const view=(await app.inject({method:"POST",url:`/v1/boards/${sessions.id}/view`,headers,payload:{filters:[{dimension:"pop",entity:"edge-vivo-vm-sp"}],time_window:{from:metricBucket.ts,to:"2026-09-24T18:05:00-03:00"},quality:"critical_buffer"}})).json();
-  expect(view.sessionCount).toBe(1);expect(view.metrics.buffer_ratio.value).toBe(0.2);
+  expect(view.sessionCount).toBe(1);expect(view.excluded_missing_timestamp_count).toBe(0);expect(view.metrics.buffer_ratio.value).toBe(0.2);
+ });
+});
+
+describe("Session bulk ingest, timestamps and deletion",()=>{
+ it("ingests up to 500 sessions per call and rejects larger batches",async()=>{
+  const app=setup(),headers={authorization:"Bearer a"};
+  const board=(await app.inject({method:"POST",url:"/v1/boards",headers,payload:input})).json();
+  const batch=Array.from({length:300},(_,i)=>({...success,session_id:`bulk-${i}`}));
+  const ingested=await app.inject({method:"POST",url:`/v1/boards/${board.id}/sessions`,headers,payload:{sessions:batch}});
+  expect(ingested.statusCode).toBe(200);expect(ingested.json()).toMatchObject({inserted:300,updated:0,total:300});
+  const oversized=await app.inject({method:"POST",url:`/v1/boards/${board.id}/sessions`,headers,payload:{sessions:Array.from({length:501},(_,i)=>({...success,session_id:`too-many-${i}`}))}});
+  expect(oversized.statusCode).toBe(400);
+ });
+ it("rejects sessions without started_at atomically, without writing the batch",async()=>{
+  const app=setup(),headers={authorization:"Bearer a"};
+  const board=(await app.inject({method:"POST",url:"/v1/boards",headers,payload:input})).json();
+  const { started_at: _required, ...untimed } = success;
+  const rejected=await app.inject({method:"POST",url:`/v1/boards/${board.id}/sessions`,headers,payload:{sessions:[{...success,session_id:"timed"},untimed]}});
+  expect(rejected.statusCode).toBe(400);
+  expect((await app.inject({url:`/v1/boards/${board.id}/sessions`,headers})).json().total).toBe(0);
+ });
+ it("accepts the shared view envelope on sessions boards and deletes or resets data",async()=>{
+  const app=setup(),headers={authorization:"Bearer a"};
+  const board=(await app.inject({method:"POST",url:"/v1/boards",headers,payload:{...input,focus:{type:"isp",isp:"ISP1"}}})).json();
+  const rows=[
+   {...success,session_id:"keep",started_at:"2026-09-24T18:00:00-03:00"},
+   {...success,session_id:"drop",started_at:"2026-09-24T18:00:00-03:00"},
+   {...success,session_id:"windowed",started_at:"2026-09-24T19:00:00-03:00"},
+  ];
+  expect((await app.inject({method:"POST",url:`/v1/boards/${board.id}/sessions`,headers,payload:{sessions:rows}})).statusCode).toBe(200);
+  const tolerant=await app.inject({method:"POST",url:`/v1/boards/${board.id}/view`,headers,payload:{filters:[{dimension:"isp",entity:"ISP1"}],metric:"buffer_ratio",limit:10}});
+  expect(tolerant.statusCode).toBe(200);expect(tolerant.json().board_type).toBe("sessions");
+  const byIds=await app.inject({method:"POST",url:`/v1/boards/${board.id}/sessions/delete`,headers,payload:{session_ids:["drop","missing"]}});
+  expect(byIds.json()).toMatchObject({deleted:1,remaining:2});
+  const byWindow=await app.inject({method:"POST",url:`/v1/boards/${board.id}/sessions/delete`,headers,payload:{time_window:{from:"2026-09-24T19:00:00-03:00",to:"2026-09-24T20:00:00-03:00"}}});
+  expect(byWindow.json()).toMatchObject({deleted:1,remaining:1});
+  expect((await app.inject({method:"POST",url:`/v1/boards/${board.id}/sessions/delete`,headers,payload:{}})).statusCode).toBe(400);
+  const reset=await app.inject({method:"POST",url:`/v1/boards/${board.id}/reset`,headers,payload:{}});
+  expect(reset.json()).toMatchObject({board_type:"sessions",deleted_sessions:1,deleted_contributions:0});
+  expect((await app.inject({url:`/v1/boards/${board.id}/sessions`,headers})).json().total).toBe(0);
  });
 });

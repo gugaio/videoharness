@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BoardStore } from "../../adapters/outbound/sqlite/board-store.js";
-import { ingestBoardMetrics, getAggregateBoardView } from "./board-metrics.js";
+import { ingestBoardMetrics, getAggregateBoardView, deleteBoardMetrics } from "./board-metrics.js";
+import { resetBoard } from "./boards.js";
 import { canonicalDimensionKey } from "../../domain/board-metrics.js";
 import type { StoredMetricContribution } from "../ports/board-repository.js";
 import type { AggregateBoardRecord, CreateBoardInput } from "../../domain/boards.js";
@@ -141,6 +142,87 @@ describe("Aggregate metric ingestion", () => {
       expect(result.heatmap.total).toBe(3);
       expect(result.heatmap.entities.map(entity => entity.label)).toEqual(["big", "mid"]);
       expect(result.heatmap.next_offset).toBe(2);
+    } finally { store.close(); }
+  });
+});
+
+describe("Aggregate join time, orphan metric and deletion", () => {
+  it("accepts join_time_ms as an alias and populates join_time_ms_avg views and baseline", () => {
+    const { store, id } = aggregateBoard();
+    try {
+      const response = ingestBoardMetrics(store, "owner", id, {
+        buckets: [bucket("p1", "m1", "2026-09-24T18:00:00-03:00", { volume: 100, buffer_ratio: undefined, join_time_ms: 9000 })],
+        baseline: [{ ts: "2026-09-24T18:00:00-03:00", volume: 500, join_time_ms: 7000 }],
+      });
+      expect(response.errors).toEqual([]);
+      const result = view(store, id, { metric: "join_time_ms_avg", dimension: "pop", time_limit: 1 });
+      expect(result.heatmap.entities[0]!.cells[0]).toMatchObject({ value: 9000, status: "warning", volume: 100 });
+      expect(result.baseline[0]).toMatchObject({ value: 7000, volume: 500, status: "good" });
+      expect(result.ranking[0]).toMatchObject({ label: "p1", value: 9000, status: "warning" });
+    } finally { store.close(); }
+  });
+
+  it("composes join_time_ms_sum and count exactly and rejects ambiguous or partial inputs", () => {
+    const { store, id } = aggregateBoard();
+    try {
+      const bad = ingestBoardMetrics(store, "owner", id, {
+        buckets: [
+          bucket("p1", "m1", "2026-09-24T18:00:00-03:00", { volume: 100, join_time_ms: 9000, join_time_ms_avg: 9000 }),
+          bucket("p2", "m1", "2026-09-24T18:00:00-03:00", { volume: 100, join_time_ms_sum: 180000 }),
+        ],
+      });
+      expect(bad.rejected).toBe(2);
+      expect(bad.errors).toContainEqual(expect.objectContaining({ reason: expect.stringContaining("only one of join_time_ms or join_time_ms_avg") }));
+      expect(bad.errors).toContainEqual(expect.objectContaining({ reason: expect.stringContaining("must be provided together") }));
+      const good = ingestBoardMetrics(store, "owner", id, {
+        buckets: [
+          bucket("p1", "m1", "2026-09-24T18:05:00-03:00", { volume: 100, buffer_ratio: undefined, join_time_ms_sum: 180000, join_time_ms_count: 30 }),
+          bucket("p1", "m2", "2026-09-24T18:05:00-03:00", { volume: 100, buffer_ratio: undefined, join_time_ms_avg: 6000 }),
+        ],
+      });
+      expect(good.errors).toEqual([]);
+      const result = view(store, id, { metric: "join_time_ms_avg", dimension: "pop", filters: [{ dimension: "pop", entity: "p1" }], time_window: { from: "2026-09-24T18:05:00-03:00", to: "2026-09-24T18:10:00-03:00" }, time_limit: 1 });
+      // (180000 + 6000*100) / (30 + 100) = 6000, with join-sample coverage 130/200.
+      expect(result.heatmap.entities[0]!.cells[0]).toMatchObject({ value: 6000, volume: 200, metric_coverage: 0.65 });
+    } finally { store.close(); }
+  });
+
+  it("promotes join_over_sla_pct to a view metric and leaves it unknown without a band", () => {
+    const { store, id } = aggregateBoard({ ...definition, slas: { ...slas, join_over_sla_pct: { warning: 0.1, critical: 0.2 } } });
+    try {
+      ingestBoardMetrics(store, "owner", id, { buckets: [bucket("p1", "m1", "2026-09-24T18:00:00-03:00", { volume: 100, buffer_ratio: undefined, join_over_sla_pct: 0.28 })] });
+      const result = view(store, id, { metric: "join_over_sla_pct", dimension: "pop", time_limit: 1 });
+      expect(result.heatmap.entities[0]!.cells[0]).toMatchObject({ value: 0.28, status: "bad" });
+      expect(result.ranking[0]).toMatchObject({ label: "p1", value: 0.28, status: "bad" });
+    } finally { store.close(); }
+    const unbanded = aggregateBoard();
+    try {
+      ingestBoardMetrics(unbanded.store, "owner", unbanded.id, { buckets: [bucket("p1", "m1", "2026-09-24T18:00:00-03:00", { volume: 100, buffer_ratio: undefined, join_over_sla_pct: 0.28 })] });
+      const result = view(unbanded.store, unbanded.id, { metric: "join_over_sla_pct", dimension: "pop", time_limit: 1 });
+      expect(result.heatmap.entities[0]!.cells[0]).toMatchObject({ value: 0.28, status: "unknown" });
+    } finally { unbanded.store.close(); }
+  });
+
+  it("deletes metrics by dimension or window and resets the board", () => {
+    const { store, id } = aggregateBoard();
+    try {
+      ingestBoardMetrics(store, "owner", id, {
+        buckets: [
+          bucket("p1", "m1", "2026-09-24T18:00:00-03:00"),
+          bucket("p2", "m1", "2026-09-24T18:00:00-03:00"),
+          bucket("p1", "m1", "2026-09-24T18:05:00-03:00"),
+        ],
+        baseline: [{ ts: "2026-09-24T18:00:00-03:00", volume: 500 }],
+      });
+      const byEntity = deleteBoardMetrics(store, "owner", id, { dimension: "pop", entity: "p2" });
+      expect(byEntity).toMatchObject({ deleted: 1, deleted_baseline: 0 });
+      const byWindow = deleteBoardMetrics(store, "owner", id, { time_window: { from: "2026-09-24T18:05:00-03:00", to: "2026-09-24T18:10:00-03:00" } });
+      expect(byWindow).toMatchObject({ deleted: 1, deleted_baseline: 0 });
+      const reset = resetBoard(store, "owner", id);
+      expect(reset).toMatchObject({ board_type: "aggregate", deleted_contributions: 2, deleted_sessions: 0 });
+      const result = view(store, id, { metric: "buffer_ratio", dimension: "pop", time_limit: 1 });
+      expect(result.heatmap.entities).toEqual([]);
+      expect(result.baseline.every(point => point.value === null)).toBe(true);
     } finally { store.close(); }
   });
 });

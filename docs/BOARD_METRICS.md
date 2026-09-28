@@ -42,9 +42,15 @@ secundária. `state` pode ser auxiliar; UF é derivada apenas de sufixo reconhec
 do POP quando não fornecida explicitamente. Não há inferência de localização por
 nome arbitrário.
 
-Taxas são frações 0..1; tempos são milissegundos. Bandas são `good` abaixo de
-warning, `warning` a partir de warning e `bad` a partir de critical. `bad` é a
-convenção já usada pelo schema v1. Ausência de métrica é `unknown`.
+Taxas são frações 0..1; tempos são milissegundos. Join time aceita
+`join_time_ms` (alias de `join_time_ms_avg`) ou o par exato
+`join_time_ms_sum` + `join_time_ms_count`; os dois nomes de média juntos ou
+soma sem contagem são rejeitados por item. `join_over_sla_pct` agora é métrica
+de view como as demais, com banda opcional: sem banda configurada ela é exibida
+mas permanece `unknown` em vez de ser classificada por outra régua. Bandas são
+`good` abaixo de warning, `warning` a partir de warning e `bad` a partir de
+critical. `bad` é a convenção já usada pelo schema v1. Ausência de métrica é
+`unknown`.
 
 `join_over_sla_pct` é uma taxa independente do join médio: a fonte deve indicar
 o limiar em `source.join_over_sla_threshold_ms`. Ela não permite inferir média,
@@ -100,10 +106,15 @@ declaração da fonte, não uma certificação estatística feita pelo VH.
 
 ## Rollups, impacto e resolução
 
-Taxas e médias são ponderadas por volume dos buckets que fornecem aquela métrica:
-`sum(volume × value) / sum(volume)`. A cobertura da métrica deve acompanhar a
-comparação. Isso é um indicador ponderado por plays; não garante a mesma média
-que uma fonte com denominador diferente (por exemplo, só startups bem-sucedidos).
+Taxas e médias são ponderadas pelos buckets que fornecem aquela métrica.
+Taxas (`startup_error_rate`, `buffer_ratio`, `join_over_sla_pct`) usam
+`sum(volume × value) / sum(volume)`. Join time usa `sum(join_time_ms_sum) /
+sum(join_time_ms_count)` quando a fonte decompõe soma e contagem — a média só é
+exata ponderada pelos joins amostrados; quando só há média por bucket, o peso
+recai no `volume`, aproximação válida apenas se todo play contribuiu com um
+join. A cobertura da métrica deve acompanhar a comparação. Isso é um indicador
+ponderado por plays; não garante a mesma média que uma fonte com denominador
+diferente (por exemplo, só startups bem-sucedidos).
 
 Ranking usa impacto estimado: soma de `volume × max(value - warning, 0)`.
 Buffer/startup usam plays-equivalentes; join usa play·ms. Não é uma contagem de
@@ -129,10 +140,14 @@ resolução maior e criar outro board; não apagar contribuições silenciosamen
 ## Views e evidência
 
 REST: `POST /v1/boards/:id/view`. MCP: `get_board_view` com `board_id`.
-Parâmetros aggregate: `metric`, `dimension`, `filters` (até quatro, AND),
-`time_window`, `offset/limit` de entidades e `time_offset/time_limit` de tempo.
-A resposta inclui heatmap, ranking, baseline, série, anotações e proveniência.
-As páginas temporais preservam lacunas; cores representam as faixas do SLA.
+Parâmetros aggregate: `metric` (`startup_error_rate`, `buffer_ratio`,
+`join_time_ms_avg`, `join_over_sla_pct`), `dimension`, `filters` (até quatro,
+AND), `time_window`, `offset/limit` de entidades e `time_offset/time_limit` de
+tempo. A resposta inclui heatmap, ranking, baseline, série, anotações e
+proveniência. As páginas temporais preservam lacunas; cores representam as
+faixas do SLA. `get_board_view` de sessions aceita o mesmo envelope e devolve o
+grafo completo (`metric`/`limit` são exclusivos do aggregate e ignorados nas
+sessões).
 
 Para interpretar POP × mídia, a fonte precisa fornecer buckets cruzados dessas
 dimensões. Totais POP sem mídia não permitem diagnosticar concentração por
@@ -143,12 +158,25 @@ REST `PATCH /v1/boards/:id` / MCP `patch_board` permite nome, SLAs e vínculo
 board de sessões do mesmo owner; `null` remove o vínculo. Não muda janela,
 dimensões ou proveniência do aggregate.
 
-A ponte usa sessões reais com `started_at` e dimensões compatíveis. Recortes de
-sessões aceitam `time_window` e `quality`; sem timestamp, a sessão permanece na
-view tradicional, mas não entra no recorte temporal. O clique não consulta
-NPAW: o agente deve extrair e ingerir a evidência antes de vinculá-la. Uma extração
-só de sessões com erro é evidência selecionada, não amostra representativa para
-recalcular a saúde do ISP.
+A ponte usa sessões reais com `started_at` (obrigatório em todo ingest novo;
+linhas antigas sem timestamp continuam legíveis, mas fora de recortes
+temporais) e dimensões compatíveis. Recortes de sessões aceitam `time_window`
+e `quality`; sem timestamp, a sessão permanece na view tradicional, mas não
+entra no recorte temporal. O clique não consulta NPAW: o agente deve extrair e
+ingerir a evidência antes de vinculá-la. Uma extração só de sessões com erro é
+evidência selecionada, não amostra representativa para recalcular a saúde do ISP.
+
+## Remoção e reset
+
+REST `POST /v1/boards/:id/sessions/delete` / MCP `delete_board_sessions`
+apaga sessões por `session_ids` (1..500) ou por `time_window` sobre
+`started_at` — exatamente um seletor, com retorno `{deleted, remaining}`.
+REST `POST /v1/boards/:id/metrics/delete` / MCP `delete_board_metrics` apaga
+contribuições do aggregate por janela e/ou dimensão+entidade; com dimensão só
+linhas de entidade saem, e o baseline só sai por janela sem dimensão. A
+rematerialização roda após a remoção. `POST /v1/boards/:id/reset` / MCP
+`reset_board` esvazia todos os dados mantendo definição, SLAs e vínculo.
+Apagar o inexistente não é erro: a operação é idempotente.
 
 ## Exemplo canônico de transformação NPAW
 
