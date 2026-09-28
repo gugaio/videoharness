@@ -79,7 +79,7 @@ describe("MCP tokens and tools", () => {
     });
     try {
       await client.connect(transport as Transport);
-      expect((await client.listTools()).tools).toHaveLength(19);
+      expect((await client.listTools()).tools).toHaveLength(21);
       const result = await client.callTool({ name: "list_inspections", arguments: {} });
       expect(result.structuredContent).toMatchObject({ inspections: [], total: 0 });
     } finally { await client.close(); }
@@ -121,6 +121,7 @@ describe("MCP tokens and tools", () => {
       "start_investigation", "list_investigations", "get_capture_coverage", "get_timeline",
       "capture_segments", "capture_window", "get_capture", "get_evidence",
       "get_board_schema", "create_board", "list_boards", "get_board", "ingest_board_sessions", "list_board_sessions", "get_board_view",
+      "ingest_board_metrics", "patch_board",
     ]);
     expect(tools.headers["cache-control"]).toBe("no-store");
   });
@@ -236,5 +237,16 @@ describe("MCP tokens and tools", () => {
     const b = await issue(app);
     for (let i = 0; i < 60; i++) expect((await rpc(app, a.secret, "tools/list")).statusCode).toBe(200);
     expect((await rpc(app, b.secret, "tools/list")).statusCode).toBe(429);
+  });
+
+  it("keeps legacy wire bodies at 32 KiB, including whitespace, and caps metrics at 256 KiB", async () => {
+    const { app } = setup();
+    const { secret } = await issue(app);
+    const headers = { authorization: `Bearer ${secret}`, "content-type": "application/json", accept: "application/json, text/event-stream" };
+    const legacy = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    expect((await app.inject({ method: "POST", url: "/mcp", headers, payload: legacy + " ".repeat(33 * 1024) })).statusCode).toBe(413);
+    const metrics = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "ingest_board_metrics", arguments: { board_id: "missing", buckets: [] } } });
+    expect((await app.inject({ method: "POST", url: "/mcp", headers, payload: metrics + " ".repeat(33 * 1024) })).statusCode).toBe(200);
+    expect((await app.inject({ method: "POST", url: "/mcp", headers, payload: metrics + " ".repeat(256 * 1024) })).statusCode).toBe(413);
   });
 });

@@ -88,6 +88,12 @@ sendo contratos HTTP.
    UI apresenta startup error rate, buffer ratio e join time (três SLAs obrigatórios em novos boards), sem
    configuração/período no detalhe. Demos locais em `/dashboard/boards/demos`
    permanecem isoladas da ingestão real.
+   Boards `aggregate` adicionam ingestão de buckets pré-agregados com volume,
+   proveniência/amostragem, baseline independente e rollups ponderados. UI oferece
+   heatmap, ranking de impacto estimado e séries temporais; vínculo explícito com
+   board de sessões permite investigar dimensão/janela usando `started_at` opcional.
+   Contribuições idempotentes e materializações com resolução adaptativa têm quotas
+   próprias (AD-0019). Não há connector NPAW automático nem sessões sintetizadas.
 6. **Fase 5 — Experiments**: clone do mock + network shaper no orquestrador;
    data plane serve somente recurso registrado.
 

@@ -46,3 +46,92 @@ describe("Boards HTTP/MCP integration",()=>{
   const tooLarge=await app.inject({method:"POST",url:`/v1/boards/${board.id}/sessions`,headers:{...headers,"content-type":"application/json"},payload:JSON.stringify({sessions:[],padding:"x".repeat(33*1024)})});expect(tooLarge.statusCode).toBe(413);
  });
 });
+
+const aggregateInput = {
+ board_type:"aggregate", name:"Synthetic POP health", focus:{type:"isp",isp:"Vivo"},
+ granularity:"5m",window:{from:"2026-09-24T18:00:00-03:00",to:"2026-09-24T19:00:00-03:00"},
+ primary_dimension:"pop",secondary_dimension:"media_id",slas:input.slas,
+ source:{system:"synthetic-test",query:"fixture; not real NPAW observations",sampling:{method:"random",coverage:0.03},counting:"touch"},
+};
+const metricBucket = {dimension:{pop:"edge-vivo-vm-sp",media_id:"match"},ts:"2026-09-24T18:00:00-03:00",volume:412,buffer_ratio:0.12,join_time_ms_avg:3379,startup_error_rate:0.082};
+describe("Aggregate boards REST/MCP",()=>{
+ it("shares aggregate creation, partial ingestion, views and metadata patches across adapters",async()=>{
+  const app=setup(), headers={authorization:"Bearer a"};
+  const token=(await app.inject({method:"POST",url:"/v1/mcp/tokens",headers,payload:{name:"metrics",expires_in_days:1}})).json();
+  const created=await rpc(app,token.secret,"create_board",aggregateInput);
+  expect(created.json().result.isError).not.toBe(true);
+  const board=created.json().result.structuredContent;
+  expect(board).toMatchObject({board_type:"aggregate",session_count:0});
+  const response=await rpc(app,token.secret,"ingest_board_metrics",{board_id:board.id,buckets:[metricBucket,{...metricBucket,ts:"2026-09-24T19:00:00-03:00"},{...metricBucket,ts:"2026-09-24T18:01:00-03:00"}]});
+  expect(response.json().result.structuredContent).toMatchObject({inserted:1,rejected:2});
+  const update=await app.inject({method:"POST",url:`/v1/boards/${board.id}/metrics`,headers,payload:{buckets:[{...metricBucket,volume:500}]}});
+  expect(update.statusCode).toBe(200);expect(update.json()).toMatchObject({inserted:0,updated:1});
+  const view=await app.inject({method:"POST",url:`/v1/boards/${board.id}/view`,headers,payload:{metric:"buffer_ratio",dimension:"pop"}});
+  expect(view.statusCode).toBe(200);
+  expect(view.json()).toMatchObject({board_type:"aggregate",sampling:{coverage:0.03},counting:"touch"});
+  expect(view.json().heatmap.entities[0]).toMatchObject({label:"edge-vivo-vm-sp",volume:500});
+  expect(view.json().ranking[0].impact_score).toBeGreaterThan(0);
+  const patch=await rpc(app,token.secret,"patch_board",{board_id:board.id,name:"Renamed health"});
+  expect(patch.json().result.structuredContent.name).toBe("Renamed health");
+  expect((await app.inject({method:"PATCH",url:`/v1/boards/${board.id}`,headers,payload:{primary_dimension:"state"}})).statusCode).toBe(400);
+  expect((await app.inject({url:"/v1/boards",headers})).json().boards[0].board_type).toBe("aggregate");
+ });
+ it("isolates metrics and evidence links by owner and rejects the wrong ingest type",async()=>{
+  const app=setup(),headers={authorization:"Bearer a"},other={authorization:"Bearer b"};
+  const board=(await app.inject({method:"POST",url:"/v1/boards",headers,payload:aggregateInput})).json();
+  for(const [method,path,payload] of [["POST","metrics",{buckets:[metricBucket]}],["POST","view",{}]] as const){
+   expect((await app.inject({method,url:`/v1/boards/${board.id}/${path}`,headers:other,payload})).statusCode).toBe(404);
+  }
+  expect((await app.inject({method:"PATCH",url:`/v1/boards/${board.id}`,headers:other,payload:{name:"stolen"}})).statusCode).toBe(404);
+  expect((await app.inject({method:"POST",url:`/v1/boards/${board.id}/sessions`,headers,payload:{sessions:[success]}})).statusCode).toBe(400);
+  const sessions=(await app.inject({method:"POST",url:"/v1/boards",headers:other,payload:input})).json();
+  const linked=await app.inject({method:"PATCH",url:`/v1/boards/${board.id}`,headers,payload:{linked_sessions_board_id:sessions.id}});
+  expect(linked.statusCode).toBe(404);
+ });
+ it("accepts large metrics batches without relaxing session limits",async()=>{
+  const app=setup(),headers={authorization:"Bearer a"};
+  const board=(await app.inject({method:"POST",url:"/v1/boards",headers,payload:aggregateInput})).json();
+  const token=(await app.inject({method:"POST",url:"/v1/mcp/tokens",headers,payload:{name:"metrics",expires_in_days:1}})).json();
+  const buckets=Array.from({length:500},(_,i)=>({...metricBucket,dimension:{...metricBucket.dimension,pop:`edge-${i}-sp`}}));
+  const response=await rpc(app,token.secret,"ingest_board_metrics",{board_id:board.id,buckets});
+  expect(response.statusCode).toBe(200);expect(response.json().result.structuredContent).toMatchObject({inserted:500,rejected:0});
+  expect((await app.inject({method:"POST",url:`/v1/boards/${board.id}/metrics`,headers,payload:{buckets:[...buckets,metricBucket]}})).statusCode).toBe(400);
+ });
+ it("uses the revised SLA bands, weighted impact and independent ISP baseline",async()=>{
+  const app=setup(),headers={authorization:"Bearer a"};
+  const slas={startup_error_rate:{warning:0.02,critical:0.05},buffer_ratio:{warning:0.005,critical:0.01},join_time_ms:{warning:8000,critical:15000}};
+  const board=(await app.inject({method:"POST",url:"/v1/boards",headers,payload:{...aggregateInput,slas}})).json();
+  // Supplied six-hour totals are used in a synthetic single-bucket fixture,
+  // never presented as a reconstructed real time series.
+  const buckets=[
+   {...metricBucket,volume:64852,buffer_ratio:0.00699,join_time_ms_avg:9000},
+   {...metricBucket,dimension:{pop:"edge-vivo-jg-sp",media_id:"match"},volume:111844,buffer_ratio:0.00169},
+   {...metricBucket,dimension:{pop:"tiny-rj",media_id:"match"},volume:10,buffer_ratio:0.5},
+  ];
+  const ingested=await app.inject({method:"POST",url:`/v1/boards/${board.id}/metrics`,headers,payload:{buckets,baseline:[{ts:metricBucket.ts,volume:425757,buffer_ratio:0.002}]}});
+  expect(ingested.statusCode).toBe(200);
+  const view=(await app.inject({method:"POST",url:`/v1/boards/${board.id}/view`,headers,payload:{metric:"buffer_ratio",dimension:"pop",limit:1}})).json();
+  expect(view.heatmap.entities[0].label).toBe("edge-vivo-jg-sp");
+  expect(view.ranking[0]).toMatchObject({label:"edge-vivo-vm-sp",status:"warning"});
+  expect(view.ranking[0].impact_score).toBeCloseTo(64852*(0.00699-0.005));
+  expect(view.baseline[0]).toMatchObject({volume:425757,value:0.002});
+  const regional=(await app.inject({method:"POST",url:`/v1/boards/${board.id}/view`,headers,payload:{dimension:"state",filters:[{dimension:"state",entity:"SP"}]}})).json();
+  expect(regional.heatmap.entities).toHaveLength(1);expect(regional.heatmap.entities[0].label).toBe("SP");
+ });
+ it("links real sessions and applies dimension, half-open time and quality filters",async()=>{
+  const app=setup(),headers={authorization:"Bearer a"};
+  const sessions=(await app.inject({method:"POST",url:"/v1/boards",headers,payload:{...input,focus:{type:"isp",isp:"Vivo"}}})).json();
+  const rows=[
+   {...success,session_id:"in",isp:"Vivo",pop:"edge-vivo-vm-sp",started_at:metricBucket.ts,buffer_ratio:0.2},
+   {...success,session_id:"boundary",isp:"Vivo",pop:"edge-vivo-vm-sp",started_at:"2026-09-24T18:05:00-03:00",buffer_ratio:0.2},
+   {...success,session_id:"untimed",isp:"Vivo",pop:"edge-vivo-vm-sp",buffer_ratio:0.2},
+   {...success,session_id:"healthy",isp:"Vivo",pop:"edge-vivo-vm-sp",started_at:metricBucket.ts},
+  ];
+  expect((await app.inject({method:"POST",url:`/v1/boards/${sessions.id}/sessions`,headers,payload:{sessions:rows}})).statusCode).toBe(200);
+  const board=(await app.inject({method:"POST",url:"/v1/boards",headers,payload:aggregateInput})).json();
+  const linked=await app.inject({method:"PATCH",url:`/v1/boards/${board.id}`,headers,payload:{linked_sessions_board_id:sessions.id}});
+  expect(linked.statusCode).toBe(200);expect(linked.json().linked_sessions_board_id).toBe(sessions.id);
+  const view=(await app.inject({method:"POST",url:`/v1/boards/${sessions.id}/view`,headers,payload:{filters:[{dimension:"pop",entity:"edge-vivo-vm-sp"}],time_window:{from:metricBucket.ts,to:"2026-09-24T18:05:00-03:00"},quality:"critical_buffer"}})).json();
+  expect(view.sessionCount).toBe(1);expect(view.metrics.buffer_ratio.value).toBe(0.2);
+ });
+});

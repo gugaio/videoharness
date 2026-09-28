@@ -59,7 +59,8 @@ controle de streams, probe/decode_test ou execução autônoma de LLM.
 - A Lens fornece no máximo 2.000 referências por leitura de cobertura; o MCP
   pagina em grupos de até 100. Evidência adicional fica arquivada no VH depois
   de observada em estado terminal.
-- Corpo MCP limitado a 32 KiB; resultado da tool limitado a 256 KiB. Resultados
+- Corpo MCP limitado a 32 KiB, exceto `ingest_board_metrics` (256 KiB incluindo
+  o envelope JSON-RPC); resultado da tool limitado a 256 KiB. Resultados
   maiores retornam erro explícito: selecione menos seções ou uma página menor;
   para seções individualmente grandes, use o snapshot completo no dashboard.
 - Sem sessão MCP ou SSE persistente: chamadas POST retornam JSON; GET/DELETE
@@ -73,7 +74,9 @@ os casos de uso e a verificação de ownership de inspeções.
 
 ## Boards de saúde por SLA
 
-O agente envia **sessões**, não grafos nem métricas agregadas. O orquestrador
+Em boards `sessions` (default quando `board_type` é omitido), o agente envia
+**sessões**, não grafos. Boards `aggregate` recebem buckets pré-agregados da
+fonte; veja [o contrato agregado](BOARD_METRICS.md). O orquestrador
 valida, persiste e calcula as views determinísticas. O board pertence ao owner
 do token; `user_id` é o usuário monitorado e não define ownership. A UI apresenta
 os resultados em `/dashboard/boards/:id`, com atualização automática. Demos
@@ -88,6 +91,8 @@ locais em `/dashboard/boards/demos` são isoladas e não recebem esses dados.
 | `ingest_board_sessions` | Enviar lote atômico de sessões; upsert por `(board_id, session_id)` |
 | `list_board_sessions` | Consultar sessões em páginas de até 50 |
 | `get_board_view` | Obter grafo e indicadores determinísticos; filtros AND mantêm o foco original |
+| `ingest_board_metrics` | Enviar buckets e baseline de um board aggregate, com resultado por item |
+| `patch_board` | Atualizar nome, SLAs ou vínculo de evidência permitido pelo tipo de board |
 
 ### Contrato e unidades
 

@@ -1,23 +1,41 @@
 import { createHash } from "node:crypto";
 import { BoardError, type BoardRepository } from "../ports/board-repository.js";
-import { BOARD_LIMITS, CreateBoardSchema, IngestBoardSessionsSchema, BoardViewRequestSchema, type BoardFilter, type BoardMetric, type BoardMetricName, type BoardRecord, type BoardSession, type BoardSlas, type BoardView, type BoardNode } from "../../domain/boards.js";
+import { BOARD_LIMITS, CreateBoardSchema, IngestBoardSessionsSchema, BoardViewRequestSchema, type BoardFilter, type BoardMetric, type BoardMetricName, type BoardRecord, type BoardSession, type BoardSlas, type BoardView, type BoardNode, type SessionBoardRecord } from "../../domain/boards.js";
+import { deriveStateFromPop, PatchAggregateBoardSchema } from "../../domain/board-metrics.js";
+import { getAggregateBoardView } from "./board-metrics.js";
 
 export function createBoard(repository: BoardRepository, ownerId: string, input: unknown) { return repository.create(ownerId, CreateBoardSchema.parse(input)); }
 export function getBoard(repository: BoardRepository, ownerId: string, id: string) { const board = repository.get(ownerId,id); if (!board) throw new BoardError("board_not_found",404); return board; }
-export function ingestBoardSessions(repository: BoardRepository, ownerId: string, id: string, input: unknown) { getBoard(repository,ownerId,id); return repository.ingest(ownerId,id,IngestBoardSessionsSchema.parse(input).sessions); }
-const columns: Record<BoardRecord["focus"]["type"], BoardFilter["dimension"][]> = { user: ["user","device","isp","pop","media"], device: ["device","isp","pop","media"], isp: ["isp","pop","media"], pop: ["pop","isp","media"] };
+export function patchBoard(repository: BoardRepository, ownerId: string, id: string, input: unknown) {
+  getBoard(repository,ownerId,id);
+  const board = repository.get(ownerId,id);
+  if (!board) throw new BoardError("board_not_found",404);
+  if (board.board_type !== "aggregate") throw new BoardError("invalid_board_type",400);
+  const parsed = PatchAggregateBoardSchema.parse(input);
+  return repository.patch(ownerId,id,parsed);
+}
+export function ingestBoardSessions(repository: BoardRepository, ownerId: string, id: string, input: unknown) {
+  const board=getBoard(repository,ownerId,id);
+  if (board.board_type !== "sessions") throw new BoardError("invalid_board_type",400);
+  return repository.ingest(ownerId,id,IngestBoardSessionsSchema.parse(input).sessions);
+}
+const columns: Record<SessionBoardRecord["focus"]["type"], BoardFilter["dimension"][]> = { user: ["user","device","isp","pop","media"], device: ["device","isp","pop","media"], isp: ["isp","pop","media"], pop: ["pop","isp","media"] };
 function matches(session: BoardSession, filter: BoardFilter): boolean {
   if (filter.dimension === "device") return session.user_id === filter.user_id && session.device.id === filter.entity;
+  if (filter.dimension === "state") return deriveStateFromPop(session.pop) === filter.entity.toUpperCase();
+  if (filter.dimension === "device_type") return session.device_type === filter.entity;
   const entity = filter.dimension === "user" ? session.user_id : filter.dimension === "media" ? session.media_id : session[filter.dimension];
   return entity === filter.entity;
 }
-function rootFilter(board: BoardRecord): BoardFilter {
+function rootFilter(board: SessionBoardRecord): BoardFilter {
   const focus = board.focus;
   if (focus.type === "device") return { dimension: "device", entity: focus.device_id, user_id: focus.user_id };
   return { dimension: focus.type, entity: focus.type === "user" ? focus.user_id : focus.type === "isp" ? focus.isp : focus.pop };
 }
 function sessionFilter(session: BoardSession, dimension: BoardFilter["dimension"]): BoardFilter {
   if (dimension === "device") return { dimension, entity: session.device.id, user_id: session.user_id };
+  if (dimension === "state") return { dimension, entity: deriveStateFromPop(session.pop) ?? "unknown" };
+  if (dimension === "device_type") return { dimension, entity: session.device_type ?? "unknown" };
   return { dimension, entity: dimension === "user" ? session.user_id : dimension === "media" ? session.media_id : session[dimension] };
 }
 const nodeKey = (filter: BoardFilter) => `n_${createHash("sha256").update(JSON.stringify(filter)).digest("hex").slice(0,24)}`;
@@ -44,10 +62,20 @@ function metrics(sessions: BoardSession[], slas: BoardSlas) {
 }
 export function getBoardView(repository: BoardRepository, ownerId: string, id: string, input: unknown): BoardView {
   const board = getBoard(repository,ownerId,id);
+  if (board.board_type === "aggregate") return getAggregateBoardView(repository,ownerId,id,input);
+  return getSessionBoardView(repository,ownerId,id,board,input);
+}
+function getSessionBoardView(repository:BoardRepository,ownerId:string,id:string,board:SessionBoardRecord,input:unknown):Extract<BoardView,{board_type:"sessions"}>{
   const { filters } = BoardViewRequestSchema.parse(input);
   const boardColumns = columns[board.focus.type];
-  if (filters.some(filter => !boardColumns.includes(filter.dimension))) throw new BoardError("invalid_board_filter",400);
-  const sessions = repository.allSessions(ownerId,id).filter(session => matches(session,rootFilter(board)) && filters.every(filter => matches(session,filter)));
+  const supplemental: BoardFilter["dimension"][] = ["state","device_type"];
+  if (filters.some(filter => !boardColumns.includes(filter.dimension) && !supplemental.includes(filter.dimension))) throw new BoardError("invalid_board_filter",400);
+  const allSessions=repository.allSessions(ownerId,id);
+  let sessions = allSessions.filter(session => matches(session,rootFilter(board)) && filters.every(filter => matches(session,filter)));
+  const { time_window, quality } = BoardViewRequestSchema.parse(input);
+  let excludedMissingTimestamp=0;
+  if (time_window) { excludedMissingTimestamp=sessions.filter(session=>session.started_at===undefined).length;sessions=sessions.filter(session=>session.started_at!==undefined && Date.parse(session.started_at)>=Date.parse(time_window.from) && Date.parse(session.started_at)<Date.parse(time_window.to)); }
+  if (quality) sessions=sessions.filter(session=>matchesQuality(session,quality,board));
   const grouped = new Map<string,{ filter?: BoardFilter; dimension: BoardFilter["dimension"]; label: string; sessions: BoardSession[] }>();
   const mapping = new Map<string,string>();
   for (const dimension of boardColumns) {
@@ -73,7 +101,19 @@ export function getBoardView(repository: BoardRepository, ownerId: string, id: s
     const source=mapping.get(nodeKey(sessionFilter(session,sourceDim))), target=mapping.get(nodeKey(sessionFilter(session,targetDim))); if (!source || !target) continue;
     const key=`${source}>${target}`, edge=edges.get(key) ?? {source,target,sessions:[]}; edge.sessions.push(session);edges.set(key,edge);
   }
-  return { id: createHash("sha256").update(JSON.stringify(filters)).digest("hex").slice(0,16), board, filters, columns: boardColumns, sessionCount: sessions.length, metrics: metrics(sessions,board.slas), nodes, links: [...edges.entries()].map(([id,edge]) => ({id,source:edge.source,target:edge.target,volume:edge.sessions.length,metrics:metrics(edge.sessions,board.slas)})) };
+  return { board_type:"sessions", id: createHash("sha256").update(JSON.stringify({filters,time_window,quality})).digest("hex").slice(0,16), board, filters, columns: boardColumns, sessionCount: sessions.length, excluded_missing_timestamp_count:excludedMissingTimestamp, metrics: metrics(sessions,board.slas), nodes, links: [...edges.entries()].map(([id,edge]) => ({id,source:edge.source,target:edge.target,volume:edge.sessions.length,metrics:metrics(edge.sessions,board.slas)})) };
+}
+function matchesQuality(session:BoardSession,quality:NonNullable<ReturnType<typeof BoardViewRequestSchema.parse>["quality"]>,board:SessionBoardRecord):boolean{
+ if(quality==="startup_error")return session.startup_error;
+ if(session.startup_error)return quality==="any_sla_violation";
+ const bufferWarning=session.buffer_ratio>=board.slas.buffer_ratio.warning;
+ const joinSla=board.slas.join_time_ms;
+ const joinWarning=joinSla!==undefined&&session.join_time_ms>=joinSla.warning;
+ if(quality==="critical_buffer")return session.buffer_ratio>=board.slas.buffer_ratio.critical;
+ if(quality==="critical_join")return joinSla!==undefined&&session.join_time_ms>=joinSla.critical;
+ if(quality==="warning_buffer")return bufferWarning;
+ if(quality==="warning_join")return joinWarning;
+ return bufferWarning||joinWarning;
 }
 export const boardSchemaDescription = {
   version: 1, units: {startup_error_rate:"0..1, failed starts / all sessions",buffer_ratio:"0..1, arithmetic mean of successful session ratios; not time weighted",join_time_ms:"milliseconds, arithmetic mean over successful sessions"},
@@ -83,4 +123,5 @@ export const boardSchemaDescription = {
   create_example:{name:"User 42 streaming",focus:{type:"user",user_id:"user-42"},slas:{startup_error_rate:{warning:0.01,critical:0.05},buffer_ratio:{warning:0.02,critical:0.05},join_time_ms:{warning:2000,critical:5000}}},
   ingest_example:{sessions:[{session_id:"s-1",user_id:"user-42",device:{id:"tv-living-room",model:"Samsung Tizen"},isp:"Vivo",pop:"GRU",media_id:"match-123",startup_error:false,join_time_ms:1800,buffer_ratio:0.012},{session_id:"s-2",user_id:"user-42",device:{id:"phone",model:"iPhone"},isp:"Claro",pop:"GRU",media_id:"match-123",startup_error:true}]},
   device_focus_example:{type:"device",user_id:"user-42",device_id:"tv-living-room"},device_filter_example:{dimension:"device",entity:"tv-living-room",user_id:"user-42"},
+  aggregate:{version:1,board_type:"aggregate",units:{rates:"0..1 supplied by source",join_time_ms:"milliseconds supplied by source",volume:"required non-negative integer weight"},defaults:{buffer_ratio:{warning:0.005,critical:0.01},join_time_ms:{warning:8000,critical:15000}},limits:{batch_buckets:BOARD_LIMITS.metric_batch_buckets,batch_bytes:BOARD_LIMITS.metric_body_bytes,materialized_per_board:BOARD_LIMITS.metric_buckets_per_board,contributions_per_board:BOARD_LIMITS.metric_contributions_per_board},counting_touch:"POP rows count touches and are not additive to distinct focus totals; baseline must be ingested separately.",percentiles:"Only source-provided per-bucket percentiles are shown; percentiles are not rolled up or averaged.",example:{board_type:"aggregate",name:"Vivo ISP",focus:{type:"isp",isp:"Vivo"},granularity:"5m",window:{from:"2026-09-24T21:00:00-03:00",to:"2026-09-25T00:00:00-03:00"},primary_dimension:"pop",secondary_dimension:"media_id",slas:{startup_error_rate:{warning:0.01,critical:0.05},buffer_ratio:{warning:0.005,critical:0.01},join_time_ms:{warning:8000,critical:15000}},source:{system:"npaw",query:"select views, bufferRatio, join_over_sla_metric ... group by extraparam15",sampling:{method:"none",coverage:1},counting:"touch"}}},
 };

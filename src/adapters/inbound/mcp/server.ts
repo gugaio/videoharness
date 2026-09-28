@@ -1,4 +1,5 @@
 import { registerBoardTools } from "./boards.js";
+import { Transform } from "node:stream";
 import { BoardError, type BoardRepository } from "../../../application/ports/board-repository.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -209,8 +210,21 @@ function createServer(deps: Deps, ownerId: string) {
 export function registerMcpRoutes(app: FastifyInstance, deps: Deps) {
   const active = new Map<string, number>();
   const rates = new Map<string, { count: number; reset: number }>();
+  const bodySizes = new WeakMap<object, number>();
   app.route({
-    method: ["POST", "GET", "DELETE"], url: "/mcp", bodyLimit: 32 * 1024,
+    method: ["POST", "GET", "DELETE"], url: "/mcp", bodyLimit: 256 * 1024,
+    preParsing: async (request, _reply, payload) => {
+      // Count actual wire bytes, including JSON whitespace and UTF-8 characters.
+      // Re-serializing request.body would silently relax the legacy 32 KiB cap.
+      const counter = new Transform({
+        transform(chunk: Buffer, _encoding, callback) {
+          bodySizes.set(request, (bodySizes.get(request) ?? 0) + chunk.length);
+          callback(null, chunk);
+        },
+      });
+      payload.on("error", error => counter.destroy(error));
+      return payload.pipe(counter);
+    },
     onRequest: async (request, reply) => {
       reply.header("Cache-Control", "no-store");
       // Machine clients omit Origin; browser origins must match the requested host.
@@ -229,6 +243,13 @@ export function registerMcpRoutes(app: FastifyInstance, deps: Deps) {
     },
     handler: async (request, reply) => {
       if (request.method !== "POST") return reply.header("Allow", "POST").code(405).send({ error: "method_not_allowed" });
+      const metricsCall = z.object({
+        method: z.literal("tools/call"),
+        params: z.object({ name: z.literal("ingest_board_metrics") }),
+      }).safeParse(request.body).success;
+      if (!metricsCall && (bodySizes.get(request) ?? 0) > 32 * 1024) {
+        return reply.code(413).send({ error: "mcp_body_too_large", limit_bytes: 32 * 1024 });
+      }
       const ownerId = request.vhOwnerId;
       const now = Date.now();
       for (const [key, bucket] of rates) if (bucket.reset <= now) rates.delete(key);

@@ -2,7 +2,8 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { AuthHook } from "../auth.js";
 import { BoardError, type BoardRepository } from "../../../../application/ports/board-repository.js";
-import { createBoard, getBoard, getBoardView, ingestBoardSessions, boardSchemaDescription } from "../../../../application/use-cases/boards.js";
+import { createBoard, getBoard, getBoardView, ingestBoardSessions, patchBoard, boardSchemaDescription } from "../../../../application/use-cases/boards.js";
+import { ingestBoardMetrics } from "../../../../application/use-cases/board-metrics.js";
 import { BoardPageSchema, BOARD_LIMITS } from "../../../../domain/boards.js";
 const QueryPage = z.object({offset:z.coerce.number().int().min(0).max(50_000).default(0),limit:z.coerce.number().int().min(1).max(50).default(20)}).strict();
 export function registerBoardRoutes(app: FastifyInstance, deps: { auth: AuthHook; boards: BoardRepository }) {
@@ -18,6 +19,8 @@ export function registerBoardRoutes(app: FastifyInstance, deps: { auth: AuthHook
   app.get("/v1/boards",options,(request,reply)=>run(reply,()=>{const page=BoardPageSchema.parse(QueryPage.parse(request.query));return deps.boards.list(request.vhOwnerId,page.offset,page.limit);}));
   app.post("/v1/boards",options,(request,reply)=>run(reply,()=>{const board=createBoard(deps.boards,request.vhOwnerId,request.body);reply.code(201);return board;}));
   app.get<{Params:{boardId:string}}>("/v1/boards/:boardId",options,(request,reply)=>run(reply,()=>getBoard(deps.boards,request.vhOwnerId,request.params.boardId)));
+  app.patch<{Params:{boardId:string}}>("/v1/boards/:boardId",options,(request,reply)=>run(reply,()=>patchBoard(deps.boards,request.vhOwnerId,request.params.boardId,request.body)));
+  app.post<{Params:{boardId:string}}>("/v1/boards/:boardId/metrics",{...options,bodyLimit:256*1024},(request,reply)=>run(reply,()=>ingestBoardMetrics(deps.boards,request.vhOwnerId,request.params.boardId,request.body)));
   app.post<{Params:{boardId:string}}>("/v1/boards/:boardId/sessions",options,(request,reply)=>run(reply,()=>ingestBoardSessions(deps.boards,request.vhOwnerId,request.params.boardId,request.body)));
   app.get<{Params:{boardId:string}}>("/v1/boards/:boardId/sessions",options,(request,reply)=>run(reply,()=>{getBoard(deps.boards,request.vhOwnerId,request.params.boardId);const page=QueryPage.parse(request.query);return deps.boards.sessions(request.vhOwnerId,request.params.boardId,page.offset,page.limit);}));
   app.post<{Params:{boardId:string}}>("/v1/boards/:boardId/view",options,(request,reply)=>run(reply,()=>getBoardView(deps.boards,request.vhOwnerId,request.params.boardId,request.body)));

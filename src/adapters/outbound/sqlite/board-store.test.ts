@@ -4,21 +4,22 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BoardStore } from "./board-store.js";
 import { getBoardView, ingestBoardSessions } from "../../../application/use-cases/boards.js";
-import type { BoardSession, CreateBoardInput } from "../../../domain/boards.js";
+import type { BoardSession, CreateBoardInput, SessionBoardView } from "../../../domain/boards.js";
 const input:CreateBoardInput={name:"SLA",focus:{type:"user",user_id:"u"},slas:{startup_error_rate:{warning:0.01,critical:0.05},buffer_ratio:{warning:0.02,critical:0.05},join_time_ms:{warning:2000,critical:5000}}};
 const session:BoardSession={session_id:"s",user_id:"u",device:{id:"tv"},isp:"isp",pop:"pop",media_id:"media",startup_error:false,join_time_ms:1000,buffer_ratio:0.01};
+function sessionView(store:BoardStore,owner:string,id:string,input:unknown):SessionBoardView{const view=getBoardView(store,owner,id,input);if(view.board_type!=="sessions")throw new Error("expected sessions view");return view;}
 describe("Board persistence and deterministic aggregation",()=>{
  it("persists upserts and avoids device identity collisions across users",()=>{
   const dir=mkdtempSync(join(tmpdir(),"vh-boards-"));let store=new BoardStore(join(dir,"data.db"));
   try{const board=store.create("owner",{...input,focus:{type:"device",user_id:"u",device_id:"tv"}});ingestBoardSessions(store,"owner",board.id,{sessions:[session,{...session,session_id:"other",user_id:"other"}]});store.close();store=new BoardStore(join(dir,"data.db"));
-   expect(store.get("other",board.id)).toBeUndefined();expect(getBoardView(store,"owner",board.id,{filters:[]}).sessionCount).toBe(1);
-   ingestBoardSessions(store,"owner",board.id,{sessions:[{...session,buffer_ratio:0.05}]});const view=getBoardView(store,"owner",board.id,{filters:[]});expect(view.metrics.buffer_ratio?.status).toBe("bad");expect(store.get("owner",board.id)?.session_count).toBe(2);
+   expect(store.get("other",board.id)).toBeUndefined();expect(sessionView(store,"owner",board.id,{filters:[]}).sessionCount).toBe(1);
+   ingestBoardSessions(store,"owner",board.id,{sessions:[{...session,buffer_ratio:0.05}]});const view=sessionView(store,"owner",board.id,{filters:[]});expect(view.metrics.buffer_ratio?.status).toBe("bad");expect(store.get("owner",board.id)?.session_count).toBe(2);
   }finally{store.close();rmSync(dir,{recursive:true,force:true});}
  });
  it("conserves volumes through Others and keeps worst-case MCP output bounded",()=>{
   const store=new BoardStore(":memory:");try{const board=store.create("owner",input);const sessions:BoardSession[]=[];
    for(let d=0;d<9;d++)for(let i=0;i<9;i++)for(let p=0;p<9;p++)for(let m=0;m<9;m++)sessions.push({...session,session_id:`${d}-${i}-${p}-${m}`,device:{id:`d${d}${'x'.repeat(120)}`},isp:`i${i}${'x'.repeat(120)}`,pop:`p${p}${'x'.repeat(120)}`,media_id:`m${m}${'x'.repeat(120)}`,buffer_ratio:0.01234567890123456});
-   store.ingest("owner",board.id,sessions);const view=getBoardView(store,"owner",board.id,{filters:[]});expect(view.sessionCount).toBe(6561);expect(view.nodes.filter(node=>node.label==="Outros")).toHaveLength(4);
+   store.ingest("owner",board.id,sessions);const view=sessionView(store,"owner",board.id,{filters:[]});expect(view.sessionCount).toBe(6561);expect(view.nodes.filter(node=>node.label==="Outros")).toHaveLength(4);
    for(const node of view.nodes){const outgoing=view.links.filter(link=>link.source===node.id),incoming=view.links.filter(link=>link.target===node.id);if(outgoing.length)expect(outgoing.reduce((sum,link)=>sum+link.volume,0)).toBe(node.volume);if(incoming.length)expect(incoming.reduce((sum,link)=>sum+link.volume,0)).toBe(node.volume);}
    expect(Buffer.byteLength(JSON.stringify(view))).toBeLessThan(256*1024);
   }finally{store.close();}
@@ -42,7 +43,7 @@ describe("Board persistence and deterministic aggregation",()=>{
  it("evaluates explicit SLA boundaries and uses success-only arithmetic means",()=>{
   const store=new BoardStore(":memory:");try{const board=store.create("owner",input);
    store.ingest("owner",board.id,[session,{...session,session_id:"s2",buffer_ratio:0.03,join_time_ms:3000},{session_id:"failed",user_id:"u",device:{id:"tv"},isp:"isp",pop:"pop",media_id:"media",startup_error:true}]);
-   const view=getBoardView(store,"owner",board.id,{filters:[]});expect(view.metrics.buffer_ratio).toMatchObject({value:0.02,status:"warning",sample_count:2});expect(view.metrics.join_time_ms).toMatchObject({value:2000,status:"warning",sample_count:2});expect(view.metrics.startup_error_rate?.sample_count).toBe(3);
+   const view=sessionView(store,"owner",board.id,{filters:[]});expect(view.metrics.buffer_ratio).toMatchObject({value:0.02,status:"warning",sample_count:2});expect(view.metrics.join_time_ms).toMatchObject({value:2000,status:"warning",sample_count:2});expect(view.metrics.startup_error_rate?.sample_count).toBe(3);
    expect(()=>getBoardView(store,"owner",board.id,{filters:[{dimension:"device",entity:"tv"}]})).toThrow();
   }finally{store.close();}
  });
@@ -55,13 +56,13 @@ describe("Board persistence and deterministic aggregation",()=>{
     {...session,session_id:"warning",buffer_ratio:0.02,join_time_ms:2000},
     {...session,session_id:"bad",buffer_ratio:0.05,join_time_ms:5000},
     {session_id:"failed",user_id:"u",device:{id:"tv"},isp:"isp",pop:"pop",media_id:"other",startup_error:true}]);
-   const view=getBoardView(store,"owner",board.id,{filters:[]});
+   const view=sessionView(store,"owner",board.id,{filters:[]});
    const userLink=view.links.find(link=>view.nodes.find(node=>node.id===link.source)?.dimension==="user")!;
    expect(userLink.metrics.startup_error_rate?.distribution).toEqual({good:3,warning:0,bad:1,unknown:0});
    expect(userLink.metrics.buffer_ratio?.distribution).toEqual({good:1,warning:1,bad:1,unknown:1});
    expect(userLink.metrics.join_time_ms?.distribution).toEqual({good:1,warning:1,bad:1,unknown:1});
    for(const item of [...view.nodes,...view.links])for(const metric of Object.values(item.metrics))expect(Object.values(metric.distribution).reduce((a,b)=>a+b,0)).toBe(item.volume);
-   const filtered=getBoardView(store,"owner",board.id,{filters:[{dimension:"media",entity:"other"}]});
+   const filtered=sessionView(store,"owner",board.id,{filters:[{dimension:"media",entity:"other"}]});
    expect(filtered.metrics.buffer_ratio?.distribution).toEqual({good:0,warning:0,bad:0,unknown:1});
   } finally {store.close();}
  });

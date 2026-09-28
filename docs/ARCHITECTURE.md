@@ -190,8 +190,9 @@ por userId; Clerk JWT segue o client existente. Respostas são validadas com Zod
 Listagem atualiza a cada 15 s e detalhe a cada 5 s; erro da API não vira dado
 mock. O único controle de visualização no detalhe escolhe a view por SLA:
 startup error rate, buffer ratio e join time, todos obrigatórios na criação.
-Boards legados sem SLA de join time permanecem legíveis com duas views. Não há controles
-de configuração, janela temporal ou timestamps na experiência de detalhe.
+Boards legados sem SLA de join time permanecem legíveis com duas views.
+Sessões podem informar `started_at` para recortes temporais vindos de boards
+agregados; registros legados sem timestamp continuam nas views sem recorte temporal.
 Clique em nó solicita um recorte ao backend; trilha permite voltar/limpar.
 Grafo calcula apenas geometria SVG e formata unidades na UI, sem recomputar os
 fatos. Labels/modelos de device ficam visíveis na camada.
@@ -200,6 +201,33 @@ Demos em `/dashboard/boards/demos[/:id]` usam fixtures estáticas e localStorage
 separados das APIs. O antigo protótipo de payloads prontos é preservado apenas
 para demonstração (AD-0017 superada pela AD-0018). Não migra automaticamente
 configurações locais para boards reais. Nenhuma engine foi alterada.
+
+### Boards — buckets agregados
+
+O tipo aditivo `aggregate` recebe volume e métricas calculadas pela fonte, sem
+sintetizar sessões. O tipo omitido permanece `sessions`. REST/MCP compartilham
+validação, ownership e casos de uso; a migração SQLite é automática e preserva
+sessões existentes. O contrato e exemplos estão em [BOARD_METRICS.md](BOARD_METRICS.md).
+
+A chave de ingestão combina board, dimensões configuradas e início de bucket
+normalizado em UTC. O upsert substitui a contribuição inteira. Baseline do focus
+é uma série independente: em contagem `touch`, somar POPs não produz plays
+distintos do ISP. Rollups de taxas/médias são ponderados por volume disponível
+para cada métrica. Percentis fornecidos não são combinados entre buckets.
+
+Contribuições originais e índice de células materializadas têm quotas separadas.
+As métricas da view são calculadas das contribuições, preservando o denominador
+de cada métrica mesmo quando há valores ausentes. A resolução materializada pode
+aumentar automaticamente para conter a matriz;
+conservar as contribuições permite corrigir e repetir ingestões sem duplicar
+volume. O limite de contribuições continua finito e exige uma nova extração em
+resolução maior quando atingido. Janela/dimensões/fonte não são reinterpretadas
+por um patch de metadados.
+
+A view aggregate oferece heatmap, ranking de impacto estimado, baseline e
+série temporal. A UI expõe amostragem e contagem; um vínculo explícito com board
+de sessões do mesmo owner permite investigar uma dimensão e janela. Não há
+extração automática NPAW nem alteração de Lens/Mock.
 
 Limitações da primeira fatia da Fase 4:
 
@@ -244,6 +272,7 @@ view e exigem nova inspeção; samples/PES estruturais permanecem independentes.
 
 | ID | Decisão |
 |---|---|
+| AD-0019 | Boards `aggregate` são aditivos aos boards `sessions`: recebem buckets com volume obrigatório, proveniência e amostragem explícitas. Baseline do focus é independente de rollups `touch`; percentis não são compostos. Contribuições idempotentes e materializações com resolução adaptativa têm quotas separadas. A ponte para sessões usa vínculo do mesmo owner, dimensões e janela temporal; não fabrica evidência nem extrai dados da fonte automaticamente. |
 | AD-0018 | Agentes enviam sessões validadas e SLAs explícitos por board. App persiste com ownership e quotas e produz agregados determinísticos; REST/MCP compartilham casos de uso e UI apresenta as views calculadas. Startup rate usa todas as tentativas, buffer/join médias de sucessos. Cada métrica expõe também contagens por qualidade individual para faixas proporcionais nas conexões. Substitui o contrato de payloads prontos da AD-0017, preservado apenas nos demos locais. |
 | AD-0017 | Superada pela AD-0018 para boards reais. No protótipo inicial, Boards apresentam payloads prontos do produtor: nós, conexões, volumes, métricas/status e recortes com transições explícitas. A UI não agrega sessões nem calcula qualidade; fixtures estáticas simulam o payload futuro do agente. Configurações ficam no localStorage por repositório substituível. Ingestão REST/MCP, ownership e persistência de servidor não estão implementados. |
 | AD-0014 | MCP é adapter de entrada do app, compartilhando casos de uso de inspeção com REST. Usuários geram tokens pessoais pela UI autenticada; agentes usam Bearer com owner derivado do token, sem OAuth MCP. Segredos aleatórios de 256 bits são exibidos uma vez e persistidos apenas como SHA-256. Endpoint sempre exige token, inclusive em dev. Nenhuma mudança nas engines ou implementação de LLM. |
