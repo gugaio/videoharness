@@ -59,8 +59,8 @@ controle de streams, probe/decode_test ou execução autônoma de LLM.
 - A Lens fornece no máximo 2.000 referências por leitura de cobertura; o MCP
   pagina em grupos de até 100. Evidência adicional fica arquivada no VH depois
   de observada em estado terminal.
-- Corpo MCP limitado a 32 KiB, exceto `ingest_board_metrics` e
-  `ingest_board_sessions` (256 KiB incluindo o envelope JSON-RPC); resultado da tool limitado a 256 KiB. Resultados
+- Corpo MCP limitado a 32 KiB, exceto `ingest_board_metrics`,
+  `ingest_board_sessions` e `ingest_incident_user_days` (256 KiB incluindo o envelope JSON-RPC); resultado da tool limitado a 256 KiB. Resultados
   maiores retornam erro explícito: selecione menos seções ou uma página menor;
   para seções individualmente grandes, use o snapshot completo no dashboard.
 - Sem sessão MCP ou SSE persistente: chamadas POST retornam JSON; GET/DELETE
@@ -96,6 +96,11 @@ locais em `/dashboard/boards/demos` são isoladas e não recebem esses dados.
 | `delete_board_sessions` | Apagar sessões por `session_ids` ou `time_window`; retorna apagados/restantes |
 | `delete_board_metrics` | Apagar contribuições do aggregate por janela e/ou dimensão+entidade |
 | `reset_board` | Esvaziar todos os dados do board sem apagar sua definição |
+| `create_incident_board` | Criar board de incidente (coorte de user IDs × dias, dia BRT) com SLAs de fração de sessões ruins |
+| `add_incident_users` / `remove_incident_users` | Manter a coorte do incidente (até 500 por chamada, 1.000 por board) |
+| `ingest_incident_user_days` | Enviar contagens diárias por usuário, com resultado por item |
+| `delete_incident_user_days` | Apagar dados diários por `user_ids` e/ou `days`, mantendo a coorte |
+| `get_incident_board_view` | Obter a grade usuários × dias com faixa e intensidade de cor por célula |
 
 ### Contrato e unidades
 
@@ -214,7 +219,7 @@ existente. Um ID de outro owner responde como inexistente.
 
 Limites fixos: 100 boards por owner, 10.000 sessões por board, 50.000 sessões
 armazenadas por owner, 500 sessões por lote e 256 KiB de corpo para os ingests
-(`ingest_board_sessions`/`ingest_board_metrics`, incluindo o JSON-RPC no MCP);
+(`ingest_board_sessions`/`ingest_board_metrics`/`ingest_incident_user_days`, incluindo o JSON-RPC no MCP);
 as demais tools mantêm 32 KiB. Ambos os limites de lote/corpo se aplicam. Corpo
 inválido retorna 400 no REST ou erro de tool; quota retorna 429 no
 REST ou erro de tool, sem gravar o lote. Substituições existentes continuam

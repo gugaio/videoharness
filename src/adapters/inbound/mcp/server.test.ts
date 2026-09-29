@@ -79,7 +79,7 @@ describe("MCP tokens and tools", () => {
     });
     try {
       await client.connect(transport as Transport);
-      expect((await client.listTools()).tools).toHaveLength(24);
+      expect((await client.listTools()).tools).toHaveLength(30);
       const result = await client.callTool({ name: "list_inspections", arguments: {} });
       expect(result.structuredContent).toMatchObject({ inspections: [], total: 0 });
     } finally { await client.close(); }
@@ -121,7 +121,7 @@ describe("MCP tokens and tools", () => {
       "start_investigation", "list_investigations", "get_capture_coverage", "get_timeline",
       "capture_segments", "capture_window", "get_capture", "get_evidence",
       "get_board_schema", "create_board", "list_boards", "get_board", "ingest_board_sessions", "list_board_sessions", "get_board_view",
-      "ingest_board_metrics", "patch_board", "delete_board_sessions", "delete_board_metrics", "reset_board",
+      "ingest_board_metrics", "patch_board", "delete_board_sessions", "delete_board_metrics", "create_incident_board", "add_incident_users", "remove_incident_users", "ingest_incident_user_days", "delete_incident_user_days", "get_incident_board_view", "reset_board",
     ]);
     expect(tools.headers["cache-control"]).toBe("no-store");
   });

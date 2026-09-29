@@ -1,0 +1,9 @@
+.incident-scale { display:flex; flex-direction:column; gap:4px; min-width:220px; font-size:11px; color:#72849a; }
+.incident-scale span { font-weight:600; color:#4a6076; }
+.incident-gradient { display:block; height:10px; border-radius:5px; background:linear-gradient(90deg,#35bf9e 0%,#f1b94c 50%,#f26a83 100%); }
+.aggregate-heatmap th small { display:block; margin-top:2px; font-weight:400; text-transform:capitalize; }
+.aggregate-heatmap th.incident-day { color:#f6d98f; box-shadow:inset 0 -3px 0 #f1b94c; }
+.aggregate-heatmap tfoot th,.aggregate-heatmap tfoot td { position:sticky; bottom:0; z-index:2; background:#172633; }
+.aggregate-heatmap tfoot th { left:0; z-index:3; text-align:left; }
+.incident-total { display:block; padding:12px 4px; border-radius:4px; font-size:10px; font-weight:700; color:#f4f7f9; border:1px solid color-mix(in srgb,var(--cell-color) 62%,transparent); background:color-mix(in srgb,var(--cell-color) 31%,#172633); }
+.incident-inspector { max-width:520px; margin-bottom:18px; }

@@ -245,7 +245,7 @@ export function registerMcpRoutes(app: FastifyInstance, deps: Deps) {
       if (request.method !== "POST") return reply.header("Allow", "POST").code(405).send({ error: "method_not_allowed" });
       const bulkCall = z.object({
         method: z.literal("tools/call"),
-        params: z.object({ name: z.enum(["ingest_board_metrics", "ingest_board_sessions"]) }),
+        params: z.object({ name: z.enum(["ingest_board_metrics", "ingest_board_sessions", "ingest_incident_user_days"]) }),
       }).safeParse(request.body).success;
       if (!bulkCall && (bodySizes.get(request) ?? 0) > 32 * 1024) {
         return reply.code(413).send({ error: "mcp_body_too_large", limit_bytes: 32 * 1024 });

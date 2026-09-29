@@ -175,3 +175,33 @@ describe("Session bulk ingest, timestamps and deletion",()=>{
   expect((await app.inject({url:`/v1/boards/${board.id}/sessions`,headers})).json().total).toBe(0);
  });
 });
+
+const incidentInput = {
+ board_type:"incident",name:"Incident cohort",incident:{started_at:"2026-09-23T18:00:00-03:00"},
+ window:{from_day:"2026-09-21",to_day:"2026-09-27"},slas:{startup_error:{warning:0.1,critical:0.5},buffer:{warning:0.2,critical:0.6}},
+ source:{system:"synthetic-test",query:"fixture",buffer_ratio_session_threshold:0.01},
+};
+describe("Incident boards REST/MCP",()=>{
+ it("shares creation, cohort, daily ingestion and views across adapters with owner isolation",async()=>{
+  const app=setup(),headers={authorization:"Bearer a"},other={authorization:"Bearer b"};
+  const token=(await app.inject({method:"POST",url:"/v1/mcp/tokens",headers,payload:{name:"incident",expires_in_days:1}})).json();
+  const created=await rpc(app,token.secret,"create_incident_board",incidentInput);expect(created.json().result.isError).not.toBe(true);
+  const board=created.json().result.structuredContent;expect(board).toMatchObject({board_type:"incident",user_count:0,session_count:0});
+  const users=await rpc(app,token.secret,"add_incident_users",{board_id:board.id,user_ids:["u1","u2"]});expect(users.json().result.structuredContent).toEqual({added:2,existing:0,total:2});
+  const dayItem={user_id:"u1",day:"2026-09-23",sessions:10,startup_error_sessions:0,buffer_over_sla_sessions:7};
+  const ingested=await rpc(app,token.secret,"ingest_incident_user_days",{board_id:board.id,user_days:[dayItem,{...dayItem,user_id:"ghost"}]});
+  expect(ingested.json().result.structuredContent).toMatchObject({inserted:1,rejected:1});
+  const rest=await app.inject({method:"POST",url:`/v1/boards/${board.id}/user-days`,headers,payload:{user_days:[{...dayItem,day:"2026-09-24",buffer_over_sla_sessions:1}]}});
+  expect(rest.statusCode).toBe(200);expect(rest.json()).toMatchObject({inserted:1,rejected:0});
+  const view=await app.inject({method:"POST",url:`/v1/boards/${board.id}/view`,headers,payload:{metric:"buffer"}});
+  expect(view.statusCode).toBe(200);expect(view.json()).toMatchObject({board_type:"incident",metric:"buffer",users:{total:2,with_data:1}});
+  expect(view.json().users.rows[0].cells.find((cell:{day:string})=>cell.day==="2026-09-23")).toMatchObject({status:"bad",intensity:1});
+  const viaMcp=(await rpc(app,token.secret,"get_incident_board_view",{board_id:board.id,metric:"startup_error"})).json().result.structuredContent;expect(viaMcp.metric).toBe("startup_error");
+  expect((await app.inject({method:"POST",url:`/v1/boards/${board.id}/users`,headers:other,payload:{user_ids:["x"]}})).statusCode).toBe(404);
+  expect((await app.inject({method:"POST",url:`/v1/boards/${board.id}/view`,headers:other,payload:{}})).statusCode).toBe(404);
+  expect((await app.inject({method:"POST",url:`/v1/boards/${board.id}/sessions`,headers,payload:{sessions:[success]}})).statusCode).toBe(400);
+  expect((await app.inject({method:"POST",url:`/v1/boards/${board.id}/user-days/delete`,headers,payload:{}})).statusCode).toBe(400);
+  const removed=await app.inject({method:"POST",url:`/v1/boards/${board.id}/users/delete`,headers,payload:{user_ids:["u1"]}});expect(removed.json()).toEqual({deleted:1,deleted_user_days:2,remaining:1});
+  expect((await app.inject({url:"/v1/boards",headers})).json().boards[0].board_type).toBe("incident");
+ });
+});

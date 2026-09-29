@@ -207,3 +207,67 @@ artificialmente em 72 buckets. Com os defaults atualizados, buffer vm-sp é
 **warning**, jg-sp é **good**; a taxa de joins >5 s não determina o status da
 média com warning de 8 s. O aceite temporal e a ponte para as 919 sessões
 exigem exports reais. Fixtures de teste são identificadas como sintéticas.
+
+## Boards de incidente (coorte de usuários × dias)
+
+`incident` acompanha, dia a dia, um conjunto fixo de user IDs afetados por um
+incidente. O VH não consulta o NPAW: o agente registra o incidente, envia a
+lista de usuários e depois as contagens diárias. A UI mostra uma grade com um
+usuário por linha e um dia por coluna.
+
+REST: `POST /v1/boards` (criação), `POST /v1/boards/:id/users`,
+`/users/delete`, `/user-days`, `/user-days/delete` e `/view`. MCP:
+`create_incident_board`, `add_incident_users`, `remove_incident_users`,
+`ingest_incident_user_days`, `delete_incident_user_days` e
+`get_incident_board_view`. Owner sempre vem de Clerk ou do token MCP.
+
+```json
+{
+  "board_type": "incident",
+  "name": "Incidente POP vm-sp",
+  "incident": {"started_at": "2026-09-24T18:00:00-03:00", "ended_at": "2026-09-24T21:00:00-03:00", "description": "Buffering elevado"},
+  "window": {"from_day": "2026-09-21", "to_day": "2026-09-27"},
+  "slas": {
+    "startup_error": {"warning": 0.1, "critical": 0.3},
+    "buffer": {"warning": 0.1, "critical": 0.3}
+  },
+  "source": {"system": "npaw", "query": "consulta por userId e dia usada na extração", "buffer_ratio_session_threshold": 0.01}
+}
+```
+
+- Dias são `YYYY-MM-DD` no fuso America/Sao_Paulo (UTC-3 fixo), no máximo 31
+  dias por board. `started_at`/`ended_at` marcam o(s) dia(s) do incidente na UI.
+- As faixas `warning`/`critical` são **frações 0..1 das sessões do usuário no
+  dia que estão ruins**, não valores de métrica. `buffer_ratio_session_threshold`
+  é o `buffer_ratio` (0..1) a partir do qual o agente contou uma sessão como
+  ruim; o VH só o registra como proveniência.
+- Item diário: `user_id`, `day`, `sessions`, `startup_error_sessions`,
+  `buffer_over_sla_sessions` e, opcionalmente, `buffer_ratio_avg` e
+  `join_time_ms_avg` (exibidos no detalhe). `startup_error_sessions ≤ sessions`
+  e `buffer_over_sla_sessions ≤ sessions − startup_error_sessions`.
+- Base de cada métrica: **startup_error** = `startup_error_sessions / sessions`;
+  **buffer** = `buffer_over_sla_sessions / (sessions − startup_error_sessions)`,
+  como no board de sessões, onde falhas de startup não têm buffer. Denominador 0
+  é sem dados (cinza).
+- Cor: `bad_share` abaixo de `warning` é saudável, a partir de `warning` é
+  atenção e a partir de `critical` é crítico. A intensidade contínua vale 0 com
+  0%, 0,5 em `warning` e 1 em `critical` ou mais; a UI interpola verde → amarelo
+  → vermelho. Dias sem dados ficam cinza e não entram no resumo diário.
+- O resumo diário (rodapé) conta atenção + crítico sobre os usuários **com dados**
+  no dia, em toda a coorte e não só na página exibida.
+- Ingestão por item, como no aggregate: usuário fora da coorte, dia fora da janela,
+  contagens inconsistentes e duplicata `(user_id, dia)` no lote são devolvidos
+  em `errors[]` sem rejeitar os itens válidos. Reenviar `(user_id, dia)` substitui
+  o registro inteiro. Lotes de 1..500 itens (256 KiB), coorte de até 1.000 usuários
+  por board e 250 mil dias de usuário por owner.
+- `remove_incident_users` apaga também os dados diários do usuário;
+  `delete_incident_user_days` mantém a coorte; `reset_board` apaga só os dados
+  diários e preserva definição e coorte. Todas são idempotentes.
+- User IDs são identificadores de clientes: armazene-os apenas no board, com
+  isolamento por owner, e envie hashes se a fonte permitir; remova o board
+  quando o incidente for encerrado.
+
+Receita NPAW: agrupar a consulta por `userId` e por dia BRT e mapear as colunas
+para `sessions`, `startup_error_sessions` e `buffer_over_sla_sessions`, fixando o
+limiar de buffer em `source.buffer_ratio_session_threshold` e preservando a
+consulta executada em `source.query`.

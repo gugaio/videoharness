@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AggregateBoardDefinitionSchema, AggregateDimensionSchema, AggregateMetricSchema, type AggregateBoardDefinition, type BoardAggregateView } from "./board-metrics.js";
+import { IncidentBoardDefinitionSchema, type IncidentBoardDefinition, type IncidentBoardView } from "./incident-boards.js";
 
 export const BoardIdSchema = z.string().min(1).max(128);
 const EntitySchema = z.string().trim().min(1).max(128);
@@ -15,7 +16,7 @@ export const BoardSlasSchema = z.object({ startup_error_rate: ratioBand, buffer_
 export const StoredBoardDefinitionSchema = z.object({ name: z.string().trim().min(1).max(100), focus: BoardFocusSchema, slas: BoardSlasSchema }).strict();
 export const CreateSessionBoardSchema = StoredBoardDefinitionSchema.extend({ slas: BoardSlasSchema.required({ join_time_ms: true }), board_type: z.literal("sessions").optional() });
 export const CreateAggregateBoardSchema = AggregateBoardDefinitionSchema;
-export const CreateBoardSchema = z.union([CreateAggregateBoardSchema, CreateSessionBoardSchema]);
+export const CreateBoardSchema = z.union([CreateAggregateBoardSchema, IncidentBoardDefinitionSchema, CreateSessionBoardSchema]);
 export const CreateAnyBoardSchema = CreateBoardSchema;
 const sessionCore = { session_id: EntitySchema, user_id: EntitySchema, device: z.object({ id: EntitySchema, model: EntitySchema.optional() }).strict(), isp: EntitySchema, pop: EntitySchema, media_id: EntitySchema, device_type: EntitySchema.optional() };
 // Stored sessions keep started_at optional so rows written before temporal
@@ -69,12 +70,13 @@ export type BoardFilter = z.infer<typeof BoardFilterSchema>;
 export type BoardSlas = z.infer<typeof BoardSlasSchema>;
 export type SessionBoardRecord = z.infer<typeof StoredBoardDefinitionSchema> & { board_type: "sessions"; id: string; created_at: string; session_count: number; bucket_count: 0; view_path: string };
 export type AggregateBoardRecord = AggregateBoardDefinition & { id: string; created_at: string; session_count: 0; bucket_count: number; effective_granularity: AggregateBoardDefinition["granularity"]; view_path: string };
-export type BoardRecord = SessionBoardRecord | AggregateBoardRecord;
+export type IncidentBoardRecord = IncidentBoardDefinition & { id: string; created_at: string; session_count: 0; bucket_count: number; user_count: number; view_path: string };
+export type BoardRecord = SessionBoardRecord | AggregateBoardRecord | IncidentBoardRecord;
 export type BoardMetricName = keyof BoardSlas;
 export type BoardMetric = { value: number | null; status: "good" | "warning" | "bad" | "unknown"; unit: "ratio" | "ms"; sample_count: number; distribution: Record<"good" | "warning" | "bad" | "unknown", number>; violations: number; sla: { warning: number; critical: number } };
 export type BoardNode = { id: string; dimension: BoardFilter["dimension"]; label: string; volume: number; metrics: Partial<Record<BoardMetricName, BoardMetric>>; model?: string; filter?: BoardFilter };
 export type BoardLink = { id: string; source: string; target: string; volume: number; metrics: Partial<Record<BoardMetricName, BoardMetric>> };
 export type BoardViewRequest = z.infer<typeof BoardViewRequestSchema>;
 export type SessionBoardView = { board_type: "sessions"; id: string; sessionCount: number; metrics: Partial<Record<BoardMetricName, BoardMetric>>; nodes: BoardNode[]; links: BoardLink[]; filters: BoardFilter[]; columns: BoardFilter["dimension"][]; board: SessionBoardRecord; excluded_missing_timestamp_count: number };
-export type BoardView = SessionBoardView | BoardAggregateView;
-export const BOARD_LIMITS = { boards_per_owner: 100, sessions_per_board: 10_000, sessions_per_owner: 50_000, sessions_per_batch: 500, body_bytes: 32_768, session_body_bytes: 262_144, metric_batch_buckets: 500, metric_body_bytes: 262_144, metric_buckets_per_board: 25_000, metric_contributions_per_board: 100_000, metric_buckets_per_owner: 250_000, nodes_per_column: 8, filters: 4 } as const;
+export type BoardView = SessionBoardView | BoardAggregateView | IncidentBoardView;
+export const BOARD_LIMITS = { boards_per_owner: 100, sessions_per_board: 10_000, sessions_per_owner: 50_000, sessions_per_batch: 500, body_bytes: 32_768, session_body_bytes: 262_144, metric_batch_buckets: 500, metric_body_bytes: 262_144, metric_buckets_per_board: 25_000, metric_contributions_per_board: 100_000, metric_buckets_per_owner: 250_000, nodes_per_column: 8, filters: 4, incident_users_per_board: 1_000, incident_user_days_per_owner: 250_000, incident_batch_items: 500, incident_body_bytes: 262_144 } as const;

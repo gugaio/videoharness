@@ -3,6 +3,7 @@ import { BoardError, type BoardRepository } from "../ports/board-repository.js";
 import { BOARD_LIMITS, CreateBoardSchema, DeleteBoardSessionsSchema, IngestBoardSessionsSchema, SessionBoardViewRequestSchema, type BoardFilter, type BoardMetric, type BoardMetricName, type BoardRecord, type BoardSession, type BoardSlas, type BoardView, type BoardViewRequest, type BoardNode, type SessionBoardRecord } from "../../domain/boards.js";
 import { deriveStateFromPop, PatchAggregateBoardSchema } from "../../domain/board-metrics.js";
 import { getAggregateBoardView } from "./board-metrics.js";
+import { getIncidentBoardView } from "./incident-boards.js";
 
 export function createBoard(repository: BoardRepository, ownerId: string, input: unknown) { return repository.create(ownerId, CreateBoardSchema.parse(input)); }
 export function getBoard(repository: BoardRepository, ownerId: string, id: string) { const board = repository.get(ownerId,id); if (!board) throw new BoardError("board_not_found",404); return board; }
@@ -72,6 +73,7 @@ function metrics(sessions: BoardSession[], slas: BoardSlas) {
 export function getBoardView(repository: BoardRepository, ownerId: string, id: string, input: unknown): BoardView {
   const board = getBoard(repository,ownerId,id);
   if (board.board_type === "aggregate") return getAggregateBoardView(repository,ownerId,id,input);
+  if (board.board_type === "incident") return getIncidentBoardView(repository,ownerId,id,input);
   return getSessionBoardView(repository,ownerId,id,board,input);
 }
 function getSessionBoardView(repository:BoardRepository,ownerId:string,id:string,board:SessionBoardRecord,input:unknown):Extract<BoardView,{board_type:"sessions"}>{
@@ -133,4 +135,12 @@ export const boardSchemaDescription = {
   ingest_example:{sessions:[{session_id:"s-1",user_id:"user-42",device:{id:"tv-living-room",model:"Samsung Tizen"},isp:"Vivo",pop:"GRU",media_id:"match-123",started_at:"2026-09-24T21:00:00Z",startup_error:false,join_time_ms:1800,buffer_ratio:0.012},{session_id:"s-2",user_id:"user-42",device:{id:"phone",model:"iPhone"},isp:"Claro",pop:"GRU",media_id:"match-123",started_at:"2026-09-24T21:02:00Z",startup_error:true}]},
   device_focus_example:{type:"device",user_id:"user-42",device_id:"tv-living-room"},device_filter_example:{dimension:"device",entity:"tv-living-room",user_id:"user-42"},
   aggregate:{version:1,board_type:"aggregate",units:{rates:"0..1 supplied by source",join_time_ms:"milliseconds supplied by source",volume:"required non-negative integer weight"},view_metrics:["startup_error_rate","buffer_ratio","join_time_ms_avg","join_over_sla_pct"],join_time_fields:"join_time_ms aliases join_time_ms_avg; join_time_ms_sum + join_time_ms_count compose the mean exactly (weight = count) instead of volume-weighting it",defaults:{buffer_ratio:{warning:0.005,critical:0.01},join_time_ms:{warning:8000,critical:15000}},limits:{batch_buckets:BOARD_LIMITS.metric_batch_buckets,batch_bytes:BOARD_LIMITS.metric_body_bytes,materialized_per_board:BOARD_LIMITS.metric_buckets_per_board,contributions_per_board:BOARD_LIMITS.metric_contributions_per_board},counting_touch:"POP rows count touches and are not additive to distinct focus totals; baseline must be ingested separately.",percentiles:"Only source-provided per-bucket percentiles are shown; percentiles are not rolled up or averaged.",example:{board_type:"aggregate",name:"Vivo ISP",focus:{type:"isp",isp:"Vivo"},granularity:"5m",window:{from:"2026-09-24T21:00:00-03:00",to:"2026-09-25T00:00:00-03:00"},primary_dimension:"pop",secondary_dimension:"media_id",slas:{startup_error_rate:{warning:0.01,critical:0.05},buffer_ratio:{warning:0.005,critical:0.01},join_time_ms:{warning:8000,critical:15000}},source:{system:"npaw",query:"select views, bufferRatio, join_over_sla_metric ... group by extraparam15",sampling:{method:"none",coverage:1},counting:"touch"}}},
+  incident:{version:1,board_type:"incident",
+    units:{day:"YYYY-MM-DD in America/Sao_Paulo (fixed UTC-3)",counts:"non-negative integers of sessions per user and day",slas:"warning/critical are fractions 0..1 of a user's daily sessions that are bad"},
+    metrics:{buffer:"bad = buffer_over_sla_sessions over sessions that started successfully (sessions - startup_error_sessions)",startup_error:"bad = startup_error_sessions over sessions"},
+    color:"cell intensity is 0 at share 0, 0.5 at warning and 1 at critical or above; no denominator means unknown (no data).",
+    limits:{users_per_board:BOARD_LIMITS.incident_users_per_board,batch_items:BOARD_LIMITS.incident_batch_items,batch_bytes:BOARD_LIMITS.incident_body_bytes,window_days:31},
+    flow:"create the board, add the cohort with add_incident_users, then upsert daily counts with ingest_incident_user_days; items for unknown users or days outside the window are rejected individually. Retries replace.",
+    create_example:{board_type:"incident",name:"Incidente POP vm-sp",incident:{started_at:"2026-09-24T18:00:00-03:00",description:"Buffering elevado no POP vm-sp"},window:{from_day:"2026-09-21",to_day:"2026-09-27"},slas:{startup_error:{warning:0.1,critical:0.3},buffer:{warning:0.1,critical:0.3}},source:{system:"npaw",query:"select views, ... group by userId, day",buffer_ratio_session_threshold:0.01}},
+    user_day_example:{user_id:"user-42",day:"2026-09-24",sessions:12,startup_error_sessions:1,buffer_over_sla_sessions:5,buffer_ratio_avg:0.012,join_time_ms_avg:3200}},
 };

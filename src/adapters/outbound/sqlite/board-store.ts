@@ -3,14 +3,17 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { BoardError, type BoardRepository, type MetricDeleteResult, type MetricIngestResult, type ResetBoardResult, type SessionDeleteResult, type StoredMetricContribution } from "../../../application/ports/board-repository.js";
+import { BoardError, type BoardRepository, type IncidentUserDaysDeleteResult, type IncidentUserDaysIngestResult, type IncidentUsersAddResult, type IncidentUsersRemoveResult, type MetricDeleteResult, type MetricIngestResult, type ResetBoardResult, type SessionDeleteResult, type StoredMetricContribution } from "../../../application/ports/board-repository.js";
 import { BOARD_LIMITS, StoredBoardDefinitionSchema, BoardSessionSchema, type BoardRecord, type BoardSession, type CreateBoardInput, type DeleteBoardSessionsInput } from "../../../domain/boards.js";
 import { AggregateBoardDefinitionSchema, AggregateGranularitySchema, BoardBaselineBucketSchema, BoardMetricBucketSchema, COARSENING_ORDER, GRANULARITY_MS, deriveStateFromPop, type AggregateDimension, type BoardBaselineBucket, type DeleteBoardMetricsInput, type PatchAggregateBoard } from "../../../domain/board-metrics.js";
+import { IncidentBoardDefinitionSchema, IncidentUserDaySchema, type DeleteIncidentUserDaysInput, type IncidentUserDay } from "../../../domain/incident-boards.js";
 
-type Row = { id: string; name: string; focus: string; slas: string; created_at: string; board_type: string; aggregate_definition: string | null; effective_granularity: string | null; session_count: number; bucket_count: number };
+type Row = { id: string; name: string; focus: string; slas: string; created_at: string; board_type: string; aggregate_definition: string | null; incident_definition: string | null; effective_granularity: string | null; session_count: number; bucket_count: number; user_count: number; user_day_count: number };
 const selectBoard = `SELECT b.*,
   (SELECT COUNT(*) FROM board_sessions s WHERE s.board_id=b.id) AS session_count,
-  (SELECT COUNT(*) FROM board_metric_cells c WHERE c.board_id=b.id) AS bucket_count FROM boards b`;
+  (SELECT COUNT(*) FROM board_metric_cells c WHERE c.board_id=b.id) AS bucket_count,
+  (SELECT COUNT(*) FROM incident_board_users u WHERE u.board_id=b.id) AS user_count,
+  (SELECT COUNT(*) FROM incident_user_days d WHERE d.board_id=b.id) AS user_day_count FROM boards b`;
 
 export class BoardStore implements BoardRepository {
   private readonly db: DatabaseSync;
@@ -26,6 +29,13 @@ export class BoardStore implements BoardRepository {
       if (!columns.has("board_type")) this.db.exec("ALTER TABLE boards ADD COLUMN board_type TEXT NOT NULL DEFAULT 'sessions'");
       if (!columns.has("aggregate_definition")) this.db.exec("ALTER TABLE boards ADD COLUMN aggregate_definition TEXT");
       if (!columns.has("effective_granularity")) this.db.exec("ALTER TABLE boards ADD COLUMN effective_granularity TEXT");
+      if (!columns.has("incident_definition")) this.db.exec("ALTER TABLE boards ADD COLUMN incident_definition TEXT");
+      this.db.exec(`CREATE TABLE IF NOT EXISTS incident_board_users (
+        board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE, user_id TEXT NOT NULL,
+        PRIMARY KEY(board_id,user_id));
+        CREATE TABLE IF NOT EXISTS incident_user_days (
+        board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE, user_id TEXT NOT NULL, day TEXT NOT NULL, payload TEXT NOT NULL,
+        PRIMARY KEY(board_id,user_id,day));`);
       this.db.exec(`CREATE TABLE IF NOT EXISTS board_metric_contributions (
         board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
         series TEXT NOT NULL CHECK(series IN ('entity','baseline')),
@@ -45,6 +55,10 @@ export class BoardStore implements BoardRepository {
   }
   private record(row: Row): BoardRecord {
     const common = { id: row.id, created_at: row.created_at, view_path: `/dashboard/boards/${row.id}` };
+    if (row.board_type === "incident") {
+      const definition = IncidentBoardDefinitionSchema.parse(JSON.parse(row.incident_definition ?? "null"));
+      return { ...definition, ...common, session_count: 0, bucket_count: row.user_day_count, user_count: row.user_count };
+    }
     if (row.board_type === "aggregate") {
       const definition = AggregateBoardDefinitionSchema.parse(JSON.parse(row.aggregate_definition ?? "null"));
       return { ...definition, ...common, session_count: 0, bucket_count: row.bucket_count, effective_granularity: AggregateGranularitySchema.parse(row.effective_granularity) };
@@ -63,11 +77,12 @@ export class BoardStore implements BoardRepository {
       const count = this.db.prepare("SELECT COUNT(*) AS count FROM boards WHERE owner_id=?").get(ownerId) as { count: number };
       if (count.count >= BOARD_LIMITS.boards_per_owner) throw new BoardError("board_limit", 429);
       const aggregate = input.board_type === "aggregate" ? input : undefined;
+      const incident = input.board_type === "incident" ? input : undefined;
       this.checkLink(ownerId, aggregate?.linked_sessions_board_id);
       const id = randomUUID(), created_at = new Date().toISOString();
       const definition = aggregate ? { ...aggregate, window: { from: new Date(aggregate.window.from).toISOString(), to: new Date(aggregate.window.to).toISOString() } } : undefined;
-      this.db.prepare("INSERT INTO boards (id,owner_id,name,focus,slas,created_at,board_type,aggregate_definition,effective_granularity) VALUES (?,?,?,?,?,?,?,?,?)")
-        .run(id, ownerId, input.name, JSON.stringify(input.focus), JSON.stringify(input.slas), created_at, aggregate ? "aggregate" : "sessions", definition ? JSON.stringify(definition) : null, aggregate?.granularity ?? null);
+      this.db.prepare("INSERT INTO boards (id,owner_id,name,focus,slas,created_at,board_type,aggregate_definition,effective_granularity,incident_definition) VALUES (?,?,?,?,?,?,?,?,?,?)")
+        .run(id, ownerId, input.name, JSON.stringify(incident ? null : (input as { focus: unknown }).focus), JSON.stringify(input.slas), created_at, aggregate ? "aggregate" : incident ? "incident" : "sessions", definition ? JSON.stringify(definition) : null, aggregate?.granularity ?? null, incident ? JSON.stringify(incident) : null);
       return this.owned(ownerId, id);
     });
   }
@@ -238,9 +253,75 @@ export class BoardStore implements BoardRepository {
         const deleted = Number(this.db.prepare("DELETE FROM board_sessions WHERE board_id=?").run(id).changes);
         return { board_type: "sessions", deleted_sessions: deleted, deleted_contributions: 0 };
       }
+      if (board.board_type === "incident") {
+        // The cohort is part of the incident definition, so only the per-day evidence is cleared.
+        const deleted = Number(this.db.prepare("DELETE FROM incident_user_days WHERE board_id=?").run(id).changes);
+        return { board_type: "incident", deleted_sessions: 0, deleted_contributions: deleted };
+      }
       const deleted = Number(this.db.prepare("DELETE FROM board_metric_contributions WHERE board_id=?").run(id).changes);
       this.materialize(ownerId, board);
       return { board_type: "aggregate", deleted_sessions: 0, deleted_contributions: deleted };
+    });
+  }
+  private incidentBoard(ownerId: string, id: string) {
+    const board = this.owned(ownerId, id);
+    if (board.board_type !== "incident") throw new BoardError("invalid_board_type", 400);
+    return board;
+  }
+  addIncidentUsers(ownerId: string, id: string, userIds: string[]): IncidentUsersAddResult {
+    return this.transaction(() => {
+      const board = this.incidentBoard(ownerId, id);
+      const exists = this.db.prepare("SELECT 1 FROM incident_board_users WHERE board_id=? AND user_id=?");
+      const fresh = userIds.filter(userId => !exists.get(id, userId));
+      if (board.user_count + fresh.length > BOARD_LIMITS.incident_users_per_board) throw new BoardError("board_user_limit", 429);
+      const insert = this.db.prepare("INSERT INTO incident_board_users (board_id,user_id) VALUES (?,?)");
+      for (const userId of fresh) insert.run(id, userId);
+      return { added: fresh.length, existing: userIds.length - fresh.length, total: board.user_count + fresh.length };
+    });
+  }
+  removeIncidentUsers(ownerId: string, id: string, userIds: string[]): IncidentUsersRemoveResult {
+    return this.transaction(() => {
+      const board = this.incidentBoard(ownerId, id);
+      const removeDays = this.db.prepare("DELETE FROM incident_user_days WHERE board_id=? AND user_id=?");
+      const removeUser = this.db.prepare("DELETE FROM incident_board_users WHERE board_id=? AND user_id=?");
+      let deleted = 0, deletedDays = 0;
+      for (const userId of userIds) {
+        deletedDays += Number(removeDays.run(id, userId).changes);
+        deleted += Number(removeUser.run(id, userId).changes);
+      }
+      return { deleted, deleted_user_days: deletedDays, remaining: board.user_count - deleted };
+    });
+  }
+  incidentUsers(ownerId: string, id: string): string[] {
+    this.incidentBoard(ownerId, id);
+    return (this.db.prepare("SELECT user_id FROM incident_board_users WHERE board_id=? ORDER BY user_id").all(id) as { user_id: string }[]).map(row => row.user_id);
+  }
+  ingestIncidentUserDays(ownerId: string, id: string, items: IncidentUserDay[]): IncidentUserDaysIngestResult {
+    return this.transaction(() => {
+      const board = this.incidentBoard(ownerId, id);
+      const exists = this.db.prepare("SELECT 1 FROM incident_user_days WHERE board_id=? AND user_id=? AND day=?");
+      const inserted = items.filter(item => !exists.get(id, item.user_id, item.day)).length;
+      const ownerCount = (this.db.prepare("SELECT COUNT(*) AS count FROM incident_user_days d JOIN boards b ON b.id=d.board_id WHERE b.owner_id=?").get(ownerId) as { count: number }).count;
+      if (ownerCount + inserted > BOARD_LIMITS.incident_user_days_per_owner) throw new BoardError("board_owner_user_day_limit", 429);
+      const upsert = this.db.prepare("INSERT INTO incident_user_days (board_id,user_id,day,payload) VALUES (?,?,?,?) ON CONFLICT(board_id,user_id,day) DO UPDATE SET payload=excluded.payload");
+      for (const item of items) upsert.run(id, item.user_id, item.day, JSON.stringify(item));
+      return { inserted, updated: items.length - inserted, total: board.bucket_count + inserted };
+    });
+  }
+  allIncidentUserDays(ownerId: string, id: string): IncidentUserDay[] {
+    this.incidentBoard(ownerId, id);
+    const rows = this.db.prepare("SELECT payload FROM incident_user_days WHERE board_id=? ORDER BY user_id,day").all(id) as { payload: string }[];
+    return rows.map(row => IncidentUserDaySchema.parse(JSON.parse(row.payload)));
+  }
+  deleteIncidentUserDays(ownerId: string, id: string, input: DeleteIncidentUserDaysInput): IncidentUserDaysDeleteResult {
+    return this.transaction(() => {
+      const board = this.incidentBoard(ownerId, id);
+      const users = input.user_ids ? new Set(input.user_ids) : undefined, days = input.days ? new Set(input.days) : undefined;
+      const rows = this.db.prepare("SELECT user_id,day FROM incident_user_days WHERE board_id=?").all(id) as { user_id: string; day: string }[];
+      const remove = this.db.prepare("DELETE FROM incident_user_days WHERE board_id=? AND user_id=? AND day=?");
+      let deleted = 0;
+      for (const row of rows) if ((!users || users.has(row.user_id)) && (!days || days.has(row.day))) deleted += Number(remove.run(id, row.user_id, row.day).changes);
+      return { deleted, remaining: board.bucket_count - deleted };
     });
   }
   delete(ownerId: string, id: string): boolean {
