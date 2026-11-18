@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, createInspection, deleteInspection, getInspection, getSnapshot, listInspections } from "../api";
@@ -48,6 +49,15 @@ export default function InspectPage() {
 
 function InspectForm() {
   const navigate = useNavigate();
+  const [initialUrl] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem("vh_pending_inspect_url") ?? "";
+      if (saved) sessionStorage.removeItem("vh_pending_inspect_url");
+      return saved;
+    } catch {
+      return "";
+    }
+  });
   const history = useQuery({
     queryKey: ["inspections"],
     queryFn: listInspections,
@@ -85,6 +95,7 @@ function InspectForm() {
           name="url"
           type="url"
           required
+          defaultValue={initialUrl}
           placeholder="https://exemplo.com/master.m3u8"
           aria-label="URL do manifesto"
         />
